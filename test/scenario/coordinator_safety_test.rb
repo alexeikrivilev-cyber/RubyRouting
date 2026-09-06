@@ -48,6 +48,23 @@ class CoordinatorSafetyTest < Minitest::Test
     assert_equal 1, coordinator.facts.count { |fact| fact.type == :settlement_recorded }
   end
 
+  def test_recovery_assignment_does_not_advance_primary_allocation
+    coordinator = coordinator_with(%w[A B])
+    intent = intent("primary-ledger-1")
+    policy = count_policy
+    first = coordinator.prepare_and_commit_decision(intent: intent, policy: policy)
+    coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(observation(first, :safe_route_failure, attribution: :provider))
+
+    second = coordinator.prepare_and_commit_decision(intent: intent, policy: policy)
+
+    assert_equal :recovery, second.proposal.role
+    assert_equal({ "A" => 1 }, coordinator.allocation_snapshot(policy: policy).measures)
+    assert_equal [[:primary, "A"], [:recovery, "B"]], coordinator.facts
+      .select { |fact| fact.type == :allocation_committed }
+      .map { |fact| [fact.payload[:role], fact.payload[:provider_id]] }
+  end
+
   def test_safe_temporary_provider_failure_releases_owner_for_reroute
     coordinator = coordinator_with(%w[A B])
     intent = intent("temporary-failure-1")
@@ -120,6 +137,77 @@ class CoordinatorSafetyTest < Minitest::Test
 
     assert_raises(ArgumentError) { coordinator.apply_observation(conflicting) }
     assert_equal 1, coordinator.facts.count { |fact| fact.type == :provider_observed }
+  end
+
+  def test_stale_committed_decision_cannot_start_after_ownership_release
+    coordinator = coordinator_with(["A"])
+    intent = intent("stale-dispatch-1")
+    commit = coordinator.prepare_and_commit_decision(intent: intent, policy: count_policy)
+    coordinator.mark_attempt_started(commit)
+    coordinator.apply_observation(observation(commit, :safe_route_failure, attribution: :provider))
+
+    refute coordinator.mark_attempt_started(commit)
+    assert_equal :released, coordinator.payout_snapshot(intent.id).attempts.first.phase
+    assert_nil coordinator.payout_snapshot(intent.id).ownership
+  end
+
+  def test_callback_before_dispatch_invalidates_pending_dispatch_token
+    coordinator = coordinator_with(["A"])
+    intent = intent("callback-before-dispatch")
+    commit = coordinator.prepare_and_commit_decision(intent: intent, policy: count_policy)
+    coordinator.apply_observation(observation(commit, :success, attribution: :provider))
+
+    refute coordinator.mark_attempt_started(commit)
+    snapshot = coordinator.payout_snapshot(intent.id)
+    assert_equal :success, snapshot.status
+    assert_equal :settled, snapshot.attempts.first.phase
+    assert_equal 0, snapshot.provider_interaction_count
+  end
+
+  def test_orchestrator_does_not_call_provider_for_stale_initiation_commit
+    calls = []
+    provider = Class.new do
+      define_method(:initiate) do |request|
+        calls << request
+      end
+
+      def resolve(_request)
+        nil
+      end
+    end.new
+    coordinator = coordinator_with(["A"])
+    app = RubyRouting::Application::Orchestrator.new(
+      coordinator: coordinator,
+      providers: { "A" => provider }
+    )
+    payout = intent("stale-orchestrator-dispatch")
+    commit = coordinator.prepare_and_commit_decision(intent: payout, policy: count_policy)
+    coordinator.apply_observation(observation(commit, :success, attribution: :provider))
+
+    assert_nil app.send(:initiate, commit)
+    assert_empty calls
+    assert_equal 0, coordinator.payout_snapshot(payout.id).provider_interaction_count
+  end
+
+  def test_callback_before_resolution_invalidates_pending_resolution_token
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true)
+      )]
+    )
+    payout = intent("stale-resolution")
+    first = coordinator.prepare_and_commit_decision(intent: payout, policy: count_policy)
+    coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(observation(first, :unknown, attribution: :provider))
+
+    resolution = coordinator.prepare_and_commit_decision(intent: payout, policy: count_policy)
+    assert_equal :resolve, resolution.proposal.action
+    coordinator.apply_observation(observation(resolution, :success, attribution: :provider))
+
+    refute coordinator.mark_resolution_started(resolution)
+    assert_equal :success, coordinator.payout_snapshot(payout.id).status
+    assert_equal 1, coordinator.payout_snapshot(payout.id).provider_interaction_count
   end
 
   private

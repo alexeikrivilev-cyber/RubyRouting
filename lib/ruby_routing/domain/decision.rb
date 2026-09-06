@@ -6,10 +6,10 @@ module RubyRouting
     ROLES = %i[primary recovery resolution].freeze
 
     attr_reader :action, :provider_id, :operation_id, :attempt_id, :role, :policy_epoch,
-                :reasons, :allocation_decision
+                :reasons, :reason_codes, :allocation_decision
 
     def initialize(action:, provider_id: nil, operation_id: nil, attempt_id: nil,
-                   role:, policy_epoch:, reasons: [], allocation_decision: nil)
+                   role:, policy_epoch:, reasons: [], reason_codes: [], allocation_decision: nil)
       @action = normalize(action, ACTIONS, "decision action")
       @provider_id = provider_id&.to_s&.freeze
       @operation_id = operation_id&.to_s&.freeze
@@ -17,6 +17,7 @@ module RubyRouting
       @role = normalize(role, ROLES, "decision role")
       @policy_epoch = policy_epoch.to_s.freeze
       @reasons = reasons.map(&:to_s).map(&:freeze).freeze
+      @reason_codes = reason_codes.map(&:to_sym).freeze
       @allocation_decision = allocation_decision
       validate_shape!
       freeze
@@ -43,6 +44,7 @@ module RubyRouting
         role: role,
         policy_epoch: policy_epoch,
         reasons: reasons,
+        reason_codes: reason_codes,
         allocation_decision: allocation_decision
       )
     end
@@ -70,16 +72,29 @@ module RubyRouting
 
   class Fact
     TYPES = %i[
+      provider_opportunity_registered
       intent_registered
+      policy_registered
       opportunity_evaluated
       decision_committed
       allocation_committed
+      capacity_reserved
+      capacity_released
       ownership_acquired
       attempt_started
       provider_observed
       ownership_released
       settlement_recorded
       payout_state_changed
+      operation_phase_changed
+      transport_classified
+      economic_conflict
+      reversal_recorded
+      health_signal
+      health_state_changed
+      health_exposure_reserved
+      health_exposure_released
+      reconciliation_blocked
     ].freeze
 
     attr_reader :sequence, :type, :fact_id, :payout_id, :payload

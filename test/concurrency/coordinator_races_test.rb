@@ -85,6 +85,182 @@ class CoordinatorRacesTest < Minitest::Test
     raise first_error if first_error
   end
 
+  def test_duplicate_submit_during_dispatch_does_not_start_resolution_or_retry
+    blocking_provider = BlockingProvider.new
+    coordinator = RubyRouting::State::Coordinator.new(opportunities: opportunities)
+    app = RubyRouting::Application::Orchestrator.new(
+      coordinator: coordinator,
+      providers: { "A" => blocking_provider, "B" => blocking_provider }
+    )
+    payout = intent("dispatch-duplicate")
+    first_error = nil
+    first_thread = Thread.new do
+      app.submit(intent: payout, policy: policy)
+    rescue StandardError => error
+      first_error = error
+    end
+    blocking_provider.started.pop
+
+    duplicate = coordinator.prepare_and_commit_decision(
+      intent: payout,
+      policy: policy,
+      available_provider_ids: %w[A B]
+    )
+
+    assert_equal :defer, duplicate.proposal.action
+    assert_equal "provider operation dispatch is in progress", duplicate.proposal.reasons.first
+    assert_equal 1, duplicate.payout.attempt_count
+    assert_equal :dispatching, duplicate.payout.current_operation_phase
+
+    blocking_provider.release << true
+    first_thread.join
+    raise first_error if first_error
+  end
+
+  def test_concurrent_capacity_reservations_allow_only_configured_slots
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        capacity: RubyRouting::CapacityBudget.new(max_slots: 1)
+      )]
+    )
+    policy = RubyRouting::RoutingPolicy.new(id: "capacity-race", epoch: "1", measure: :count, targets: { "A" => 1 })
+    payouts = [intent("capacity-race-a"), intent("capacity-race-b")]
+    barrier = TestSupport::Synchronization::Barrier.new(2)
+    results = Array.new(2)
+    threads = payouts.each_with_index.map do |payout, index|
+      Thread.new do
+        barrier.wait
+        results[index] = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
+      end
+    end
+    threads.each(&:join)
+
+    assert_equal 1, results.count { |result| result.proposal.assignment? }
+    assert_equal 1, results.count { |result| result.proposal.action == :defer }
+    assert_equal 1, coordinator.capacity_snapshot("A").used_slots
+  end
+
+  def test_missing_adapter_is_rejected_before_assignment_commit
+    coordinator = RubyRouting::State::Coordinator.new(opportunities: opportunities)
+    app = RubyRouting::Application::Orchestrator.new(coordinator: coordinator, providers: {})
+
+    result = app.submit(intent: intent("missing-adapter"), policy: policy)
+
+    assert_equal :defer, result.action
+    assert_empty result.payout.attempts
+    assert_nil result.payout.ownership
+    assert_empty coordinator.allocation_snapshot(policy: policy).measures
+    refute coordinator.facts.any? { |fact| fact.type == :allocation_committed }
+  end
+
+  def test_non_executable_adapter_is_rejected_before_any_payout_can_commit
+    coordinator = RubyRouting::State::Coordinator.new(opportunities: opportunities)
+
+    assert_raises(ArgumentError) do
+      RubyRouting::Application::Orchestrator.new(
+        coordinator: coordinator,
+        providers: { "A" => Object.new }
+      )
+    end
+
+    assert_empty coordinator.facts.select { |fact| fact.type == :allocation_committed }
+  end
+
+  def test_provider_port_abstract_methods_are_rejected_before_any_payout_can_commit
+    coordinator = RubyRouting::State::Coordinator.new(opportunities: opportunities)
+    adapter = Class.new do
+      include RubyRouting::Ports::Provider
+    end.new
+
+    assert_raises(ArgumentError) do
+      RubyRouting::Application::Orchestrator.new(
+        coordinator: coordinator,
+        providers: { "A" => adapter }
+      )
+    end
+
+    assert_empty coordinator.facts.select { |fact| fact.type == :allocation_committed }
+    assert_empty coordinator.facts.select { |fact| fact.type == :intent_registered }
+  end
+
+  def test_safe_release_racing_with_fallback_never_creates_two_owners
+    coordinator = RubyRouting::State::Coordinator.new(opportunities: opportunities)
+    payout = intent("release-fallback-race")
+    first = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
+    coordinator.mark_attempt_started(first)
+    safe_failure = observation(first)
+    barrier = TestSupport::Synchronization::Barrier.new(2)
+    fallback_result = nil
+    errors = []
+    error_mutex = Thread::Mutex.new
+
+    release_thread = Thread.new do
+      barrier.wait
+      coordinator.apply_observation(safe_failure)
+    rescue StandardError => error
+      error_mutex.synchronize { errors << error }
+    end
+    fallback_thread = Thread.new do
+      barrier.wait
+      fallback_result = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
+    rescue StandardError => error
+      error_mutex.synchronize { errors << error }
+    end
+    [release_thread, fallback_thread].each(&:join)
+
+    raise errors.first if errors.any?
+
+    assert_operator coordinator.active_unresolved_owners, :<=, 1
+    assert_operator coordinator.facts.count { |fact| fact.type == :ownership_acquired }, :<=, 2
+    assert_equal({ "A" => 1 }, coordinator.allocation_snapshot(policy: policy).measures)
+    assert_operator coordinator.capacity_snapshot("A").used_slots, :<=, 1
+
+    if fallback_result&.proposal&.assignment?
+      coordinator.mark_attempt_started(fallback_result)
+      coordinator.apply_observation(observation(fallback_result))
+    end
+
+    assert_equal 0, coordinator.active_unresolved_owners
+    assert_equal 0, coordinator.capacity_snapshot("A").used_slots
+    assert_equal 0, coordinator.capacity_snapshot("B").used_slots
+  end
+
+  def test_live_provider_update_is_serialized_with_decision_commit
+    coordinator = RubyRouting::State::Coordinator.new(opportunities: opportunities)
+    payout = intent("live-state-race")
+    barrier = TestSupport::Synchronization::Barrier.new(2)
+    result = nil
+    errors = []
+    error_mutex = Thread::Mutex.new
+
+    decision_thread = Thread.new do
+      barrier.wait
+      result = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
+    rescue StandardError => error
+      error_mutex.synchronize { errors << error }
+    end
+    update_thread = Thread.new do
+      barrier.wait
+      coordinator.set_provider_availability("A", available: false)
+    rescue StandardError => error
+      error_mutex.synchronize { errors << error }
+    end
+    [decision_thread, update_thread].each(&:join)
+
+    raise errors.first if errors.any?
+
+    evaluated = coordinator.facts.reverse.find do |fact|
+      fact.type == :opportunity_evaluated && fact.payout_id == payout.id
+    end
+    if evaluated.payload.fetch(:exclusion_codes).fetch("A", nil) == :unavailable
+      refute_equal "A", result.proposal.provider_id
+    elsif result.proposal.assignment?
+      assert_equal "A", result.proposal.provider_id
+    end
+    assert_operator coordinator.active_unresolved_owners, :<=, 1
+  end
+
   private
 
   def opportunities
@@ -100,6 +276,17 @@ class CoordinatorRacesTest < Minitest::Test
 
   def intent(id)
     RubyRouting::PayoutIntent.new(id: id, money: RubyRouting::Money.new(100, "RUB"))
+  end
+
+  def observation(commit)
+    RubyRouting::ProviderObservation.new(
+      observation_id: "race:safe-failure:#{commit.proposal.operation_id}",
+      payout_id: commit.request.payout_id,
+      provider_id: commit.proposal.provider_id,
+      operation_id: commit.proposal.operation_id,
+      attempt_id: commit.proposal.attempt_id,
+      outcome: RubyRouting::NormalizedOutcome.safe_route_failure(attribution: :provider)
+    )
   end
 
   class BlockingProvider

@@ -38,8 +38,8 @@ module RubyRouting
       end
 
       def with_commit(provider_id, measure)
-        unless measure.is_a?(Integer) && measure.positive?
-          raise ArgumentError, "committed measure must be a positive Integer"
+        unless measure.is_a?(Integer) && measure >= 0
+          raise ArgumentError, "committed measure must be a non-negative Integer"
         end
 
         next_measures = measures.merge(provider_id.to_s => measure_for(provider_id) + measure)
@@ -49,15 +49,18 @@ module RubyRouting
 
     class AllocationDecision
       attr_reader :chosen_provider, :candidate_discrepancies, :post_measures,
-                  :incoming_measure, :snapshot_revision
+                  :incoming_measure, :snapshot_revision, :tolerance, :deviation_cause
 
       def initialize(chosen_provider:, candidate_discrepancies:, post_measures:,
-                     incoming_measure:, snapshot_revision:)
+                     incoming_measure:, snapshot_revision:, tolerance: nil,
+                     deviation_cause: nil)
         @chosen_provider = chosen_provider&.to_s&.freeze
         @candidate_discrepancies = candidate_discrepancies.dup.freeze
         @post_measures = post_measures.dup.freeze
         @incoming_measure = incoming_measure
         @snapshot_revision = snapshot_revision
+        @tolerance = tolerance
+        @deviation_cause = deviation_cause
         freeze
       end
 
@@ -70,6 +73,22 @@ module RubyRouting
 
         candidate_discrepancies.fetch(chosen_provider)
       end
+
+      def deviation_exceeded?
+        !tolerance.nil? && !no_route? && discrepancy > tolerance
+      end
+
+      def with_deviation_cause(cause)
+        self.class.new(
+          chosen_provider: chosen_provider,
+          candidate_discrepancies: candidate_discrepancies,
+          post_measures: post_measures,
+          incoming_measure: incoming_measure,
+          snapshot_revision: snapshot_revision,
+          tolerance: tolerance,
+          deviation_cause: cause
+        )
+      end
     end
 
     module Allocation
@@ -78,26 +97,33 @@ module RubyRouting
       # L1 discrepancy is evaluated after adding the incoming assignment. This
       # makes committed work visible and lets indivisible amounts choose the
       # least-bad achievable state with exact Rational arithmetic.
-      def choose(policy:, candidates:, snapshot:, incoming_measure:)
+      def choose(policy:, candidates:, snapshot:, incoming_measure:, accounting_provider_ids: nil)
         unless policy.is_a?(RubyRouting::RoutingPolicy)
           raise ArgumentError, "policy must be RoutingPolicy"
         end
         unless snapshot.is_a?(AllocationSnapshot)
           raise ArgumentError, "snapshot must be AllocationSnapshot"
         end
-        unless incoming_measure.is_a?(Integer) && incoming_measure.positive?
-          raise ArgumentError, "incoming_measure must be a positive Integer"
+        unless incoming_measure.is_a?(Integer) && incoming_measure >= 0
+          raise ArgumentError, "incoming_measure must be a non-negative Integer"
         end
 
-        normalized_candidates = candidates.map(&:to_s).uniq.sort
-        weights = policy.weights_for(normalized_candidates)
-        if weights.empty?
+        normalized_candidates = candidates.map(&:to_s).uniq.sort.select do |provider_id|
+          policy.allows_measure?(provider_id, incoming_measure)
+        end
+        normalized_accounting_provider_ids = (accounting_provider_ids || normalized_candidates)
+          .map(&:to_s).uniq.sort
+        weights = policy.weights_for(normalized_accounting_provider_ids)
+        candidate_weights = weights.select { |provider_id, _weight| normalized_candidates.include?(provider_id) }
+        if candidate_weights.empty?
           return AllocationDecision.new(
             chosen_provider: nil,
             candidate_discrepancies: {},
             post_measures: {},
             incoming_measure: incoming_measure,
-            snapshot_revision: snapshot.revision
+            snapshot_revision: snapshot.revision,
+            tolerance: policy.tolerance,
+            deviation_cause: :no_feasible_candidate
           )
         end
 
@@ -106,7 +132,7 @@ module RubyRouting
         post_measures = {}
 
         base_measures = weights.each_key.to_h { |provider_id| [provider_id, snapshot.measure_for(provider_id)] }
-        weights.each_key do |provider_id|
+        candidate_weights.each_key do |provider_id|
           proposed = base_measures.merge(provider_id => snapshot.measure_for(provider_id) + incoming_measure)
           total_measure = proposed.values.sum
           discrepancy = proposed.sum do |candidate_provider, actual_measure|
@@ -118,13 +144,23 @@ module RubyRouting
           post_measures[provider_id] = proposed.freeze
         end
 
-        chosen_provider = candidate_discrepancies.min_by { |provider_id, discrepancy| [discrepancy, provider_id] }.first
+        chosen_provider = candidate_discrepancies.min_by do |provider_id, discrepancy|
+          [
+            discrepancy,
+            -policy.ranking.priority_for(provider_id),
+            policy.ranking.cost_for(provider_id),
+            policy.ranking.latency_for(provider_id),
+            provider_id
+          ]
+        end.first
         AllocationDecision.new(
           chosen_provider: chosen_provider,
           candidate_discrepancies: candidate_discrepancies,
           post_measures: post_measures,
           incoming_measure: incoming_measure,
-          snapshot_revision: snapshot.revision
+          snapshot_revision: snapshot.revision,
+          tolerance: policy.tolerance,
+          deviation_cause: :optimizer_choice
         )
       end
     end

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "benchmark"
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 require "ruby_routing"
 
 class BenchmarkProvider

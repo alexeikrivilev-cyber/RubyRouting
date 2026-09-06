@@ -1,324 +1,271 @@
-# Goal Mode + SpecOps workflow
+# Goal Mode + SpecOps Workflow
 
 ## Purpose
 
-This document defines how a coding agent should execute work in RubyRouting. The objective is high autonomy with strong correctness: the agent should not need approval for routine implementation choices, but it must not improvise financial semantics or silently violate the governing specification.
+This document defines how a coding agent executes RubyRouting work with high autonomy and strong financial correctness.
 
-The workflow combines:
+Current Version Goal: **v0.2 — Pre-TZ Comprehensive Routing Core**.
 
-- specification-first development from SpecOps;
-- OpenAI's current Codex guidance on persistent repository context, issue-like goals, lightweight backlogs, progressive disclosure, and first-class plans for complex work;
-- project-specific anti-loop, anti-bloat, and deep-verification rules for long-running Goal Mode.
+The official TZ is not available yet. Development continues on the complete generic routing logic defined by SPEC-001/002/003. External API/persistence/judge contracts remain replaceable.
 
-Development is already active before the full TZ. The goal is to implement stable, reversible Ruby foundations now while keeping TZ-dependent interfaces/infrastructure replaceable.
+## 1. Operating loop
 
-## 1. The operating loop
+For non-trivial work:
 
-For a non-trivial goal, use this cycle:
+`Discover -> Specify -> Plan -> Implement -> Verify -> Review -> Reconcile -> Discover next gap`
 
-`Discover -> Specify -> Plan -> Implement -> Verify -> Review -> Reconcile`
-
-Do not mechanically produce artifacts for every phase. The phases are reasoning/quality gates; create files only when the information must persist beyond the current run.
+The final discovery step is mandatory. A verified slice does not imply that the surrounding phase/version is complete.
 
 ### Discover
 
-- Read `AGENTS.md` and the smallest relevant part of the governing specification.
-- Read `docs/TESTING.md` when the change affects financial/routing behavior.
-- Inspect the active ExecPlan, existing code, tests, and reference/simulator model before proposing structure.
-- Identify externally meaningful behavior, invariants, existing patterns, and actual constraints.
-- Search official/current documentation when behavior depends on a versioned external API/library rather than guessing.
-- Do not explore the entire repository when the goal has a clear local scope.
+- Read `AGENTS.md`, `docs/ROADMAP.md`, `docs/COMPLETION_POLICY.md` and the active ExecPlan for project-wide work.
+- Read the smallest governing SPEC-001/002/003 sections for the change.
+- Inspect actual code/tests/reference/simulator before proposing structure.
+- Identify behavior, invariants, concurrency boundaries and existing assumptions.
+- Inspect current backlog/discoveries for interactions with the slice.
+- Use official/current external documentation only when behavior depends on a versioned external contract/library.
 
 ### Specify
 
-Before writing behavior-changing code, ensure the desired behavior is covered by the governing spec and has testable acceptance criteria.
+Before behavior-changing code, ensure desired behavior is explicit and testable.
 
-If the requirement is missing:
+- Durable domain rule -> update the governing specification if needed.
+- Reversible low-impact ambiguity -> choose a conservative typed/configurable assumption.
+- High-impact ambiguity involving money safety or authoritative external semantics -> investigate/escalate rather than inventing a contract.
 
-- for a reversible, low-impact detail, choose a conservative assumption and record it if it will matter later;
-- for a durable domain rule, update the spec as part of the change;
-- for a high-impact ambiguity involving money safety, official hackathon scoring/acceptance semantics, irreversible data behavior, or an external contract, surface it instead of inventing an answer.
-
-Pre-TZ implementation may proceed against explicitly provisional semantics if the boundary is reversible and the assumption is already documented. Do not turn a provisional default into an irreversible external contract.
-
-The spec is not bureaucracy. Keep it as small as necessary to make behavior unambiguous and verifiable.
+SPEC-003 prevents scope shrink: unknown official defaults are normally represented as replaceable configuration, not omitted capability families.
 
 ### Plan
 
-Use the smallest planning mechanism that fits the task.
+Small changes may use a short internal checklist. Complex/risky work updates the active ExecPlan.
 
-**Small change:** keep a short internal checklist.
+Current plan:
 
-**Complex change:** create/update an execution plan when at least one is true:
+`docs/exec-plans/active/pre-tz-comprehensive-core.md`
 
-- the change spans several domain boundaries/modules;
-- it changes payout lifecycle, allocation semantics, concurrency, idempotency, or recovery safety;
-- it requires a migration or compatibility strategy;
-- it is expected to take multiple coherent implementation slices;
-- there are important decisions that a later agent run must inherit.
+Use `docs/PLANS.md` for plan protocol.
 
-Use `docs/PLANS.md`. Active plans live under `docs/exec-plans/active/`; completed durable plans may move to `docs/exec-plans/completed/`.
+A useful plan records:
 
-The current pre-TZ foundation plan is `docs/exec-plans/active/pre-tz-foundation.md` until completed/replaced.
+- Version/Phase/Slice Goal;
+- governing requirements;
+- acceptance/invariants;
+- verification layers;
+- current-state evidence;
+- implementation path;
+- discoveries/decisions;
+- rolling next actions;
+- blockers/risks.
 
-A useful execution plan contains:
-
-- goal and non-goals;
-- governing spec/acceptance criteria;
-- required verification layers from `docs/TESTING.md`;
-- current-state findings;
-- implementation slices;
-- verification commands/evidence;
-- decision log for material choices;
-- progress/checkpoints;
-- remaining risks/blockers.
-
-Do not turn plans into diaries of every command.
+A plan is not allowed to make completion easier by narrowing the Version Goal around existing code.
 
 ### Implement
 
-- Work in the smallest coherent vertical slice that can be verified.
-- Prefer a simple working domain model over speculative abstraction.
-- Keep the deterministic financial kernel independent from optional adaptive optimization.
-- Normalize provider-specific behavior at boundaries rather than leaking provider codes into core routing rules.
-- Keep all product/reference/simulator/test domain logic in Ruby.
-- Build deterministic test seams for time/random/provider I/O only where the domain actually depends on them.
-- When a tangential improvement is useful but not required for the active goal, add it to `docs/BACKLOG.md` instead of widening the change.
-- Do not “future-proof” by implementing hypothetical features from parked backlog items.
+- Work in the smallest coherent vertical slice that produces observable behavior.
+- Fix P0 correctness before “smart” optimization.
+- Keep deterministic financial logic independent from provider transport/framework concerns.
+- Normalize provider-specific semantics at the boundary.
+- Keep all executable domain/reference/simulator/test logic Ruby-only.
+- Make time/random/provider I/O deterministic where domain behavior depends on them.
+- Add internal structure only when it protects an invariant, improves replay/testability or removes meaningful duplication.
+- Do not add framework/database/queue/microservice/ML infrastructure without current evidence/TZ need.
 
 ### Verify
 
-Verification should prove the behavior that matters, not merely that files changed.
+Verification proves behavior, not activity.
 
-`docs/TESTING.md` is the governing verification strategy. Choose the relevant layers based on risk:
+Use relevant layers from `docs/TESTING.md` and SPEC-003:
 
-- focused unit/value tests;
-- executable acceptance/regression scenarios;
+- unit/value tests;
+- deterministic acceptance/regressions;
+- independent oracle comparison;
 - property/invariant tests;
-- state-machine/model-based tests;
-- controlled concurrency/interleaving tests;
-- provider contract tests;
-- end-to-end fault scenarios;
-- stress/performance checks where relevant.
+- state-machine/model histories;
+- controlled concurrency/interleavings;
+- provider/transport fault simulation;
+- duplicate/delayed/out-of-order event scenarios;
+- replay equivalence;
+- stress/benchmarks after correctness;
+- fault/mutation seeding where valuable.
 
-For financial/routing work, verify applicable SPEC-001 behavior and reusable invariants, especially:
+A focused green test proves its slice only. Run the smallest broader suite capable of exposing interaction regressions before marking a slice/phase verified.
 
-- economic ownership and duplicate intent behavior;
-- `UNKNOWN` vs safe failure;
-- fallback after safe release only;
-- terminal recipient/payout failure preventing pointless provider hopping;
-- count/volume discrepancy;
-- concurrent committed allocations;
-- opportunity-aware denominators;
-- outcome attribution;
-- duplicate/delayed/out-of-order observations;
-- primary assignment vs settlement accounting;
-- no-safe-route behavior.
-
-Start with the narrowest check that can falsify the approach quickly, then run the relevant broader suite before completion.
-
-Random/property/model tests must be reproducible by seed/trace. A material randomized failure should be reduced and preserved as a deterministic regression when practical.
-
-Do not use automatic test retries to hide flakiness. If a test/check cannot run, report exactly why and what evidence was used instead. Never state that checks passed if they were not run.
+Never claim an old or unavailable check passed.
 
 ### Review
 
-Before declaring the goal done, review the complete diff as a skeptical maintainer:
+Review changed code as a skeptical maintainer:
 
-- Does every behavior map to the governing goal/spec?
-- Did the implementation accidentally weaken a financial invariant?
-- Is any provider-specific assumption leaking into core logic?
-- Is provisional TZ-dependent behavior isolated?
-- Is there speculative infrastructure or abstraction with no current requirement?
-- Did the change introduce duplicate concepts/helpers or a second implementation in another language?
-- Are failure/empty/concurrent/delayed paths tested where relevant?
-- Does the test oracle independently verify the production behavior rather than call the same helper?
-- Did an implementation convenience silently become a public contract?
-- Is the code legible enough for a future agent run to modify safely?
+- Does it preserve one economic intent / ownership safety?
+- Does it accidentally conflate primary allocation, recovery and settlement?
+- Can hard eligibility/capacity/health be bypassed by ranking/allocation pressure?
+- Are transport ambiguity and provider-operation semantics explicit?
+- Is hidden mutable state bypassing facts/replay?
+- Are event ordering rules actually justified?
+- Are duplicate/late/concurrent paths covered?
+- Is a provider/TZ assumption leaking into core behavior?
+- Did production/reference implementations accidentally share the same algorithm?
+- Did the change introduce unnecessary abstraction/infrastructure?
 
-Fix material findings; do not churn working code for stylistic perfection.
+Fix material findings before advancing.
 
 ### Reconcile
 
-At the end of the task:
+After a slice:
 
-- update specification only for real domain/product decisions;
-- update the backlog for deferred cross-cutting work;
-- update the active execution plan if one exists;
-- update decisions/architecture/testing docs only for durable changes;
-- preserve failing seeds/regressions that reveal a real defect class;
-- remove obsolete planning notes instead of letting them rot;
-- report what changed, what was verified, and any material assumptions/blockers.
+- update active ExecPlan progress/evidence/discoveries;
+- update specs/decisions only for real durable behavior;
+- update backlog for discovered work outside the current slice but inside/later version;
+- preserve deterministic regressions/seeds;
+- ensure docs are not made stale by the change;
+- select the next required slice immediately.
 
-## 2. Goal Mode autonomy policy
+Do not stop simply because the originally selected task is done if the current Version Goal still has locally actionable work.
 
-Goal Mode should continue through routine engineering work without constant confirmation.
+## 2. Status and completion discipline
 
-### Proceed autonomously
+Use `docs/COMPLETION_POLICY.md` status vocabulary.
 
-Proceed when the choice is reversible and does not define unknown business semantics, for example:
+Normal progression:
 
-- local Ruby naming/organization consistent with the repo;
-- test structure and deterministic simulator structure;
-- refactoring needed to make requested behavior clear/testable;
-- standard-library vs a small Ruby helper/gem decision when both preserve the contract and runtime risk is low;
-- local performance improvements that preserve behavior and are evidenced.
+`SLICE_IMPLEMENTED -> SLICE_VERIFIED -> PHASE_VERIFIED -> ... -> VERSION_CANDIDATE -> closure audit -> VERSION_COMPLETE`
 
-### Proceed with a recorded assumption
+`VERSION_CANDIDATE` is not a ceremonial label. It triggers a fresh repository-wide attempt to disprove completeness.
 
-Use a conservative assumption when uncertainty is real but reversible and low-risk. Record it in the active plan/backlog/decisions only if later tasks can depend on it.
+The agent must not use “all done”, “nothing left”, or “wait for TZ” before closure protocol passes.
 
-Do not create an “assumptions log” full of trivial choices.
+Green tests/checklists are necessary evidence but not proof that:
 
-### Escalate
+- all normative behavior exists;
+- interactions are complete;
+- no untested design flaw exists;
+- no current-version backlog item remains;
+- docs match code.
 
-Escalate only when proceeding could materially choose the wrong product:
+## 3. Mandatory closure discovery
 
-- double-payout/economic ownership semantics;
-- meaning of timeout/unknown under a provider contract;
-- target allocation accounting semantics from the official TZ when the choice would harden a public/persistence contract;
-- irreversible data/migration behavior;
-- public API/compatibility decisions that cannot be changed cheaply;
-- destructive operations outside the explicit goal.
+When planned phases appear complete, perform the passes from `docs/COMPLETION_POLICY.md`.
 
-If repository code/tests or official documentation can resolve the issue, investigate first.
+At minimum:
 
-## 3. Anti-loop protocol
+1. reconcile source against SPEC-001/002/003 requirement by requirement;
+2. inspect every mandatory SPEC-003 capability family and interaction;
+3. search repository for TODO/FIXME/NotImplemented/placeholders/prose-parsing/duplicate semantics/untested public behavior;
+4. perform deliberate adversarial counterexamples;
+5. run current full verification;
+6. review every NOW/P0/P1 item;
+7. classify remaining work as locally actionable, true TZ-blocked or optional later;
+8. audit documentation consistency.
 
-Long-running agents must detect when work is not converging.
+Any material locally solvable finding reopens development. Phase checkboxes may move backwards or gain new slices.
 
-### Rule A — no identical retries without changed state
+## 4. Goal Mode autonomy
 
-Do not rerun the same command/action with the same relevant state and expect a different result. A legitimate repeat must have a reason: a fix/config/state change or explicit reproducibility verification.
+Proceed autonomously when choices are reversible and preserve governing semantics, including:
 
-### Rule B — change tactic after two similar failures
+- local Ruby organization;
+- tests/reference/simulator design;
+- internal refactors that clarify invariant ownership;
+- explicit conservative defaults for generic policy/health/budget configuration;
+- standard-library/small dependency choices with low runtime risk;
+- measured performance improvements preserving behavior.
 
-After two failed attempts based on the same hypothesis or mechanism, stop patching symptoms. Reassess the failure, inspect evidence, and change tactic/tool/design.
+Escalate only when proceeding would choose authoritative product semantics or create an irreversible external contract.
 
-### Rule C — reduce after three distinct failures
+The unknown official TZ does not require escalation for generic capabilities already defined by SPEC-003.
 
-After three materially different approaches fail:
+## 5. Anti-loop protocol
 
-1. reduce to the smallest reproducer;
-2. state what is known vs assumed;
-3. inspect authoritative docs/runtime evidence;
-4. select a simpler route or record a concrete blocker.
+### No identical retries without changed state
 
-Do not spend the remainder of Goal Mode cycling among the same approaches.
+Repeat an action only after a meaningful fix/config/state change or to verify reproducibility.
 
-### Rule D — prevent local fixation
+### Change tactic after two similar failures
 
-Maintain awareness of acceptance criteria and verification obligations. If a local issue is not blocking the goal, park it. Do not optimize one function, lint detail, abstraction, or benchmark while core acceptance criteria remain unfinished.
+Reassess evidence/hypothesis/design instead of patching symptoms.
 
-### Rule E — stop when done
+### Reduce after three distinct failures
 
-When the goal and quality bar are verified, stop. Do not repeatedly rewrite correct code for subjective elegance.
+Create the smallest reproducer, separate facts from assumptions, inspect authoritative evidence and choose a simpler route or document a real blocker.
 
-## 4. Scope control and architecture taste
+### Prevent local fixation
 
-The project should grow from requirements and verified invariants, not from a hypothetical production diagram.
+Do not optimize style/one function while higher-priority Version Goal gaps remain.
 
-### Add structure when earned
+### Do not optimize completion
 
-A new abstraction/module/dependency is justified when it isolates a real external boundary, removes proven duplication, makes an invariant testable, satisfies a confirmed requirement, or addresses a measured constraint.
+Never respond to a difficult remaining requirement by weakening the requirement, moving it to `LATER`, or redefining the version around current implementation.
 
-A testability seam can also earn structure when hidden time/random/I/O would otherwise make safety behavior nondeterministic or untestable.
+## 6. Full pre-TZ development rule
 
-### Do not add by default
+Before TZ, implement all mandatory SPEC-003 domain capability families.
 
-Do not add merely for future possibility:
+Examples of unknowns that should become configuration rather than omissions:
 
-- web frameworks;
-- production databases/ORMs;
-- queue/event-bus infrastructure;
-- background worker systems;
+- allocation window/tolerance;
+- provider capacity limits;
+- retry/switch/resolution budgets;
+- health thresholds/cooldowns;
+- provider priority/cost/latency inputs;
+- timeouts/TTL where provider contract supports them.
+
+Keep final API/storage/provider payload representation unfixed.
+
+This is the intended balance:
+
+**complete routing logic; minimal speculative infrastructure.**
+
+## 7. Scope control
+
+Add structure when earned by current behavior/invariants/testability/measurement.
+
+Do not add by default:
+
+- Rails/Sinatra/Hanami;
+- production DB/ORM;
+- queue/event bus/background jobs;
 - microservices;
-- caching;
-- distributed locks/consensus;
-- provider-independent “platform” abstractions with no second use;
-- ML/RL/bandits;
-- custom metrics/tracing stacks.
+- distributed locks;
+- final public API/UI;
+- live vendor SDKs;
+- custom observability platform;
+- ML/RL/bandits.
 
-The agent is free to choose a better local implementation than this document could predict, provided it preserves verified boundaries/invariants and demonstrates correctness.
+## 8. Backlog protocol
 
-## 5. New-code quality rules
+`docs/BACKLOG.md` is durable priority state.
 
-For new Ruby code:
+- `NOW` / P0 / P1: must be reconciled before v0.2 closure unless explicitly superseded.
+- `BLOCKED`: genuinely official-TZ-specific unknowns.
+- `NEXT`: post-TZ integration.
+- `LATER`: optional optimization/evidence-driven work.
 
-- choose explicit domain names over generic `Manager`, `Helper`, `Service` unless the concept is genuinely that broad;
-- keep side effects at clear boundaries;
-- use exact money representation;
-- make failure/outcome semantics explicit rather than relying on exceptions as business states;
-- prefer composable objects/functions with narrow responsibilities;
-- avoid metaprogramming unless it removes real complexity and remains easy to test/debug;
-- avoid global mutable state for routing/allocation correctness;
-- make concurrency-sensitive state transitions explicit and test them;
-- keep adaptive scoring optional behind deterministic eligibility/safety logic;
-- keep time/random/provider I/O injectable/controllable only where needed for deterministic tests;
-- do not optimize allocations or object allocation based only on intuition—use constraints/benchmarks when performance matters.
+An agent may not move a current required item to `LATER` solely to close the version.
 
-Comments should explain invariants/reasons, not paraphrase obvious code.
+## 9. Official TZ transition
 
-## 6. Backlog protocol
+When the official TZ arrives:
 
-`docs/BACKLOG.md` is the durable lightweight backlog. GitHub Issue #1 is a discussion/tracking surface.
+1. read it fully;
+2. move to roadmap v0.3;
+3. classify SPEC-001/002/003 as `CONFIRMED/CHANGED/REMOVED/NEW/AMBIGUOUS`;
+4. update reference/oracle/tests with semantic changes before or alongside production code;
+5. adapt the core;
+6. choose only now-justified API/framework/persistence/provider architecture;
+7. turn official load/scoring constraints into executable gates.
 
-Use the backlog for:
+Do not discard the v0.2 core unless authoritative requirements genuinely invalidate it.
 
-- active pre-TZ foundation work (`NOW`);
-- work discovered during a task but outside scope;
-- unanswered full-TZ questions (`BLOCKED`);
-- post-TZ follow-up (`NEXT`);
-- optional enhancements that need evidence before implementation (`LATER`).
+## 10. Evidence hierarchy
 
-Do not use it as a dumping ground for every idea or as a license to expand the current goal. `NOW` indicates priority but the active Goal/ExecPlan still defines the actual work slice.
+When uncertain prefer:
 
-## 7. Pre-TZ and full-TZ protocol
-
-### Before the TZ
-
-Do implement the stable foundation now:
-
-- Ruby-only deterministic core;
-- reference/oracle model;
-- deep test/simulator harness;
-- economic ownership/recovery semantics;
-- count/volume allocation mechanics;
-- minimal trace/projections;
-- concurrency correctness tests;
-- baseline performance measurements.
-
-Do not harden guessed API/persistence/provider/UI semantics.
-
-### When the official TZ arrives
-
-1. snapshot/read it fully;
-2. reconcile SPEC-001 item by item as `CONFIRMED`, `CHANGED`, `REMOVED`, `NEW`, `AMBIGUOUS`;
-3. resolve the blocked questions in the backlog;
-4. update provisional semantics and acceptance criteria;
-5. update the independent reference model/oracles/tests first or in the same coherent change;
-6. adapt dependent production code;
-7. only then select newly justified external framework/persistence/API/integration architecture;
-8. convert official load/scoring constraints into explicit test/performance gates.
-
-Do not discard the pre-TZ foundation unless the official requirement genuinely invalidates it.
-
-## 8. Evidence hierarchy
-
-When uncertain, prefer evidence in this order:
-
-1. direct task/user instruction;
-2. official hackathon TZ/contracts;
-3. repository specification and executable tests/reference model;
-4. observed runtime/provider behavior;
-5. official language/library/provider documentation;
-6. well-established engineering references;
+1. direct current user instruction;
+2. official TZ/contracts when available;
+3. SPEC-003/002/001 and durable repository decisions;
+4. executable reference/tests/current runtime evidence;
+5. official language/provider/library documentation;
+6. established engineering evidence;
 7. assumptions/heuristics.
 
-Do not use a blog/heuristic to override an explicit product contract.
-
-## 9. References
-
-Canonical references live in `docs/RESEARCH.md` to avoid duplicating the knowledge base here.
-
-RubyRouting intentionally adapts strict SpecOps for Goal Mode: low-risk reversible ambiguity should not block autonomous progress, while high-impact financial/product ambiguity must remain explicit and executable verification must be stronger than ordinary happy-path testing.
+A heuristic never overrides a financial invariant or authoritative contract.

@@ -15,7 +15,7 @@ The core problem is not “pick the highest-score PSP”. It is a constrained on
 
 This document fixes domain logic that should survive most reasonable versions of the full TZ. It intentionally does **not** choose a framework, storage technology, API shape, queue, deployment topology, provider SDK, or ML algorithm.
 
-The repository is **not waiting for the full TZ before coding**. Stable/reversible parts of this baseline are being implemented now according to `docs/exec-plans/active/pre-tz-foundation.md` and verified under `docs/TESTING.md`.
+The repository is **not waiting for the full TZ before coding**. Stable/reversible parts of this baseline are being implemented now according to `docs/exec-plans/active/pre-tz-comprehensive-core.md` and verified under `docs/TESTING.md`.
 
 Safe pre-TZ implementation includes:
 
@@ -91,12 +91,15 @@ A percentage alone is insufficient. A complete allocation policy must eventually
 
 **Provisional default until the TZ says otherwise:** count/volume shares describe **primary assignment allocation**, while actual settlement distribution is reported separately. This assumption must remain isolated and reversible.
 
-The v0.1 in-memory implementation uses the current feasible-provider cohort plus
-policy epoch as its provisional allocation window. When that cohort changes, the
-allocation projection starts a fresh window; historical opportunity/assignment
-facts remain preserved. This prevents a provider outage or ineligibility period
-from creating unbounded catch-up debt when the provider returns. The official TZ
-may replace this window/accounting rule during explicit reconciliation.
+The current in-memory implementation uses an explicit policy identity/epoch ledger
+and evaluates the current functional opportunity cohort as the allocation
+denominator. A transient live availability, capacity or health change does not
+erase the existing ledger or start a hidden fresh window; it is recorded as typed
+runtime deviation and the current feasible set is re-evaluated for each decision.
+The `opportunity_cohort` and `policy_epoch` window values are both represented,
+with the current pre-TZ mapping documented in the active ExecPlan and replaceable
+when the official TZ defines exact window semantics. The official TZ may replace
+this provisional accounting/window rule during explicit reconciliation.
 
 ## 6. Opportunity-aware allocation
 

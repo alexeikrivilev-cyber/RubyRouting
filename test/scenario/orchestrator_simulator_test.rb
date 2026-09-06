@@ -37,6 +37,22 @@ class OrchestratorSimulatorTest < Minitest::Test
     assert_equal 1, second.payout.attempt_count
   end
 
+  def test_adapter_ids_are_canonicalized_at_the_application_boundary
+    provider = TestSupport::Simulator::ScriptedProvider.new(
+      provider_id: "A",
+      steps: [TestSupport::Simulator::Step.success]
+    )
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+
+    result = orchestrator(coordinator, " A " => provider)
+      .submit(intent: intent("canonical-adapter"), policy: one_provider_policy)
+
+    assert_equal :success, result.status
+    assert_equal [[:initiate, "canonical-adapter:canonical-adapter:operation:1"]], provider.calls
+  end
+
   def test_safe_failure_is_followed_by_fresh_fallback_and_success
     provider_a = TestSupport::Simulator::ScriptedProvider.new(
       provider_id: "A",
@@ -84,6 +100,33 @@ class OrchestratorSimulatorTest < Minitest::Test
     ], provider_a.calls
     assert_empty provider_b.calls
     assert_equal 1, second.payout.attempt_count
+  end
+
+  def test_unresolved_operation_keeps_contract_after_provider_is_disabled_for_new_routes
+    provider_a = TestSupport::Simulator::ScriptedProvider.new(
+      provider_id: "A",
+      capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true),
+      steps: [TestSupport::Simulator::Step.unknown, TestSupport::Simulator::Step.success]
+    )
+    provider_b = TestSupport::Simulator::ScriptedProvider.new(
+      provider_id: "B",
+      steps: [TestSupport::Simulator::Step.success]
+    )
+    coordinator = RubyRouting::State::Coordinator.new(opportunities: opportunities("A", "B", lookup_a: true))
+    app = orchestrator(coordinator, "A" => provider_a, "B" => provider_b)
+    payout = intent("disabled-after-commit")
+
+    first = app.submit(intent: payout, policy: two_provider_policy)
+    coordinator.set_provider_availability("A", available: false)
+    second = app.resume(payout_id: payout.id, policy: two_provider_policy)
+
+    assert_equal :unknown, first.status
+    assert_equal :success, second.status
+    assert_equal [
+      [:initiate, "disabled-after-commit:disabled-after-commit:operation:1"],
+      [:resolve, "disabled-after-commit:disabled-after-commit:operation:1"]
+    ], provider_a.calls
+    assert_empty provider_b.calls
   end
 
   def test_idempotent_retry_reuses_same_provider_operation
@@ -134,6 +177,36 @@ class OrchestratorSimulatorTest < Minitest::Test
     assert_equal [
       [:initiate, "pending-1:pending-1:operation:1"],
       [:resolve, "pending-1:pending-1:operation:1"]
+    ], provider_a.calls
+  end
+
+  def test_non_releasable_provider_failure_enters_unknown_and_can_be_resolved
+    provider_a = TestSupport::Simulator::ScriptedProvider.new(
+      provider_id: "A",
+      capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true),
+      steps: [
+        TestSupport::Simulator::Step.temporary_failure(safe_to_release: false),
+        TestSupport::Simulator::Step.success
+      ]
+    )
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true)
+      )]
+    )
+    app = orchestrator(coordinator, "A" => provider_a)
+    payout = intent("non-releasable-provider-failure")
+
+    first = app.submit(intent: payout, policy: one_provider_policy)
+    second = app.resume(payout_id: payout.id, policy: one_provider_policy)
+
+    assert_equal :unknown, first.status
+    assert_equal :unknown, first.payout.current_operation_phase
+    assert_equal :success, second.status
+    assert_equal [
+      [:initiate, "non-releasable-provider-failure:non-releasable-provider-failure:operation:1"],
+      [:resolve, "non-releasable-provider-failure:non-releasable-provider-failure:operation:1"]
     ], provider_a.calls
   end
 
@@ -188,6 +261,146 @@ class OrchestratorSimulatorTest < Minitest::Test
     assert_empty provider_b.calls
   end
 
+  def test_definitely_not_sent_transport_failure_releases_ownership
+    provider = TransportProvider.new(
+      provider_id: "A",
+      result: RubyRouting::ProviderTransportResult.definitely_not_sent(message: "connection rejected")
+    )
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+
+    result = orchestrator(coordinator, "A" => provider)
+      .submit(intent: intent("not-sent"), policy: one_provider_policy)
+
+    assert_equal :defer, result.action
+    assert_equal :safe_route_failure, result.status
+    assert_nil result.payout.ownership
+    assert_equal 1, result.payout.attempt_count
+  end
+
+  def test_ambiguous_transport_failure_is_unknown_and_keeps_ownership
+    provider = TransportProvider.new(
+      provider_id: "A",
+      result: RubyRouting::ProviderTransportResult.ambiguous_after_possible_send(message: "timeout")
+    )
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+
+    result = orchestrator(coordinator, "A" => provider)
+      .submit(intent: intent("ambiguous-send"), policy: one_provider_policy)
+
+    assert_equal :wait, result.action
+    assert_equal :unknown, result.status
+    assert_equal "A", result.payout.ownership.provider_id
+    assert_equal :unknown, result.payout.current_operation_phase
+  end
+
+  def test_unclassified_adapter_fault_is_conservatively_ambiguous_and_resolvable
+    provider = Class.new do
+      def initialize
+        @resolved = false
+      end
+
+      def initiate(_request)
+        raise RuntimeError, "adapter exploded"
+      end
+
+      def resolve(request)
+        @resolved = true
+        RubyRouting::ProviderObservation.new(
+          observation_id: "generic-fault-resolution",
+          payout_id: request.payout_id,
+          provider_id: request.provider_id,
+          operation_id: request.operation_id,
+          attempt_id: request.attempt_id,
+          outcome: RubyRouting::NormalizedOutcome.success(attribution: :provider)
+        )
+      end
+    end.new
+    capabilities = RubyRouting::ProviderCapabilities.new(status_lookup: true)
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A", capabilities: capabilities)]
+    )
+    app = orchestrator(coordinator, "A" => provider)
+    payout = intent("unclassified-adapter-fault")
+
+    first = app.submit(intent: payout, policy: one_provider_policy)
+    second = app.resume(payout_id: payout.id, policy: one_provider_policy)
+    analytics = RubyRouting::Projections::Analytics.from_facts(coordinator.facts)
+
+    assert_equal :unknown, first.status
+    assert_equal :unknown, first.payout.current_operation_phase
+    assert_equal :success, second.status
+    assert_equal({ ambiguous_after_possible_send: 1 }, analytics.transport_count_by_kind)
+  end
+
+  def test_malformed_provider_observation_is_not_applied_to_another_operation
+    provider = Class.new do
+      def initiate(request)
+        RubyRouting::ProviderObservation.new(
+          observation_id: "malformed-observation",
+          payout_id: request.payout_id,
+          provider_id: request.provider_id,
+          operation_id: "wrong-operation",
+          attempt_id: request.attempt_id,
+          outcome: RubyRouting::NormalizedOutcome.success(attribution: :provider)
+        )
+      end
+
+      def resolve(request)
+        RubyRouting::ProviderObservation.new(
+          observation_id: "malformed-observation-resolution",
+          payout_id: request.payout_id,
+          provider_id: request.provider_id,
+          operation_id: request.operation_id,
+          attempt_id: request.attempt_id,
+          outcome: RubyRouting::NormalizedOutcome.success(attribution: :provider)
+        )
+      end
+    end.new
+    capabilities = RubyRouting::ProviderCapabilities.new(status_lookup: true)
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A", capabilities: capabilities)]
+    )
+    app = orchestrator(coordinator, "A" => provider)
+    payout = intent("malformed-observation")
+
+    first = app.submit(intent: payout, policy: one_provider_policy)
+    second = app.resume(payout_id: payout.id, policy: one_provider_policy)
+    analytics = RubyRouting::Projections::Analytics.from_facts(coordinator.facts)
+
+    assert_equal :unknown, first.status
+    assert_equal :success, second.status
+    assert_equal({ ambiguous_after_possible_send: 1 }, analytics.transport_count_by_kind)
+  end
+
+  def test_not_implemented_adapter_fault_is_conservatively_ambiguous
+    provider = Class.new do
+      def initiate(_request)
+        raise NotImplementedError, "adapter has no initiate implementation"
+      end
+
+      def resolve(_request)
+        raise NotImplementedError, "adapter has no resolve implementation"
+      end
+    end.new
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+
+    result = orchestrator(coordinator, "A" => provider)
+      .submit(intent: intent("not-implemented-adapter"), policy: one_provider_policy)
+
+    assert_equal :unknown, result.status
+    assert_equal :wait, result.action
+    assert_equal :unknown, result.payout.current_operation_phase
+    assert_equal 1, result.payout.provider_interaction_count
+    assert_equal({ ambiguous_after_possible_send: 1 },
+                  RubyRouting::Projections::Analytics.from_facts(coordinator.facts).transport_count_by_kind)
+  end
+
   private
 
   def orchestrator(coordinator, providers)
@@ -217,5 +430,24 @@ class OrchestratorSimulatorTest < Minitest::Test
 
   def two_provider_policy
     RubyRouting::RoutingPolicy.new(id: "policy", epoch: "1", measure: :count, targets: { "A" => 1, "B" => 1 })
+  end
+
+  class TransportProvider
+    def initialize(provider_id:, result:)
+      @provider_id = provider_id
+      @result = result
+    end
+
+    def initiate(request)
+      unless request.provider_id == @provider_id
+        raise ArgumentError, "request provider does not match adapter"
+      end
+
+      @result
+    end
+
+    def resolve(_request)
+      @result
+    end
   end
 end

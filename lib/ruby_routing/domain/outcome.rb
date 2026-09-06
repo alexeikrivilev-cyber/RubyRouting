@@ -87,10 +87,12 @@ module RubyRouting
 
   class ProviderObservation
     attr_reader :observation_id, :payout_id, :provider_id, :operation_id, :attempt_id,
-                :outcome, :provider_reference, :sequence, :observed_at
+                :outcome, :provider_reference, :sequence, :observed_at,
+                :transport_kind
 
     def initialize(observation_id:, payout_id:, provider_id:, operation_id:, attempt_id:,
-                   outcome:, provider_reference: nil, sequence: nil, observed_at: nil)
+                   outcome:, provider_reference: nil, sequence: nil, observed_at: nil,
+                   transport_kind: nil)
       @observation_id = normalize_id(observation_id, "observation id")
       @payout_id = normalize_id(payout_id, "payout id")
       @provider_id = normalize_id(provider_id, "provider id")
@@ -107,6 +109,10 @@ module RubyRouting
       @provider_reference = provider_reference&.to_s&.freeze
       @sequence = sequence
       @observed_at = observed_at&.freeze
+      if transport_kind && !RubyRouting::ProviderTransportResult::KINDS.include?(transport_kind.to_sym)
+        raise ArgumentError, "unsupported transport kind"
+      end
+      @transport_kind = transport_kind&.to_sym
       freeze
     end
 
@@ -117,6 +123,28 @@ module RubyRouting
         raise ArgumentError, "#{label} must be a non-empty String or Symbol"
       end
 
+      normalized = value.to_s.strip
+      raise ArgumentError, "#{label} must be non-empty" if normalized.empty?
+
+      normalized.freeze
+    end
+  end
+
+  class EconomicConflict
+    attr_reader :payout_id, :provider_id, :operation_id, :attempt_id, :reason
+
+    def initialize(payout_id:, provider_id:, operation_id:, attempt_id:, reason:)
+      @payout_id = normalize_id(payout_id, "payout id")
+      @provider_id = normalize_id(provider_id, "provider id")
+      @operation_id = normalize_id(operation_id, "operation id")
+      @attempt_id = normalize_id(attempt_id, "attempt id")
+      @reason = reason.to_sym
+      freeze
+    end
+
+    private
+
+    def normalize_id(value, label)
       normalized = value.to_s.strip
       raise ArgumentError, "#{label} must be non-empty" if normalized.empty?
 

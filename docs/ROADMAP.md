@@ -1,493 +1,467 @@
 # Long-Horizon Development Roadmap
 
-This document defines the project-level development path for RubyRouting. It is deliberately more stable than a task checklist and less prescriptive than an implementation design.
+## 1. Project Goal
 
-The roadmap tells a long-running coding agent **what outcome to reach next and how to know that it is reached**. The active ExecPlan tells the agent how the current version is progressing. The specification remains authoritative for behavior.
+Build a competitive, correct, explainable smart payout-routing system in Ruby for Hack.Genesis.
 
-## 1. Goal hierarchy
+The pre-TZ period is used to implement **all high-value generic routing mechanics** that can be designed, configured, simulated and verified without guessing the official external contract. The official TZ should mainly trigger reconciliation/integration, not first-time construction of the financial core.
 
-Work is organized at four levels:
+Work hierarchy:
 
-1. **Project Goal** — build a competitive, correct, explainable smart payout-routing system in Ruby for the Hack.Genesis case.
-2. **Version Goal** — the complete observable capability expected from the current project version.
-3. **Phase Goal** — a coherent capability needed to reach the version goal.
-4. **Slice Goal** — the next smallest vertical unit that can be implemented and independently verified.
+`Project Goal -> Version Goal -> Phase Goal -> Slice Goal`
 
-The agent should reason from top to bottom and execute from bottom to top.
+A verified slice or phase is a checkpoint, never an automatic stop condition.
 
-A Slice Goal is not the end of a run. After a slice is verified, the agent updates the living plan, selects the next highest-value unfinished slice in the active version, and continues.
+## 2. Current Version Goal
 
-## 2. Long-session continuation contract
+**v0.2 — Pre-TZ Comprehensive Routing Core — CURRENT**
 
-A Goal Mode run is expected to continue through multiple phases without waiting for routine approval.
+v0.2 must turn the first deterministic foundation into a coherent generic payout orchestration engine covering safety, policy, allocation, eligibility, capacity, health, ranking, recovery, lifecycle, replay, analytics and concurrency together.
 
-The agent MUST NOT voluntarily stop merely because:
+Normative scope comes from SPEC-001 + SPEC-002 + SPEC-003.
 
-- one file, class, test, milestone, or phase is complete;
-- the next local implementation choice is not uniquely determined;
-- a test failed and needs debugging;
-- a reversible assumption is required;
-- a dependency/tool choice needs ordinary engineering judgment;
-- the current solution is not aesthetically perfect;
-- a tangential improvement was discovered;
-- the agent has already made substantial progress.
+Active plan: `docs/exec-plans/active/pre-tz-comprehensive-core.md`.
 
-After each verified slice:
+Completion authority: `docs/COMPLETION_POLICY.md`.
 
-1. update the active ExecPlan so `Progress`, discoveries, and material decisions reflect reality;
-2. run the appropriate narrow/full verification gate;
-3. inspect the remaining version goal;
-4. choose the next unblocked slice with the best dependency/value leverage;
-5. continue implementation.
+## 3. Continuation contract
 
-### Permitted stop conditions
+Goal Mode continues while required current-version work is locally actionable.
 
-A run may stop only when one of these conditions is true:
+Stop only when:
 
-**A. Current Version Goal is achieved.**
+1. v0.2 reaches `VERSION_COMPLETE` through the mandatory closure protocol; or
+2. every remaining required v0.2 path passes the genuine external-blocker test.
 
-All version exit criteria are satisfied, relevant checks pass, remaining work belongs to a later version or is explicitly blocked on external information, and the active plan records the outcome.
+The following are not stop reasons:
 
-**B. Genuine external blocker.**
+- all originally planned phases are green;
+- full tests are green;
+- all issues known at session start are fixed;
+- the official TZ is not yet available;
+- a difficult local bug/refactor remains;
+- one subtask is blocked while other required work can advance.
 
-Progress on every remaining path required for the current version depends on something outside the agent's control, such as unavailable official TZ information, missing repository/tool permissions, inaccessible required external service/contracts, or an action requiring explicit authorization that cannot safely be substituted.
-
-A local implementation problem, failing test, uncertain design, missing helper, or difficult bug is **not** an external blocker.
-
-If one phase is blocked but independent current-version work remains, switch to that work rather than stopping.
-
-## 3. Planning style: constrained outcomes, flexible means
-
-The roadmap specifies:
-
-- required behavior/outcomes;
-- dependency order where correctness requires it;
-- verification evidence;
-- forbidden premature commitments;
-- version completion criteria.
-
-It intentionally does **not** prescribe:
-
-- exact class/file names before implementation reveals good boundaries;
-- a fixed object hierarchy;
-- a fixed number of commits;
-- a particular testing gem when standard Ruby is sufficient;
-- micro-level algorithms where the specification permits equivalent correct approaches;
-- production infrastructure before the official case requires it.
-
-The agent may merge, split, or reorder slices inside a phase when evidence supports doing so. It may reorder phases only when dependencies remain satisfied and the active ExecPlan records the reason.
+When planned phases appear complete, move to `VERSION_CANDIDATE`, perform fresh closure discovery and reopen implementation if new gaps are found.
 
 ## 4. Version map
 
-### v0.1 — Pre-TZ Deterministic Foundation — CURRENT
+### v0.1 — Deterministic Foundation — HISTORICAL CHECKPOINT
 
-Purpose: use the pre-TZ period to build a correct, executable, heavily verified Ruby foundation without guessing the final product shell.
+Delivered:
 
-Must contain:
+- CRuby 4.0.6 / Minitest / Rake harness;
+- exact Money and deterministic count/volume allocator;
+- initial economic ownership / UNKNOWN safety;
+- coarse linearizable in-memory coordinator;
+- provider I/O outside lock;
+- provider simulator;
+- initial reference/property/model/concurrency evidence;
+- append-preserved facts and baseline analytics;
+- benchmark baseline.
 
-- canonical Ruby project/test harness;
-- independent Ruby reference/oracle model;
-- exact count/volume allocation baseline;
-- economic intent and ownership semantics;
-- normalized outcomes and safe recovery decisions;
-- deterministic provider/fault simulator;
-- immutable-enough decision/attempt/observation facts and derived projections needed for verification;
-- property/state-machine/concurrency verification infrastructure;
-- deterministic trace/replay diagnostics;
-- baseline performance measurements.
+The 2026-08-27 technical review proved this was not the end of useful pre-TZ development.
 
-Must not freeze without evidence:
+Historical plan: `docs/exec-plans/completed/pre-tz-foundation.md`.
 
-- web framework;
-- production database/ORM;
-- queue/event bus/job system;
-- deployment topology;
-- official provider SDK/contracts;
-- final public API/UI;
-- ML/bandit strategy.
+### v0.2 — Pre-TZ Comprehensive Routing Core — CURRENT
 
-The active plan is `docs/exec-plans/active/pre-tz-foundation.md`.
+Purpose: make the core broadly complete across plausible official-TZ variants while keeping external interfaces replaceable.
 
-### v0.2 — Official TZ Reconciliation and Integration
+### v0.3 — Official TZ Reconciliation and Integration
 
-Entry condition: the full hackathon TZ is available.
+Entry condition: authoritative full case/TZ becomes available.
 
-Purpose: reconcile the pre-TZ model against authoritative requirements and adapt the stable kernel to the actual judge/interface/provider model.
+Purpose:
 
-Expected work:
+- classify SPEC-001/002/003 as `CONFIRMED`, `CHANGED`, `REMOVED`, `NEW`, `AMBIGUOUS`;
+- update spec/oracle/tests with changes;
+- adapt production behavior;
+- choose only now-justified API/framework/persistence/provider integration;
+- turn judge limits/scoring into executable gates.
 
-- classify baseline requirements as `CONFIRMED`, `CHANGED`, `REMOVED`, `NEW`, or `AMBIGUOUS`;
-- update spec, oracle, tests, and production behavior consistently;
-- choose the minimal external architecture justified by the TZ;
-- implement official input/API/provider adapters and persistence only if required;
-- convert official limits/scoring criteria into executable gates;
-- preserve reusable v0.1 invariants rather than rebuilding the core around infrastructure.
+### v0.4 — Competitive/Judged Optimization
 
-### v0.3 — Competitive Feature Complete
+Only after scoring/data are known:
 
-Purpose: maximize judged value once the real scoring model and data are known.
-
-Potential work, only if justified:
-
-- stronger provider-health/adaptive ranking;
-- dynamic capacity handling;
-- richer decision explanation/analytics;
-- required API/UI/demo surface;
+- advanced quality/success optimization;
+- cost/latency multi-objective tuning;
 - failure-domain awareness;
-- policy configuration/validation surfaces;
-- measured algorithmic optimization.
-
-Every promoted feature must have a measurable judged benefit or close a confirmed requirement gap.
+- richer judged UI/demo;
+- adaptive/statistical routing when measurable;
+- measured performance specialization.
 
 ### v1.0 — Submission Candidate
 
-Purpose: produce the version presented and submitted to the hackathon.
+Requires full TZ compliance, no P0/P1 acceptance defects, clean setup/run, final deterministic/property/model/fault/concurrency evidence, official performance gates and stable demo/analytics.
 
-Exit expectations:
+## 5. Mandatory v0.2 capability matrix
 
-- full TZ compliance;
-- no unresolved P0 safety or acceptance defects;
-- clean setup/run path;
-- complete deterministic, property/model, fault, and concurrency verification appropriate to the final architecture;
-- performance gates derived from actual limits;
-- stable demo scenarios including failure/fallback/analytics;
-- current documentation and decision trace;
-- no hidden provisional semantics that conflict with the official case.
+These are required capability families, not suggestions. Exact official defaults remain configurable/provisional.
 
-## 5. v0.1 phase graph
+### C1 — Economic intent and operation lifecycle
 
-The default order is dependency-oriented, not bureaucratic:
-
-`Orientation -> Harness -> Reference Model -> Core Algorithms -> Simulator/Lifecycle -> Combinatorial Verification -> Concurrency -> Trace/Analytics -> Hardening -> Version Closure`
-
-Allocation and recovery can progress partly independently after common domain primitives exist. The simulator may be started as soon as normalized outcomes are stable enough. Verification is continuous; the dedicated verification phases deepen coverage rather than postponing testing.
-
-## 6. v0.1 phases
-
-### Phase 0 — Repository orientation and baseline integrity
-
-Goal: establish the actual repository state before changing code.
-
-Actions:
-
-- read `AGENTS.md`, SPEC-001, architecture, testing, workflow, plans, decisions, backlog, and the active ExecPlan;
-- inspect the current tree, tests, and implementation rather than assuming documentation progress is current;
-- run any existing canonical checks;
-- reconcile the active plan's `Progress` with actual evidence;
-- identify the next missing capability, not merely the next unchecked bullet.
-
-Exit gate:
-
-- the active plan accurately reflects repository reality;
-- no known contradiction between the intended current goal and the actual implementation is being ignored;
-- a concrete first Slice Goal has been selected.
-
-### Phase 1 — Ruby harness and feedback loop
-
-Goal: make every later change cheap to verify.
-
-Required outcomes:
-
-- minimal conventional Ruby layout;
-- one canonical full-suite command from repository root;
-- focused-test command;
-- deterministic seed handling for generated tests;
-- clear test-support boundary;
-- exact money representation decision sufficient for the baseline;
-- no application framework unless already justified by a new authoritative requirement.
-
-Verification:
-
-- clean checkout/setup path works with documented commands;
-- an intentionally failing test fails visibly and the canonical command returns failure;
-- randomized test failures can report/replay a seed once such tests exist.
-
-Freedom:
-
-The agent may select Minitest/RSpec or a small property-testing dependency if evidence shows it improves reliability and does not create likely judge compatibility risk. Prefer fewer dependencies when capability is equivalent.
-
-### Phase 2 — Independent executable reference model
-
-Goal: create a simple oracle that expresses intended semantics independently from optimized production implementation.
-
-Required outcomes:
-
-- pure Ruby reference representation for payout intent, provider opportunity, allocation state, ownership, normalized outcomes, and recovery actions needed by current baseline tests;
-- deliberately straightforward algorithms suitable for correctness comparison;
-- no reuse of production allocator/recovery decision code inside the oracle.
-
-Verification:
-
-- deterministic examples from SPEC-001 run against the reference model;
-- oracle can evaluate one-step allocation choices by brute force/reference calculation;
-- oracle can reject illegal ownership/recovery histories.
-
-Exit principle:
-
-The reference model need not be production-fast or architecturally elegant. It must be small enough to trust and different enough from production code to catch shared defects.
-
-### Phase 3 — Allocation kernel
-
-Goal: implement correct deterministic allocation before adaptive intelligence.
-
-Required outcomes:
-
-- provider opportunities/feasible candidates represented explicitly;
-- count policy using exact discrete measure;
-- volume policy using exact money;
-- post-decision discrepancy evaluation;
-- committed/in-flight assignment accounting;
-- no artificial debt from providers that were not opportunities when policy semantics require opportunity-aware accounting;
-- explicit handling of no feasible provider and mathematically unavoidable deviation;
-- provisional accounting/window semantics isolated behind a narrow boundary.
-
-Verification:
-
-- SPEC allocation acceptance scenarios;
-- oracle comparison for generated small states;
-- boundary/large-amount cases;
-- provider-order/name invariance where applicable;
-- deterministic tie behavior;
-- first controlled committed-assignment race.
-
-Exit gate:
-
-No known allocation correctness defect remains in the supported v0.1 semantics, and the implementation remains replaceable around provisional TZ-dependent accounting details.
-
-### Phase 4 — Economic ownership and recovery kernel
-
-Goal: make retry/fallback semantics safe independently of transport/framework details.
-
-Required outcomes:
-
-- stable economic-intent identity;
-- at most one unresolved money-moving owner;
-- ownership acquire/release semantics;
-- normalized `SUCCESS`, `PENDING`, `UNKNOWN`, safe route/provider failure, and terminal payout failure categories as required by the baseline;
-- distinct actions for retry same provider, resolve status, fallback, defer, and terminal stop;
-- cross-provider fallback prohibited while an unresolved prior owner can still create the monetary effect;
-- outcome attribution separated from provider-health signal.
-
-Verification:
-
-- negative tests for illegal fallback after `UNKNOWN`;
-- duplicate/replayed intent behavior;
-- safe failure enables a fresh decision;
-- terminal recipient/payout failure does not provider-hop;
-- same-provider retry only under an explicitly safe simulated contract;
-- reference-model history comparison for generated sequences.
-
-### Phase 5 — Provider simulator, observations, and reconciliation model
-
-Goal: make difficult provider behavior reproducible without live external services.
-
-Required outcomes:
-
-- deterministic Ruby provider script/scenario mechanism;
-- immediate success/failure;
-- `PENDING`;
-- timeout/`UNKNOWN` after possible acceptance;
-- delayed resolution;
-- duplicate and out-of-order observations;
-- optional reversal/return path where useful to test non-final success semantics;
-- explicit provider idempotency/status-resolution capabilities in simulator contracts;
-- virtual/controlled time when timing matters.
-
-Verification:
-
-- scripted scenarios replay identically;
-- duplicated observations do not duplicate economic effects;
-- out-of-order observations do not corrupt derived state;
-- unresolved ownership remains safe across time progression/reconciliation.
-
-### Phase 6 — Property and state-machine verification
-
-Goal: move beyond hand-picked cases and search the state space automatically.
-
-Required outcomes:
-
-- generators for valid amounts, policies, provider sets, eligibility, and outcome sequences;
-- reusable invariant assertions from `docs/TESTING.md`;
-- model/state-machine sequences that exercise multiple operations over time;
-- seed/trace output and deterministic replay of failures;
-- regression capture for every material discovered bug.
-
-High-value properties include:
-
+- one economic intent;
 - single unresolved economic owner;
-- selected provider belongs to feasible set;
-- `UNKNOWN` preserves ownership;
-- duplicate observations are idempotent;
-- allocation result matches or is no worse than oracle post-decision discrepancy for generated small states;
-- accounting/projection conservation;
-- replay derives the same state.
+- operation/attempt identity;
+- committed versus dispatching/dispatched;
+- pending/unknown/terminal/released;
+- safe release rules;
+- economic conflict detection.
 
-The agent should bias generators toward rare/high-risk states instead of spending most cases on easy happy paths.
+### C2 — Policy model
 
-### Phase 7 — Controlled concurrency correctness
+- immutable policy identity/epoch/fingerprint;
+- count and volume measures;
+- targets/weights;
+- scope/segment;
+- accounting point;
+- explicit window/epoch semantics;
+- tolerance/deviation;
+- generic min/max constraints;
+- hard versus soft/relaxable business constraints;
+- recovery policy/budgets;
+- ranking inputs.
 
-Goal: prove the two concurrency-sensitive invariants rather than hope stress testing finds races.
+### C3 — Allocation controller
 
-Required outcomes:
+- exact arithmetic;
+- post-decision discrepancy;
+- committed/in-flight primary reservations;
+- large indivisible payouts;
+- primary versus recovery separation;
+- opportunity-aware accounting;
+- policy epochs;
+- runtime infeasibility/deviation attribution;
+- bounded catch-up/debt if debt is enabled.
 
-- deterministic barriers/hooks/interleavings sufficient to force ownership acquire/acquire races;
-- deterministic committed-allocation reservation races;
-- duplicate submission races;
-- ownership release vs fallback races;
-- relevant callback/reconciliation races;
-- history assertions consistent with legal sequential domain semantics.
+### C4 — Provider opportunity/eligibility
 
-Verification:
+- currency compatibility;
+- amount boundaries;
+- administrative enabled state;
+- explicit capability/context labels where applicable;
+- functional opportunity independent from live health/capacity.
 
-- forced races repeatedly satisfy single ownership;
-- concurrent routing cannot make all workers consume the same stale deficit;
-- concurrency tests fail when critical synchronization is deliberately removed/seeded where practical;
-- stress tests supplement but do not replace controlled interleavings.
+### C5 — Live feasibility and capacity
 
-No final distributed lock/database mechanism is required in v0.1 unless independently justified.
+- availability;
+- concurrent slots;
+- configurable count budget;
+- configurable amount budget;
+- atomic reservation/release;
+- no capacity leaks under duplicate/late observations;
+- fallback re-evaluation.
 
-### Phase 8 — Decision trace and baseline analytics projections
+### C6 — Operational health/exposure
 
-Goal: prove that the system can explain intended routing versus actual execution.
+- attributable operational signals;
+- minimum evidence;
+- hysteresis;
+- degraded/quarantined/probing equivalent states;
+- fast reduction of exposure for strong evidence;
+- controlled recovery/probing;
+- recipient failures neutral to provider health.
 
-Required outcomes:
+### C7 — Deterministic ranking
 
-- preserve enough facts to distinguish opportunity, assignment, attempt, observation, and settlement;
-- identify primary versus recovery decisions;
-- expose material exclusion/decision reasons;
-- project target vs assignment distribution and effective settlement distribution for baseline scenarios;
-- attribute deviations/failures where the domain model knows the cause;
-- replay projections from durable facts.
+- ranking only inside safe feasible set;
+- configured priority;
+- available health/quality inputs;
+- optional configured cost/latency inputs;
+- deterministic tie-breaking;
+- hard constraints lexicographic.
 
-Do not build a dashboard before the TZ asks for one.
+### C8 — Recovery/reconciliation
 
-Verification:
+- retry same operation/provider only when contract safe;
+- status resolution;
+- fresh cross-provider fallback excluding attempted providers;
+- wait/defer;
+- reconciliation-blocked;
+- terminal stop;
+- separate operation/switch/resolution budgets;
+- controlled time/deadline/TTL;
+- explicit resume/advance/reconcile workflow.
 
-- primary provider may differ from settlement provider after fallback without losing either fact;
-- replay reconstructs the same projections;
-- recipient failure does not appear as provider-attributable reliability failure;
-- runtime policy infeasibility is visible rather than silently hidden.
+### C9 — Provider contract/transport
 
-### Phase 9 — Hardening and performance baseline
+- operation-scoped idempotency/status lookup semantics;
+- contract version/TTL where applicable;
+- adapter availability before commit;
+- definitely-not-sent versus ambiguous-after-possible-send;
+- normalized provider observations.
 
-Goal: make v0.1 robust enough that official-TZ work starts from a trusted kernel.
+### C10 — Event reduction
 
-Actions:
+- immutable observation identity;
+- duplicate idempotency;
+- conflicting identity reuse rejected;
+- authoritative provider sequence only when contract says so;
+- explicit legal/conservative transitions;
+- no arbitrary status-rank chronology.
 
-- run the full deterministic suite;
-- run larger property/state-machine workloads with captured seeds;
-- run concurrency/fault suites repeatedly;
-- add regression tests for discovered defects;
-- perform targeted mutation/fault seeding of critical invariants where practical;
-- remove speculative abstractions and duplicated helpers revealed by implementation;
-- benchmark allocation/decision/replay paths and record observed throughput/latency/memory without inventing pass/fail limits;
-- verify clean setup and canonical commands.
+### C11 — Settlement/reversal/conflict
 
-Exit gate:
+- settlement distinct from attempt;
+- post-settlement return/reversal;
+- late old-operation monetary evidence -> explicit economic conflict;
+- no ordinary fallback continuation for reversal/conflict remediation.
 
-No known P0/P1 correctness defect remains in implemented v0.1 behavior, tests are deterministic/reproducible, and the active plan contains current evidence rather than aspirational checkboxes.
+### C12 — Facts/replay
 
-### Phase 10 — v0.1 version closure
+- facts contain all material lifecycle inputs;
+- lifecycle/ownership/operation/settlement/conflict replay;
+- live projection equals replayed projection for supported histories;
+- no hidden mutable correctness source of truth.
 
-Goal: decide whether the session may legitimately stop.
+### C13 — Trace/analytics
 
-The agent performs a skeptical project-wide review:
+- typed reason codes;
+- policy fingerprint;
+- opportunity/live exclusions;
+- allocation/capacity/health/ranking snapshots as relevant;
+- primary allocation distribution;
+- recovery attempts;
+- settlement distribution;
+- first-attempt/eventual success;
+- successful fallback recovery;
+- unresolved age;
+- attempt/switch amplification;
+- failure attribution;
+- deviation causes;
+- reversal/conflict metrics.
 
-- compare implementation to current SPEC-001 and decisions;
-- compare acceptance IDs to executable evidence;
-- inspect architecture boundaries for provider/framework leakage;
-- inspect `docs/TESTING.md` quality gates;
-- review backlog and separate true TZ blockers from unfinished current work;
-- update docs that became stale during implementation;
-- ensure all product/reference/simulator/test logic remains Ruby;
-- run canonical full verification from a clean state;
-- summarize benchmark baseline and remaining provisional semantics.
+### C14 — Concurrency/deep verification
 
-If any current-version exit criterion is not met and can be addressed locally, the version is not complete: create/select another Slice Goal and continue.
+- owner acquire/acquire;
+- duplicate submit during dispatch;
+- primary allocation reservation races;
+- capacity reservation races;
+- ownership release/fallback races;
+- callback/reconciliation versus recovery;
+- live provider-state update versus commit;
+- policy identity/epoch races where supported;
+- generated multi-feature histories with replayable seeds.
 
-## 7. v0.1 exit criteria
+## 6. v0.2 dependency graph
 
-The current version is complete only when all of the following are true:
+Default order:
 
-1. A clean checkout can run the documented Ruby test suite with one canonical command.
-2. The reference/oracle model exists and is independent enough to catch implementation defects.
-3. Count and volume allocation baseline behavior is implemented and checked against the oracle for representative/generated states.
-4. Committed/in-flight allocation prevents stale-deficit stampedes in controlled concurrency tests.
-5. Economic ownership, `UNKNOWN`, safe release, terminal failure, retry/fallback/resolve/defer semantics have executable evidence.
-6. The provider simulator can deterministically reproduce the high-risk lifecycle/fault scenarios used by the suite.
-7. Property/state-machine tests explore multi-step histories and emit replayable seeds/traces.
-8. Controlled concurrency tests cover ownership and allocation critical sections.
-9. Opportunity/assignment/attempt/settlement remain distinguishable and baseline projections/replay are verified.
-10. All material bugs found during the run have deterministic regressions.
-11. Full verification is green or any unavailable check has an exact external reason; no hidden flaky retry policy masks failures.
-12. Baseline performance measurements exist without pretending guessed limits are official requirements.
-13. Ruby-only implementation policy is respected.
-14. No unjustified framework/database/queue/ML/public-contract commitment has entered the codebase.
-15. The active ExecPlan, backlog, decisions, and relevant docs reflect the actual final state.
-16. Remaining work is either a later-version improvement or genuinely blocked on external TZ information.
+`A audit/regressions`
+`-> B primary/recovery correctness`
+`-> C operation dispatch/provider contract`
+`-> D lifecycle reducer/replay/conflict`
+`-> E policy/opportunity/allocation completeness`
+`-> F capacity`
+`-> G health/ranking`
+`-> H recovery/time/reconciliation`
+`-> I trace/analytics`
+`-> J cross-feature hardening`
+`-> K VERSION_CANDIDATE closure/red-team`
 
-Only then may the active pre-TZ ExecPlan be closed/moved to completed and the Goal Mode run stop for version completion.
+Phases may be split/reordered when dependencies remain correct. Closure can reopen any earlier phase.
 
-## 8. How to select the next Slice Goal
+## 7. Phase A — Executable baseline and regression capture
 
-At any checkpoint, choose the next slice using this priority:
+Required:
 
-1. fix a failing safety/correctness invariant;
-2. unblock the current phase's exit gate;
-3. build a missing verification capability required to trust upcoming code;
-4. implement the smallest missing dependency of the next high-value behavior;
-5. reduce a known high-risk uncertainty with a focused prototype/test;
-6. only then perform non-blocking cleanup or optimization.
+- run current canonical suites in an executable environment;
+- record actual runtime/results, not historical values;
+- add deterministic regressions for audited P0 findings;
+- add minimal Ruby CI if reasonably possible;
+- reconcile discrepancies between historical evidence and current source.
 
-Do not select work merely because it is easy or interesting.
+Priority regressions:
 
-Keep at most a small rolling set of immediate next actions in the active ExecPlan. Do not pre-expand every future phase into hundreds of microtasks.
+- recovery mutates primary allocation;
+- skewed allocation reselects failed provider;
+- duplicate command during blocked dispatch;
+- unresolved operation loses resolution after route disablement;
+- missing adapter commits owner;
+- old provider late success after newer settlement;
+- status-rank ordering accepts invalid chronology.
 
-## 9. Replanning rules
+Exit: current baseline known and P0 behavior falsifiable.
 
-The roadmap is not permission to follow a bad path stubbornly.
+## 8. Phase B — Primary allocation/recovery correctness
 
-Replan when evidence shows:
+Implement:
 
-- an assumption is false;
-- a phase dependency was misunderstood;
-- tests reveal a missing invariant;
-- the chosen abstraction makes a key invariant difficult to prove;
-- Ruby/runtime behavior invalidates the approach;
-- the full TZ arrives and changes semantics;
-- a simpler design can satisfy the same verified outcome with less risk.
+- primary allocation commits only at configured accounting point;
+- recovery facts/attempts separate from primary ledger;
+- attempted-provider history;
+- fresh fallback excludes attempted money-moving providers;
+- explicit same-provider retry remains operation-scoped;
+- successful fallback recovery metric means actual successful recovery.
 
-When replanning:
+Verify skewed targets, repeated failures, conservation and concurrency.
 
-1. preserve the version goal unless authoritative requirements change it;
-2. update the active ExecPlan's discoveries/decision log;
-3. adjust phases/slices only as much as necessary;
-4. add tangential opportunities to backlog instead of absorbing them;
-5. continue from the best current state rather than restarting the project.
+## 9. Phase C — Operation dispatch and provider contract
 
-## 10. Commit/checkpoint discipline
+Implement:
 
-Commits are engineering checkpoints, not permission gates.
+- explicit operation dispatch phase;
+- operation-scoped provider recovery/idempotency contract;
+- adapter availability as admissibility input;
+- structured transport result: not-sent / ambiguous / provider-observation;
+- duplicate command cannot resolve/retry while first dispatch is still in progress.
 
-- Commit coherent, verified changes when doing so improves recoverability and reviewability.
-- Do not create a commit for every tiny edit merely to show activity.
-- Do not postpone all verification until one giant final commit.
-- Do not ask for routine permission before the next verified slice.
-- Never force-rewrite shared `main` history unless explicitly instructed.
-- If the current tool/session policy requires a particular branch/commit strategy, obey it without changing the roadmap semantics.
+Provider I/O remains outside mutex.
 
-A commit or phase boundary never implies that the long-running goal is complete.
+## 10. Phase D — Lifecycle reducer, event order, replay and conflicts
 
-## 11. Relationship to other documents
+Implement:
 
-- `AGENTS.md` — operating constraints and navigation map.
-- `specifications/001-smart-payout-routing.md` — behavioral source of truth.
-- `docs/ARCHITECTURE.md` — dependency/domain boundaries.
-- `docs/TESTING.md` — evidence methodology and scenario catalog.
-- `docs/WORKFLOW.md` — execution loop and autonomy rules.
-- `docs/PLANS.md` — how living ExecPlans are maintained.
-- `docs/exec-plans/active/pre-tz-foundation.md` — current v0.1 execution state.
-- `docs/BACKLOG.md` — work not necessarily inside the active slice/version.
-- `docs/DECISIONS.md` — durable rationale/provisional decisions.
+- legal operation/payout transition reducer;
+- removal of `outcome_rank` chronology;
+- contract-aware sequence/version handling;
+- conservative unordered observations;
+- full lifecycle facts/replay;
+- live-versus-replay equivalence;
+- economic-conflict fact/projection;
+- settlement return/reversal path.
 
-This roadmap defines sequencing and completion. It does not override the specification.
+## 11. Phase E — Complete policy/opportunity/allocation model
+
+Implement the mandatory generic policy dimensions rather than only weights:
+
+- fingerprint/identity collision prevention;
+- count/volume strategy;
+- scope/segment;
+- accounting/window/epoch;
+- tolerance;
+- generic min/max and hard/soft constraint primitives;
+- static feasibility;
+- runtime infeasibility/deviation attribution;
+- context-aware provider profile for currency/amount/admin/labels;
+- opportunity independent from live feasibility;
+- transient outage does not reset history;
+- explicit bounded deviation/catch-up semantics.
+
+Do not build a generic expression DSL.
+
+## 12. Phase F — Capacity ledger
+
+Implement:
+
+- concurrent slots;
+- configurable count budget;
+- configurable amount budget;
+- atomic reservation with operation ownership where required;
+- explicit release/settle semantics;
+- UNKNOWN/pending retention where economically unresolved;
+- duplicate-safe/no-leak behavior;
+- fallback capacity recheck.
+
+## 13. Phase G — Operational health and deterministic ranking
+
+Implement:
+
+- attributable health signal projection;
+- minimum evidence/hysteresis;
+- degraded/quarantined/probing lifecycle;
+- controlled recovery exposure;
+- recipient failure neutrality;
+- allocation pressure cannot bypass quarantine/probe caps;
+- deterministic feasible-set ranker with configured priority and optional available quality/cost/latency.
+
+No ML/bandit requirement in v0.2.
+
+## 14. Phase H — Recovery budgets, time and reconciliation
+
+Implement:
+
+- separate money-moving operation limit;
+- provider-switch limit;
+- resolution/retry interaction limit;
+- controlled clock/deadline/elapsed budget;
+- operation idempotency/status TTL;
+- explicit submit versus resume/advance/reconcile use cases;
+- reconciliation-blocked state when safe automatic action is no longer possible.
+
+## 15. Phase I — Typed trace and causal analytics
+
+Implement machine-readable decision/exclusion/deviation/recovery reason codes and metrics required by capability C13.
+
+Analytics may not parse human explanation strings to infer machine semantics.
+
+## 16. Phase J — Cross-feature verification/hardening
+
+Build long-history generated/model scenarios combining mechanisms rather than testing only isolated components.
+
+Required combinations include:
+
+- allocation + capacity + outage;
+- allocation pressure + health quarantine;
+- UNKNOWN + duplicate command + TTL;
+- safe failure + live fallback changes;
+- fallback + late old success;
+- policy change + concurrency;
+- reversal + replay + analytics;
+- capacity + duplicate/late observations;
+- health recovery + bounded exposure + deviation.
+
+Expand controlled races and perform targeted fault/mutation seeding of critical protections where practical.
+
+Re-run benchmarks after correctness changes and refactor only evidence-backed responsibility problems.
+
+## 17. Phase K — Version Closure / Red-Team
+
+When A–J appear green, set status **`VERSION_CANDIDATE`**, not complete.
+
+Execute every pass in `docs/COMPLETION_POLICY.md`:
+
+1. source/spec reconciliation against SPEC-001/002/003;
+2. complete C1–C14 capability sweep;
+3. repository TODO/placeholder/duplicate-semantics/hidden-state discovery;
+4. adversarial counterexample/red-team pass;
+5. full current verification and CI/static/benchmark evidence as required;
+6. every NOW/P0/P1 backlog item classified;
+7. genuine blocker test;
+8. documentation consistency audit.
+
+If any important locally solvable gap appears, create/reopen a slice/phase and continue. The roadmap does not require progress checkboxes to remain monotonic.
+
+## 18. v0.2 exit criteria
+
+v0.2 reaches `VERSION_COMPLETE` only when all are true:
+
+1. every audited P0 defect has deterministic regression evidence;
+2. every SPEC-003 capability C1–C14 is implemented and important interactions are tested;
+3. SPEC-001/002/003 applicable pre-TZ requirements are reconciled to actual code/tests;
+4. primary/recovery/settlement accounting is unambiguous and conserved;
+5. dispatch/transport ambiguity and operation-scoped contracts are explicit;
+6. policy identity/scope/window/tolerance/generic constraints and feasibility are explicit;
+7. opportunity/live feasibility/capacity/health are distinct;
+8. capacity reservations are race-safe and leak-free;
+9. deterministic health/probing/ranking works inside hard constraints;
+10. recovery budgets/time/TTL/resume/reconcile are explicit;
+11. lifecycle observations reduce without artificial status chronology;
+12. facts replay supported lifecycle/ownership/settlement/conflict state;
+13. late contradictory monetary evidence surfaces a conflict;
+14. reversal/return is distinct post-settlement behavior;
+15. typed trace/analytics cover causal allocation/recovery/health outcomes;
+16. expanded property/model/concurrency/fault suites cover cross-feature histories with replayable seeds/traces;
+17. canonical full current verification is green; unavailable checks are explicitly explained, never assumed;
+18. closure red-team finds no unresolved material locally solvable generic gap;
+19. every NOW/P0/P1 item is resolved, superseded by equivalent behavior, or genuinely external-TZ dependent with evidence;
+20. documentation consistently identifies current version, current architecture and completion rules;
+21. no unjustified framework/database/queue/ML/public-contract commitment was introduced;
+22. remaining work is genuinely official-TZ-specific integration or optional post-core optimization.
+
+Only then may the project legitimately enter pre-TZ maintenance/wait state, or immediately advance to v0.3 if the TZ is available.
+
+## 19. Next-slice priority
+
+At every checkpoint choose:
+
+1. P0 financial/safety defect;
+2. failing invariant/regression;
+3. missing capability from current phase/C1–C14;
+4. verification needed to trust the next mechanism;
+5. P1 generic full-core capability;
+6. measured maintainability/performance issue;
+7. optional judged optimization only after deterministic core completeness.
+
+Do not spend time on speculative external infrastructure or ML while a required deterministic domain gap exists.

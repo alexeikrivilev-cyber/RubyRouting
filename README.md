@@ -1,210 +1,221 @@
 # RubyRouting
 
-Smart payout-routing engine for the Hack.Genesis case **«Умный роутинг выплат»**.
+Smart payout-routing engine for Hack.Genesis case **«Умный роутинг выплат»**.
 
 ## Current state
 
-Current Version Goal: **v0.1 — Pre-TZ Deterministic Foundation**.
+Current Version Goal: **v0.2 — Pre-TZ Comprehensive Routing Core**.
 
-Development is active before the full TZ. We are building the stable, reversible parts now: deterministic financial kernel, count/volume allocation, economic ownership/recovery, provider simulator, reference model, deep verification harness, decision trace/replay, and concurrency correctness.
+The first deterministic v0.1 foundation is an executable checkpoint, not the end of pre-TZ development. A second technical review found important locally solvable interaction gaps, so development continues until the generic routing core is genuinely comprehensive and evidence-backed.
 
-Unknown external contracts remain deliberately replaceable until the official TZ arrives.
+The official TZ is **not available yet**. We do not guess its exact API, storage, simulator, scoring or final allocation contract. Instead, we implement every high-value generic routing mechanism that can be made explicit, configurable and testable now.
 
-The v0.1 pre-TZ foundation is implemented and its closure evidence is recorded
-in the active ExecPlan; remaining work is official-TZ reconciliation.
+**Ruby is mandatory. Current development baseline: CRuby 4.0.6.** Product logic, routing algorithms, oracle/reference model, simulator, property/model/concurrency/fault tests and domain benchmarks are Ruby-only.
 
-**Ruby is mandatory. Current development baseline: CRuby 4.0.6.** Product logic, routing algorithms, oracle/reference model, simulator, property/model/concurrency tests, and domain benchmarks are Ruby-only.
+## What “comprehensive pre-TZ core” means
 
-## Architecture baseline
+The current target is not a minimal weighted selector. The engine must coherently cover:
 
-v0.1 uses a concrete architecture so coding can proceed without another design round:
+- one economic intent / effectively-once economic semantics;
+- operation dispatch, idempotency and transport ambiguity;
+- count and monetary-volume allocation;
+- policy identity, scope, accounting/window/tolerance and generic hard/soft constraints;
+- context-aware provider opportunity/eligibility;
+- live availability and atomic capacity reservations;
+- deterministic provider health, quarantine/probing and controlled exposure;
+- deterministic ranking inside the already safe feasible set;
+- retry, status resolution, fallback, defer, reconciliation, budgets, time and TTL;
+- duplicate/delayed/out-of-order observation reduction;
+- settlement, return/reversal and economic-conflict handling;
+- lifecycle replay from typed facts;
+- typed decision trace, deviation attribution and primary/recovery/settlement analytics;
+- controlled concurrency and cross-feature adversarial verification.
 
-- plain Ruby modular monolith;
-- root namespace `RubyRouting`;
-- deterministic financial/routing kernel;
-- application orchestrator for lifecycle workflow;
-- provider/time/external-state boundaries as narrow ports/adapters;
-- one in-memory atomic coordinator guarded initially by a coarse `Thread::Mutex`;
-- allocation reservation + routing decision + economic ownership committed atomically before provider I/O;
-- provider I/O **outside** the coordinator lock;
-- provider observations applied in a later synchronized transition;
-- facts + current projections, not mandatory full event sourcing;
-- Minitest + Rake baseline test harness;
-- independent reference model under test support;
-- Threads + controlled interleavings for concurrency verification; no Ractor core in v0.1.
+Exact external representation remains replaceable until the TZ. The concepts themselves are not omitted merely because official defaults are unknown.
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the detailed decision/commit/observation protocol and [`docs/RUBY.md`](docs/RUBY.md) for Ruby-specific engineering rules.
+See [`specifications/003-pre-tz-full-logic-and-completion.md`](specifications/003-pre-tz-full-logic-and-completion.md).
 
-## Core thesis
+## Direction verdict
 
-The system is not merely a weighted provider selector. It is a **policy-constrained payout orchestrator** that must answer four distinct questions correctly:
+The architectural vector remains correct and should not be restarted:
 
-1. Is a new money-moving operation safe?
-2. Which providers are admissible for this payout now?
-3. Which admissible provider best satisfies allocation policy and permitted reliability objectives?
-4. After an attempt, is retry/fallback safe, or must the current provider operation be resolved first?
+- plain-Ruby modular monolith;
+- deterministic financial kernel;
+- exact `Integer` money / `Rational` allocation math;
+- economic intent + single unresolved ownership;
+- `UNKNOWN != failure`;
+- one clear atomic coordinator boundary;
+- provider I/O outside the coordinator lock;
+- append-preserved typed facts and replayable projections;
+- independent Ruby oracle/simulator;
+- deep scenario/property/model/concurrency testing;
+- no premature Rails/DB/queue/microservice/ML commitment.
 
-Financial correctness precedes optimization.
+Current architecture supplement: [`docs/CURRENT_ARCHITECTURE.md`](docs/CURRENT_ARCHITECTURE.md).  
+Detailed first-foundation architecture remains in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-## Critical invariants
+## Active behavioral specification
 
-- One payout submission is one **economic intent**.
-- Target behavior is effectively-once economic effect, not literal distributed exactly-once execution.
-- At most one unresolved money-moving economic owner exists per intent.
-- Timeout after possible provider acceptance is `UNKNOWN`, not automatic failure.
-- `UNKNOWN` does not release ownership.
-- Cross-provider fallback requires safe release/proof that the previous operation cannot create the monetary effect.
-- Same-provider retry, status resolution, fallback, reconciliation, and defer are distinct actions.
-- Hard safety/eligibility constraints precede allocation/ranking.
-- Count/volume allocation uses exact arithmetic and includes committed/in-flight assignments under concurrency.
-- Opportunity, assignment, attempt, observation, and settlement remain distinct facts.
-- Payout outcome and provider reliability attribution are separate.
-- `NO_SAFE_ROUTE`/defer is valid.
+Before the official TZ, behavior precedence is:
 
-Behavioral details and provisional semantics live in the specification.
+1. [`specifications/003-pre-tz-full-logic-and-completion.md`](specifications/003-pre-tz-full-logic-and-completion.md) — mandatory full-logic/completion envelope;
+2. [`specifications/002-pre-tz-comprehensive-core.md`](specifications/002-pre-tz-comprehensive-core.md) — implementation-review amendments;
+3. [`specifications/001-smart-payout-routing.md`](specifications/001-smart-payout-routing.md) — baseline domain specification.
+
+When the official TZ arrives it supersedes provisional semantics through explicit reconciliation, not silent edits.
+
+## Critical current corrections
+
+The v0.2 work specifically fixes/proves that:
+
+- primary allocation is not polluted by fallback under `primary_assignment` accounting;
+- fresh fallback cannot silently start a new operation at a PSP that already failed;
+- provider-operation recovery semantics survive route disablement;
+- committed-but-not-dispatched is distinct from unresolved/UNKNOWN;
+- definitely-not-sent and ambiguous-after-send transport failures differ economically;
+- functional opportunity is distinct from live availability/capacity/health;
+- transient outage does not silently reset allocation history;
+- event chronology is not guessed by status severity;
+- late contradictory monetary evidence becomes an explicit economic conflict;
+- replay rebuilds lifecycle state, not only aggregate analytics.
+
+See [`docs/TECH_REVIEW_2026-08-27.md`](docs/TECH_REVIEW_2026-08-27.md).
+
+## Completion is evidence-gated
+
+A green suite or a fully checked plan is not permission to say the version is done.
+
+Before `VERSION_COMPLETE`, the agent must enter `VERSION_CANDIDATE` and perform a fresh:
+
+- source/spec reconciliation;
+- full capability-matrix sweep;
+- repository unfinished-code discovery sweep;
+- adversarial/red-team counterexample pass;
+- current full verification run;
+- NOW/P0/P1 and blocker audit;
+- documentation consistency audit.
+
+If that discovers an important locally solvable gap, the version returns to active development even if every previous phase checkbox was green.
+
+See [`docs/COMPLETION_POLICY.md`](docs/COMPLETION_POLICY.md).
 
 ## Repository map
 
-Read a fresh project-wide Goal Mode session in roughly this order:
+Fresh project-wide Goal Mode read order:
 
-- [`AGENTS.md`](AGENTS.md) — coding-agent contract, source precedence, safety/continuation rules.
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — project/version/phase/slice goals and v0.1 exit gate.
-- [`docs/exec-plans/active/pre-tz-foundation.md`](docs/exec-plans/active/pre-tz-foundation.md) — living current execution state.
-- [`specifications/001-smart-payout-routing.md`](specifications/001-smart-payout-routing.md) — behavioral/product source of truth.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — concrete v0.1 architecture and atomicity model.
-- [`docs/RUBY.md`](docs/RUBY.md) — professional Ruby 4.0 engineering guide for this project.
-- [`docs/TESTING.md`](docs/TESTING.md) — deterministic, oracle, property/model, concurrency and fault-verification methodology.
-- [`docs/WORKFLOW.md`](docs/WORKFLOW.md) — Goal Mode + SpecOps development loop.
-- [`docs/PLANS.md`](docs/PLANS.md) — living ExecPlan protocol.
-- [`docs/SESSION_POLICY.md`](docs/SESSION_POLICY.md) — long-session continuation/stop rules.
-- [`docs/BACKLOG.md`](docs/BACKLOG.md) — NOW/BLOCKED/NEXT/LATER work.
-- [`docs/DECISIONS.md`](docs/DECISIONS.md) — durable project decisions/provisional assumptions.
-- [`docs/RESEARCH.md`](docs/RESEARCH.md) — external research/evidence.
+1. [`AGENTS.md`](AGENTS.md)
+2. [`docs/ROADMAP.md`](docs/ROADMAP.md)
+3. [`docs/COMPLETION_POLICY.md`](docs/COMPLETION_POLICY.md)
+4. [`docs/exec-plans/active/pre-tz-comprehensive-core.md`](docs/exec-plans/active/pre-tz-comprehensive-core.md)
+5. [`specifications/001-smart-payout-routing.md`](specifications/001-smart-payout-routing.md)
+6. [`specifications/002-pre-tz-comprehensive-core.md`](specifications/002-pre-tz-comprehensive-core.md)
+7. [`specifications/003-pre-tz-full-logic-and-completion.md`](specifications/003-pre-tz-full-logic-and-completion.md)
+8. [`docs/TECH_REVIEW_2026-08-27.md`](docs/TECH_REVIEW_2026-08-27.md)
+9. [`docs/CURRENT_ARCHITECTURE.md`](docs/CURRENT_ARCHITECTURE.md)
+10. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+11. [`docs/RUBY.md`](docs/RUBY.md)
+12. [`docs/TESTING.md`](docs/TESTING.md)
+13. [`docs/WORKFLOW.md`](docs/WORKFLOW.md)
+14. [`docs/PLANS.md`](docs/PLANS.md)
+15. [`docs/SESSION_POLICY.md`](docs/SESSION_POLICY.md)
+16. [`docs/BACKLOG.md`](docs/BACKLOG.md)
+17. [`docs/DECISIONS.md`](docs/DECISIONS.md)
+18. [`docs/DOCUMENTATION_AUDIT_2026-08-27.md`](docs/DOCUMENTATION_AUDIT_2026-08-27.md)
+19. [`docs/RESEARCH.md`](docs/RESEARCH.md)
 
-Repository documentation is the durable system of record for coding agents.
+The v0.1 plan is historical evidence at `docs/exec-plans/completed/pre-tz-foundation.md`.
 
-## Ruby rules in brief
+## Architecture baseline
 
-Detailed guidance is in `docs/RUBY.md`. Important defaults:
+Keep the inherited architecture while v0.2 evolves internals:
 
-- CRuby 4.0.6 development baseline until judge runtime is known;
-- `Integer` minor units + explicit currency for money;
-- exact integer weights/`Rational` for proportions and discrepancy;
-- no Float monetary arithmetic;
-- `Data.define` for simple immutable value-like records, with nested mutability protected;
-- explicit classes for invariant-heavy domain types;
-- deterministic ordering/tie-breaking;
-- controlled `Random` instances/seeds only where randomness is intentional;
-- controlled clock for time-dependent tests; no real sleeps as the primary test mechanism;
-- `Thread::Mutex` for v0.1 shared-state correctness; never rely on the GVL;
-- provider/time/random state at explicit boundaries;
-- expected payment outcomes are explicit values, not broad exception control flow;
-- no metaprogramming/framework/dependency merely for appearance.
+- `RubyRouting` root namespace;
+- domain/routing kernel independent of provider transport;
+- application orchestrator/use cases;
+- provider/time/external-state boundaries as narrow ports/adapters;
+- one in-memory coordinator guarded by `Thread::Mutex` as the current atomic baseline;
+- primary allocation/capacity/ownership/operation state committed atomically where required before provider I/O;
+- provider I/O outside the lock;
+- provider observations applied later through explicit lifecycle reduction;
+- facts + derived projections without requiring event-sourcing infrastructure;
+- Minitest + Rake;
+- independent reference model under test support;
+- Threads/controlled interleavings, not Ractor, for current concurrency verification.
+
+`State::Coordinator` may be decomposed into internal ledgers/reducers as mechanics grow, but those are internal correctness responsibilities, not automatic services.
+
+## Critical financial invariants
+
+- One payout submission represents one economic intent.
+- At most one unresolved money-moving economic owner exists per intent.
+- Timeout after possible provider acceptance is `UNKNOWN`, not failure.
+- `UNKNOWN` does not release ownership.
+- Cross-provider fallback requires safe ownership release.
+- Same-provider retry/status resolution is different from fresh fallback.
+- Fresh fallback excludes already money-moving attempted providers by default.
+- Hard safety/eligibility/capacity/health constraints precede allocation/ranking.
+- Primary allocation, recovery attempts and settlement are distinct accounting views.
+- Allocation concurrency includes committed/in-flight primary assignments.
+- Operation recovery contract is pinned for the operation lifetime.
+- Provider outcome attribution is separate from payout business outcome.
+- Late evidence of a possible second monetary effect is an incident, not a callback to ignore.
+- `NO_SAFE_ROUTE`, defer and reconciliation-blocked are valid outcomes.
 
 ## Development commands
 
-Install the declared Ruby dependencies with `bundle install`, then run the complete
-test suite with the canonical command:
+Current canonical command surface:
 
 ```text
+bundle check
 bundle exec rake test
-```
-
-For one focused test file, use:
-
-```text
-bundle exec ruby -Ilib -Itest test/unit/money_test.rb
-```
-
-Property/model and fault/concurrency suites are also available as focused Rake
-tasks. Generated checks use a deterministic default seed and accept an explicit
-`RUBY_ROUTING_SEED` environment value for replay.
-
-```text
 bundle exec rake property
 bundle exec rake model
 bundle exec rake concurrency
 bundle exec rake fault
+bundle exec rake benchmark
 ```
 
-The repository targets CRuby 4.0.6 through `.ruby-version`. The official TZ may
-later impose a different judge runtime; that reconciliation is intentionally kept
-separate from the pre-TZ foundation.
+Focused test:
+
+```text
+bundle exec ruby -Ilib -Itest <test-file>
+```
+
+Generated tests use deterministic seeds; preserve seed/trace for failures.
+
+The v0.1 plan recorded a locally green 51-test / 2,753-assertion baseline. That is historical evidence only. v0.2 begins by rerunning current code and should add minimal CI evidence when feasible.
+
+## What stays TZ-dependent
+
+Do not freeze without evidence:
+
+- final web/API/UI shape;
+- production database/ORM/persistence topology;
+- queue/background-job/event-bus product;
+- deployment/microservice topology;
+- official provider SDK/transport payloads;
+- exact judge runtime/dependency restrictions;
+- official allocation denominator/window/default thresholds;
+- judged scoring weights;
+- adaptive ML/bandit layer.
+
+These unknowns do not justify omitting the corresponding generic domain concepts.
 
 ## Long-running development model
 
-Work is organized as:
-
 `Project Goal -> Version Goal -> Phase Goal -> Slice Goal`
 
-The coding agent works depth-first on a small verified slice, updates the living ExecPlan, then selects the next required slice.
+A slice, test, commit or phase is a checkpoint, not permission to stop. Goal Mode continues until the v0.2 closure protocol and exit gate pass or every remaining required path is genuinely externally blocked.
 
-Completing a file, test, commit, milestone, or phase is not permission to stop.
+The absence of the official TZ is explicitly **not** a blocker for v0.2.
 
-A long Goal Mode run stops only when:
+## Full-TZ transition
 
-- every active version exit criterion in `docs/ROADMAP.md` is satisfied; or
-- every remaining required version path depends on a genuine external blocker outside the agent's control.
+When the official TZ arrives:
 
-See `docs/SESSION_POLICY.md`.
-
-## What v0.1 builds
-
-- minimal Ruby/Bundler/Rake/Minitest harness with one canonical full-suite command;
-- exact `Money` and core immutable values;
-- independent pure-Ruby reference/oracle model;
-- deterministic count/volume allocation with committed assignments;
-- economic ownership + normalized recovery kernel;
-- deterministic provider/fault simulator;
-- model/property tests with replayable seeds;
-- controlled concurrency/interleaving tests;
-- immutable-enough facts, trace/replay and baseline projections;
-- performance baseline without invented judge thresholds.
-
-The first implementation slice is specified at the end of `docs/ARCHITECTURE.md` and sequenced by the active ExecPlan.
-
-## What remains intentionally unfixed before the TZ
-
-The architecture does **not** currently commit to:
-
-- Rails/Sinatra/Hanami;
-- production database/ORM;
-- queue/event bus/background jobs;
-- microservices/deployment topology;
-- official provider SDK/transport;
-- final public API/UI;
-- ML/RL/contextual bandits;
-- external observability stack.
-
-This is deliberate reversibility, not inactivity.
-
-## Verification standard
-
-Happy-path unit tests are insufficient. Depending on risk, the project uses:
-
-- deterministic acceptance/regression scenarios;
-- independent oracle comparisons;
-- property/invariant generation;
-- state-machine/model histories;
-- controlled concurrency/interleavings;
-- deterministic provider fault injection;
-- duplicate/delayed/out-of-order observation tests;
-- trace/replay/projection checks;
-- stress/performance baselines;
-- targeted fault/mutation seeding when useful to prove critical tests can detect broken invariants.
-
-Any material bug should gain a deterministic regression. Randomized failures preserve seed/trace. Flaky retries are not a quality strategy.
-
-See `docs/TESTING.md`.
-
-## Full-TZ gate
-
-When the official TZ arrives, advance through the roadmap reconciliation phase rather than rebuilding blindly:
-
-1. classify baseline requirements as `CONFIRMED`, `CHANGED`, `REMOVED`, `NEW`, or `AMBIGUOUS`;
-2. update specification and reference/oracle/tests;
-3. adapt dependent production behavior;
-4. choose only the external framework/persistence/API/provider architecture now justified by the TZ;
-5. turn official performance/scoring constraints into executable gates.
-
-The goal is for the verified Ruby financial kernel to survive while provisional external/accounting details remain cheap to change.
+1. advance to roadmap v0.3;
+2. classify SPEC-001/002/003 rules as `CONFIRMED`, `CHANGED`, `REMOVED`, `NEW`, `AMBIGUOUS`;
+3. update oracle/tests with changed semantics before or alongside production behavior;
+4. choose only the external API/framework/persistence/provider integration actually required;
+5. convert judge scoring/load constraints into executable gates;
+6. preserve the verified v0.2 core wherever semantics remain valid.

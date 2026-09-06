@@ -651,10 +651,13 @@ Pure inputs:
 - incoming measure (`1` for count; exact Money minor units for volume);
 - deterministic tie order.
 
-The current provisional in-memory window is keyed by policy epoch and the
-feasible-provider opportunity cohort. A changed cohort starts a fresh allocation
-projection while preserved facts retain the complete historical context. This is
-an isolated pre-TZ accounting choice, not a public persistence contract.
+The inherited v0.1 cohort-reset rule is superseded by SPEC-002/D-025. The
+current v0.2 provisional in-memory ledger is keyed by policy identity/epoch and
+scope. The functional opportunity universe supplies the accounting denominator;
+live availability, capacity and health only filter current candidates. A
+transient live-feasibility change therefore does not erase allocation history
+or create a hidden fresh window. This remains an isolated pre-TZ accounting
+choice, not a public persistence contract.
 
 Pure output:
 
