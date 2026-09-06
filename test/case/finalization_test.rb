@@ -3,10 +3,43 @@
 require "open3"
 require "fileutils"
 require "json"
+require "digest"
 require_relative "../test_helper"
 
 class AuthoritativeCaseFinalizationTest < Minitest::Test
   ROOT = File.expand_path("../..", __dir__)
+  REQUIRED_ARTIFACTS = %w[routing_decisions_test.json routing_report_test.json].freeze
+
+  def setup
+    @artifact_snapshots = REQUIRED_ARTIFACTS.to_h do |name|
+      path = File.join(ROOT, name)
+      [path, File.exist?(path) ? File.binread(path) : nil]
+    end
+  end
+
+  def teardown
+    @artifact_snapshots&.each do |path, bytes|
+      if bytes.nil?
+        File.delete(path) if File.exist?(path)
+      else
+        File.binwrite(path, bytes)
+      end
+    end
+  end
+
+  def test_finalization_requires_explicit_queue_before_writing_artifacts
+    paths = %w[routing_decisions_test.json routing_report_test.json].map { |name| File.join(ROOT, name) }
+    before = paths.to_h { |path| [path, File.exist?(path) ? Digest::SHA256.file(path).hexdigest : nil] }
+
+    _stdout, stderr, status = Open3.capture3(
+      RbConfig.ruby, "-Ilib", File.join(ROOT, "bin/finalize_submission"), chdir: ROOT
+    )
+
+    refute status.success?
+    assert_includes stderr, "--queue"
+    after = paths.to_h { |path| [path, File.exist?(path) ? Digest::SHA256.file(path).hexdigest : nil] }
+    assert_equal before, after
+  end
 
   def test_non_public_queue_with_same_filename_is_not_checked_against_public_queue
     queue_dir = Dir.mktmpdir("ruby-routing-queue")
@@ -20,18 +53,32 @@ class AuthoritativeCaseFinalizationTest < Minitest::Test
 
     assert status.success?, stderr
     assert_includes stdout, "generated"
+    assert_includes stdout, "queue_kind=explicit_submission_queue"
+    manifest_line = stdout.lines.find { |line| line.start_with?("submission_manifest=") }
+    refute_nil manifest_line
+    assert_equal File.expand_path(queue_path),
+                 JSON.parse(manifest_line.delete_prefix("submission_manifest=")).fetch("queue_path")
     refute_includes stdout, "Проверка routing_decisions.json"
   ensure
     FileUtils.remove_entry(queue_dir) if queue_dir && File.exist?(queue_dir)
   end
 
   def test_finalization_uses_the_canonical_smart_profile
-    _stdout, stderr, status = Open3.capture3(
+    stdout, stderr, status = Open3.capture3(
       RbConfig.ruby, "-Ilib", File.join(ROOT, "bin/finalize_submission"),
       "--queue", File.join(ROOT, "data/operations_queue_10.json"), chdir: ROOT
     )
 
     assert status.success?, stderr
+    assert_includes stdout, "queue_kind=public_fixture"
+    manifest_line = stdout.lines.find { |line| line.start_with?("submission_manifest=") }
+    refute_nil manifest_line
+    manifest = JSON.parse(manifest_line.delete_prefix("submission_manifest="))
+    assert_equal 10, manifest.fetch("operation_count")
+    assert_equal "op_101", manifest.fetch("first_operation_id")
+    assert_equal "op_110", manifest.fetch("last_operation_id")
+    assert_equal Digest::SHA256.file(File.join(ROOT, "data/operations_queue_10.json")).hexdigest,
+                 manifest.fetch("queue_sha256")
     report = JSON.parse(File.read(File.join(ROOT, "routing_report_test.json")))
     profile = report.fetch("submission_profile")
     assert_equal "official-smart-v0.4.2", profile.fetch("profile_id")
@@ -40,6 +87,71 @@ class AuthoritativeCaseFinalizationTest < Minitest::Test
     assert_equal "conversion", profile.fetch("configuration").fetch("simulation_mode")
     refute_empty profile.fetch("configuration").fetch("count_share")
     refute_empty profile.fetch("configuration").fetch("volume_share")
+  end
+
+  def test_submission_manifest_detects_a_post_validation_artifact_change
+    queue_path = File.join(ROOT, "data/operations_queue_10.json")
+    decisions_path = File.join(ROOT, "routing_decisions_test.json")
+    report_path = File.join(ROOT, "routing_report_test.json")
+    _stdout, stderr, status = Open3.capture3(
+      RbConfig.ruby, "-Ilib", File.join(ROOT, "bin/finalize_submission"), "--queue", queue_path, chdir: ROOT
+    )
+    assert status.success?, stderr
+
+    manifest = RubyRouting::Case::SubmissionManifest.build(
+      root: ROOT, queue_path: queue_path, decisions_path: decisions_path, report_path: report_path
+    )
+    manifest.verify!
+    original_report = File.binread(report_path)
+    File.binwrite(report_path, original_report + "\n")
+
+    error = assert_raises(RubyRouting::Case::OutputError) { manifest.verify! }
+    assert_includes error.message, "changed after manifest validation"
+  ensure
+    File.binwrite(report_path, original_report) if report_path && original_report
+  end
+
+  def test_submission_manifest_rejects_validated_artifacts_not_present_in_head
+    queue_dir = Dir.mktmpdir("ruby-routing-release-queue")
+    queue_path = File.join(queue_dir, "queue.json")
+    public_queue = JSON.parse(File.read(File.join(ROOT, "data/operations_queue_10.json")))
+    File.write(queue_path, JSON.generate([public_queue.first]))
+    _stdout, stderr, status = Open3.capture3(
+      RbConfig.ruby, "-Ilib", File.join(ROOT, "bin/finalize_submission"),
+      "--queue", queue_path, chdir: ROOT
+    )
+    assert status.success?, stderr
+
+    manifest = RubyRouting::Case::SubmissionManifest.build(
+      root: ROOT,
+      queue_path: queue_path,
+      decisions_path: File.join(ROOT, "routing_decisions_test.json"),
+      report_path: File.join(ROOT, "routing_report_test.json")
+    )
+    error = assert_raises(RubyRouting::Case::OutputError) { manifest.verify_committed! }
+    assert_includes error.message, "committed bytes differ"
+  ensure
+    FileUtils.remove_entry(queue_dir) if queue_dir && File.exist?(queue_dir)
+  end
+
+  def test_submission_artifacts_use_canonical_lf_bytes_for_git_release
+    stdout, stderr, status = Open3.capture3(
+      RbConfig.ruby, "-Ilib", File.join(ROOT, "bin/finalize_submission"),
+      "--queue", File.join(ROOT, "data/operations_queue_10.json"), chdir: ROOT
+    )
+    assert status.success?, stderr
+    manifest_line = stdout.lines.find { |line| line.start_with?("submission_manifest=") }
+    manifest = JSON.parse(manifest_line.delete_prefix("submission_manifest="))
+
+    {
+      "decisions_path" => manifest.fetch("decisions_sha256"),
+      "report_path" => manifest.fetch("report_sha256")
+    }.each do |manifest_key, expected_digest|
+      path = manifest.fetch(manifest_key)
+      bytes = File.binread(path)
+      refute_includes bytes, "\r".b
+      assert_equal expected_digest, Digest::SHA256.hexdigest(bytes)
+    end
   end
 
   def test_supported_case_cli_reaches_deterministic_conversion_fallback_with_profile_override

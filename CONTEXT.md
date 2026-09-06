@@ -1,31 +1,33 @@
 # Current Context — RubyRouting post-TZ
 
-Current goal: **v0.4.3 / SPEC-019 — ACTIVE**.
+Program: **v0.4.4 — Competition 10/10 Convergence — ACTIVE**.
 
-Opening baseline: `277d6b68d568eceb88ece3b3e466987535ff75bd` (v0.4.2 VERSION_COMPLETE baseline).
+Governing spec: **SPEC-021 — Autonomous Product Excellence & Score Maximization**.
+
+Completed implementation baseline: `50b969575f482610460b805d199acc725e8eb37b`; exact current `main` must be refetched.
 
 ## Product model
 
-`official provider snapshot + queue + history + SubmissionProfile -> hard eligibility -> primary smart routing -> primary assignment -> deterministic provider attempts/fallback -> final selected provider -> settlement -> decisions + report`.
+`provider snapshot + history + explicit queue + typed policy -> hard opportunity -> configured multi-objective objective -> primary assignment -> attempts/fallback -> final provider -> settlement -> causal decisions/report -> independent validation -> release guard`.
 
-Keep these concepts separate:
+Keep separate: primary assignment; invoked attempt; selection rationale; provider outcome; final selected provider; approved settlement; organizer base projection; rich analytics.
 
-- **primary assignment**: first routing allocation authority currently used by count/volume ledger;
-- **attempt**: a provider actually invoked in the bounded simulator;
-- **final selected provider**: last selected attempt exposed in organizer decisions;
-- **settlement**: approved final monetary outcome used for success/utilization state;
-- **report base projection**: organizer-facing compatibility surface;
-- **rich report**: additive exact evidence and explanations.
+## Current maturity
 
-v0.4.3 specifically audits whether the organizer base `distribution` should project primary assignment, final selection or settlement. Do not collapse the three ledgers before that is proven.
+SPEC-020 closed explicit-queue release safety and snapshot-offset business-calendar risks. Hard gates, deterministic fallback, exact ledgers, typed factors, rich report, independent report validation and submission byte/trackability guard are strong baseline capabilities.
 
-## Current adversarial seams
+Fresh code-first review shows the remaining path to 10/10 is mostly objective semantics and evidence quality rather than missing infrastructure:
 
-1. semantic report correctness must be independently recomputed from raw inputs/artifacts, not from ReportBuilder;
-2. candidate-relative normalization must survive adding/removing irrelevant eligible candidates without unjustified A/B inversion;
-3. daily limits must have an explicit temporal contract for hidden queues;
-4. missing preferred amount configuration must be neutral rather than silently favorable.
+- live eligible-set min/max normalization now ignores dominated providers when building the scale; a Router-level regression closes that perturbation, while non-dominated opportunity effects remain open;
+- exact score ties now use provider id only; a Router-level regression proves disabled priority cannot influence a tie, while broader factor-disablement and normalization audits remain;
+- failed selected attempts preserve outcome in public `reason` while rich explanations retain their original resolver rationale separately;
+- organizer base distribution under fallback remains an explicit interpretation question;
+- count/volume ordering now follows an exact global post-decision portfolio L1 objective on a shared fixed scale, with an independent counterexample regression;
+- current judge demo exposes much less than the eight implemented scoring factors;
+- volume target provenance, recommendation/counterfactual depth and artifact freshness before the hidden submission remain high-value audit surfaces.
+
+These are hypotheses/priorities, not a predetermined patch sequence. The agent must independently reproduce/falsify and may discover something more important.
 
 ## Protected production semantics
 
-The competition Case simulator is bounded. Production `UNKNOWN != failure`, economic owner safety, durable recovery and provider-I/O contracts remain protected and are not part of this narrow cycle unless a direct TZ blocker appears.
+Competition Case remains bounded from production `UNKNOWN != failure`, economic ownership, durable recovery and provider-I/O contracts.

@@ -48,12 +48,18 @@ module RubyRouting
         if @terminal_provider_id && !@provider_ids.include?(@terminal_provider_id)
           raise InputError, "terminal_provider_id is not in provider ids"
         end
+        if @terminal_provider_id &&
+           (@targets.count_share.fetch(@terminal_provider_id).positive? ||
+            @targets.volume_share.fetch(@terminal_provider_id).positive?)
+          raise InputError, "terminal provider targets must be zero"
+        end
         @simulation_seed = Input.assert_string(simulation_seed, "simulation_seed").freeze
         unless simulation_mode.is_a?(String) || simulation_mode.is_a?(Symbol)
           raise InputError, "simulation_mode must be a String or Symbol"
         end
         @simulation_mode = Input.assert_one_of(simulation_mode.to_s, %w[approved conversion], "simulation_mode").to_sym
         @source = Input.assert_string(source, "configuration source").freeze
+        raise InputError, "configuration source must be non-empty" if @source.strip.empty?
         @revision = Input.assert_integer(revision, "configuration revision", min: 1)
         freeze
       end
@@ -103,7 +109,7 @@ module RubyRouting
         unknown = canonical_keys - @provider_ids
         raise InputError, "preferred_amount_ranges contains unknown providers: #{unknown.join(', ')}" unless unknown.empty?
 
-        value.each_with_object({}) do |(provider_id, range), result|
+        normalized = value.each_with_object({}) do |(provider_id, range), result|
           unless range.is_a?(Hash)
             raise InputError, "preferred amount range for #{provider_id} must be a Hash"
           end
@@ -123,6 +129,9 @@ module RubyRouting
           high = Input.assert_integer(canonical_range.fetch(:max), "preferred amount max for #{provider_id}", min: 0)
           raise InputError, "preferred amount min exceeds max for #{provider_id}" if low > high
           result[Input.assert_id(provider_id, "preferred amount provider id")] = { min: low, max: high }.freeze
+        end.freeze
+        @provider_ids.each_with_object({}) do |provider_id, result|
+          result[provider_id] = normalized.fetch(provider_id) if normalized.key?(provider_id)
         end.freeze
       end
 
@@ -148,11 +157,14 @@ module RubyRouting
         raise InputError, "#{label} contains duplicate providers" unless canonical_keys.uniq.length == canonical_keys.length
         unknown = canonical_keys - @provider_ids
         raise InputError, "#{label} contains unknown providers: #{unknown.join(', ')}" unless unknown.empty?
-        value.each_with_object({}) do |(provider_id, amount), result|
+        normalized = value.each_with_object({}) do |(provider_id, amount), result|
           unless amount.is_a?(Integer) && amount >= 0
             raise InputError, "#{label} values must be non-negative Integers"
           end
           result[Input.assert_id(provider_id, "#{label} provider id")] = amount
+        end.freeze
+        @provider_ids.each_with_object({}) do |provider_id, result|
+          result[provider_id] = normalized.fetch(provider_id) if normalized.key?(provider_id)
         end.freeze
       end
 
@@ -198,11 +210,30 @@ module RubyRouting
                      volume_target_source:, configuration:)
         @profile_id = Input.assert_string(profile_id, "submission profile id").freeze
         @source = Input.assert_string(source, "submission profile source").freeze
+        raise InputError, "submission profile id must be non-empty" if @profile_id.strip.empty?
+        raise InputError, "submission profile source must be non-empty" if @source.strip.empty?
         @revision = Input.assert_integer(revision, "submission profile revision", min: 1)
         @count_target_source = Input.assert_string(count_target_source, "count target source").freeze
         @volume_target_source = Input.assert_string(volume_target_source, "volume target source").freeze
+        unless @count_target_source == TRAFFIC_TARGET_SOURCE
+          raise InputError, "unsupported count target source #{@count_target_source.inspect}"
+        end
+        unless [TRAFFIC_TARGET_SOURCE, "configured"].include?(@volume_target_source)
+          raise InputError, "unsupported volume target source #{@volume_target_source.inspect}"
+        end
         unless configuration.is_a?(CaseConfiguration)
           raise InputError, "submission profile configuration must be CaseConfiguration"
+        end
+        if @count_target_source == TRAFFIC_TARGET_SOURCE &&
+           configuration.targets.count_share.values.sum != Rational(1, 1)
+          raise InputError, "provider-derived count targets must sum exactly to one"
+        end
+        if @volume_target_source == TRAFFIC_TARGET_SOURCE &&
+           configuration.targets.volume_share.values.sum != Rational(1, 1)
+          raise InputError, "provider-derived volume targets must sum exactly to one"
+        end
+        unless configuration.source == @source && configuration.revision == @revision
+          raise InputError, "submission profile provenance must match configuration"
         end
         @configuration = configuration
         freeze
@@ -216,8 +247,8 @@ module RubyRouting
         provider_ids = dataset.providers.map(&:payment_system)
         profile_id = Input.assert_string(value.fetch("profile_id"), "submission profile id")
         source = Input.assert_string(value.fetch("source"), "submission profile source")
-        raise InputError, "submission profile id must be non-empty" if profile_id.empty?
-        raise InputError, "submission profile source must be non-empty" if source.empty?
+        raise InputError, "submission profile id must be non-empty" if profile_id.strip.empty?
+        raise InputError, "submission profile source must be non-empty" if source.strip.empty?
         revision = Input.assert_integer(value.fetch("revision"), "submission profile revision", min: 1)
         count_source = Input.assert_string(value.fetch("count_target_source"), "count target source")
         volume_source = Input.assert_string(value.fetch("volume_target_source"), "volume target source")
@@ -228,7 +259,8 @@ module RubyRouting
           raise InputError, "unsupported volume target source #{volume_source.inspect}"
         end
 
-        count_share = traffic_targets(dataset)
+        terminal_provider_id = Input.assert_id(value.fetch("terminal_provider_id"), "terminal provider id")
+        count_share = traffic_targets(dataset, terminal_provider_id: terminal_provider_id)
         volume_share = if volume_source == TRAFFIC_TARGET_SOURCE
           if value.key?("volume_share")
             raise InputError, "volume_share must not be supplied when volume target source is #{TRAFFIC_TARGET_SOURCE}"
@@ -249,15 +281,15 @@ module RubyRouting
           min_turnovers: value.fetch("min_turnovers", {}),
           rpm_limits: value.fetch("rpm_limits", {}),
           rpm_window_seconds: value.fetch("rpm_window_seconds", 60),
-          terminal_provider_id: value.fetch("terminal_provider_id"),
+          terminal_provider_id: terminal_provider_id,
           simulation_seed: value.fetch("simulation_seed"),
           simulation_mode: value.fetch("simulation_mode"),
           source: source,
           revision: revision
         )
         terminal = dataset.providers.find { |provider| provider.payment_system == configuration.terminal_provider_id }
-        unless terminal&.active? && terminal.self_provider?
-          raise InputError, "submission profile terminal provider must be an active self-provider"
+        unless terminal&.active?
+          raise InputError, "submission profile terminal provider must be active"
         end
         if configuration.weights.values.fetch(:count, Rational(0, 1)).positive? &&
            configuration.targets.count_share.values.none?(&:positive?)
@@ -276,11 +308,16 @@ module RubyRouting
         raise InputError, "submission profile missing field #{error.key}"
       end
 
-      def self.traffic_targets(dataset)
-        dataset.providers.each_with_object({}) do |provider, result|
-          participating = provider.active? && !provider.self_provider? && provider.traffic_percentage.positive?
+      def self.traffic_targets(dataset, terminal_provider_id:)
+        targets = dataset.providers.each_with_object({}) do |provider, result|
+          participating = provider.active? && provider.payment_system != terminal_provider_id &&
+            provider.traffic_percentage.positive?
           result[provider.payment_system] = participating ? Rational(provider.traffic_percentage, 100) : Rational(0, 1)
         end
+        unless targets.values.sum == Rational(1, 1)
+          raise InputError, "provider traffic targets must sum exactly to one"
+        end
+        targets
       end
 
       def to_h
@@ -292,6 +329,29 @@ module RubyRouting
           volume_target_source: volume_target_source,
           configuration: configuration.to_h
         }.freeze
+      end
+
+      # A typed profile can be supplied without going through `load`. The
+      # dataset-bound check keeps provider-derived provenance truthful on that
+      # alternate path while leaving explicitly configured volume targets
+      # independent by contract.
+      def validate_against!(dataset)
+        unless dataset.is_a?(Dataset)
+          raise InputError, "submission profile dataset must be Dataset"
+        end
+
+        provider_targets = self.class.traffic_targets(
+          dataset, terminal_provider_id: configuration.terminal_provider_id
+        )
+        if count_target_source == TRAFFIC_TARGET_SOURCE &&
+           configuration.targets.count_share != provider_targets
+          raise InputError, "provider-derived count targets do not match provider snapshot"
+        end
+        if volume_target_source == TRAFFIC_TARGET_SOURCE &&
+           configuration.targets.volume_share != provider_targets
+          raise InputError, "provider-derived volume targets do not match provider snapshot"
+        end
+        self
       end
     end
   end

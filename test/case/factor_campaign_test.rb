@@ -4,12 +4,15 @@ require_relative "../test_helper"
 
 class AuthoritativeCaseFactorCampaignTest < Minitest::Test
   def provider(id, priority: 1, conversion: Rational(1, 2), min: 1, max: 1_000,
-               daily_limit: 10_000, daily_approved: 0)
+               daily_limit: 10_000, daily_approved: 0,
+               in_progress_count_limit: 100, in_progress_count: 0,
+               in_progress_amount_limit: 100_000, in_progress_amount: 0)
     RubyRouting::Case::Provider.new(
       payment_system: id, status: "active", traffic_percentage: 50, priority: priority,
       limit_amount_min: min, limit_amount_max: max, daily_amount_limit: daily_limit,
-      daily_approved_amount: daily_approved, in_progress_count_limit: 100,
-      in_progress_count: 0, in_progress_amount_limit: 100_000, in_progress_amount: 0,
+      daily_approved_amount: daily_approved, in_progress_count_limit: in_progress_count_limit,
+      in_progress_count: in_progress_count, in_progress_amount_limit: in_progress_amount_limit,
+      in_progress_amount: in_progress_amount,
       available_requisites: 10, conversion_24h: conversion, avg_latency_sec: 10,
       banks: [], exclude_banks: false, provider_margin_pct: 1,
       merchant_margin_pct: 1, allow_negative_agreement: false
@@ -103,7 +106,8 @@ class AuthoritativeCaseFactorCampaignTest < Minitest::Test
 
   def test_conflict_weights_change_the_winner_and_preserve_both_traces
     states = self.states(
-      provider("a", conversion: Rational(9, 10), daily_limit: 1_000, daily_approved: 900),
+      provider("a", conversion: Rational(9, 10), daily_limit: 1_000, daily_approved: 900,
+               in_progress_count: 99, in_progress_amount: 99_900),
       provider("b", conversion: Rational(1, 10), daily_limit: 1_000, daily_approved: 0)
     )
     conversion_first = resolve(

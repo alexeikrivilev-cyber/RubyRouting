@@ -1,11 +1,13 @@
 # Plans
 
-Current version: **v0.4.3 / SPEC-019 — VERSION_COMPLETE**.
+Program: **v0.4.4 / SPEC-021 — ACTIVE**.
 
-The completed implementation plan is:
+Exactly one active rolling plan:
 
-`docs/exec-plans/completed/adversarial-evidence-contract-semantics.md`
+`docs/exec-plans/active/autonomous-product-excellence-score-maximization.md`
 
-Completed v0.4.2/v0.4.1/v0.4.0 plans are compatible baseline evidence only. Do not create a new plan without a new authoritative goal or execute historical work because it remains in Git.
+SPEC-020 and earlier completed plans are compatible evidence only.
 
-Plan updates are evidence records: each phase must say what was reproduced, what invariant/authority was chosen, what changed (or why no change was justified), tests/artifacts run, commit SHA and remaining risk.
+The active plan is deliberately rolling: it records current findings, chosen priority, evidence, commits and remaining score risk. It is not a contract to implement every hypothesis in the original order. Fresh analysis may reorder it.
+
+Every material checkpoint should record: exact baseline/head, finding/reproducer, authoritative invariant, change or falsification, tests/artifacts, rubric impact and residual risk.

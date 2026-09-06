@@ -1,5 +1,7 @@
 # Backlog Pointer
 
-Current canonical backlog: **`POST_TZ_BACKLOG.md`** for **v0.4.3 / SPEC-019 — VERSION_COMPLETE**.
+Current live findings are in `POST_TZ_BACKLOG.md` and current score priorities are in `COMPETITION_SCORECARD.md`.
 
-Follow `AUTHORITY.md` -> SPEC-019 -> the completed v0.4.3 ExecPlan -> `POST_TZ_BACKLOG.md`. v0.4.3 has no open locally actionable backlog; v0.4.2/SPEC-018 and older backlogs are completed/historical evidence.
+Program: **v0.4.4 / SPEC-021 — ACTIVE**.
+
+The backlog is a hypothesis registry, not a fixed execution order. Historical backlogs cannot override fresh code/data/artifact evidence.

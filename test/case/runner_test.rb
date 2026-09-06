@@ -52,20 +52,35 @@ class AuthoritativeCaseRunnerTest < Minitest::Test
     assert_equal "payflow", explanation.fetch(:selected_provider)
     assert_equal "fallback_highest_composite_score", explanation.fetch(:selected_reason)
     assert_equal "vipay", explanation.fetch(:primary_assignment_provider)
-    assert_equal "provider_rejected", explanation.fetch(:primary_assignment_reason)
+    assert_equal "highest_composite_score", explanation.fetch(:primary_assignment_reason)
+    assert_equal "VipPay selected by composite score → VipPay rejected → PayFlow selected by fallback composite score → PayFlow approved",
+      explanation.fetch(:decision_summary)
     assert explanation.fetch(:fallback_continued)
     assert_equal "vipay", explanation.fetch(:failed_attempts).first.fetch(:provider)
+    assert_equal "provider_rejected", explanation.fetch(:failed_attempts).first.fetch(:reason)
+    primary_attempt = run.decisions.find { |item| item.operation_id == "op_101" }.attempts.first
+    assert_equal "provider_rejected", primary_attempt.reason
+    assert_equal "highest_composite_score", primary_attempt.selection_reason
+    refute run.decisions.find { |item| item.operation_id == "op_101" }.to_h.fetch(:attempts).first.key?(:selection_reason)
     assert report.fetch(:utilization).fetch("payflow").key?(:daily_approved)
     assert report.fetch(:deviation_causes).fetch("quickpay").key?(:hard_forced_assignments)
     assert report.fetch(:attempt_distribution).fetch("vipay").fetch(:outcomes).key?(:rejected)
     assert report.fetch(:deviation_causes).fetch("vipay").key?(:hard_exclusions)
+    considered = report.fetch(:explanations).fetch("op_101").fetch(:considered).first
+    assert_equal %w[count volume priority amount conversion_24h load],
+      considered.fetch(:factors).fetch("vipay").map { |factor| factor.fetch(:factor) }
+    assert considered.fetch(:factors).fetch("vipay").all? { |factor| factor.fetch(:contribution) == factor.fetch(:normalized) * factor.fetch(:weight) }
+    chain = explanation.fetch(:causal_chain)
+    assert_equal %w[vipay payflow], chain.map { |entry| entry.fetch(:provider) }.first(2)
+    assert_equal %w[primary fallback], chain.map { |entry| entry.fetch(:phase) }.first(2)
+    assert_equal %w[resolver resolver], chain.map { |entry| entry.fetch(:selection_authority) }.first(2)
     refute JSON.generate(report).include?("7900")
     payflow_gap = report.fetch(:recommendation_details).find do |recommendation|
-      recommendation[:kind] == "count_target_unmet" && recommendation[:provider] == "payflow"
+      recommendation[:kind] == "structurally_constrained_under_target" && recommendation[:provider] == "payflow"
     end
     refute_nil payflow_gap
-    refute_empty payflow_gap.fetch(:evidence).fetch(:causes).fetch(:hard_exclusions)
-    assert_includes payflow_gap.fetch(:action), "hard eligibility"
+    refute_empty payflow_gap.fetch(:evidence).fetch(:hard_exclusion_reasons)
+    assert_includes payflow_gap.fetch(:action), "coverage"
   end
 
   def test_report_identifies_hard_forced_target_infeasibility
@@ -185,14 +200,16 @@ class AuthoritativeCaseRunnerTest < Minitest::Test
 
     assert_equal "payflow", run.decisions.find { |item| item.operation_id == "op_101" }.selected_provider
     assert_equal 10, run.traffic.total_count
-    assert_equal 4, run.traffic.count_by_provider.fetch("vipay")
+    assert_equal 3, run.traffic.count_by_provider.fetch("vipay")
+    assert_equal 4, run.primary_assignment_ledger.count_by_provider.fetch("vipay")
     assert_equal 4, run.attempt_ledger.count_by_provider.fetch("vipay")
-    assert_equal 3, run.settlement_ledger.count_by_provider.fetch("payflow")
+    assert_equal 2, run.settlement_ledger.count_by_provider.fetch("payflow")
+    assert_equal 5, run.settlement_ledger.count_by_provider.fetch("quickpay")
     assert_equal 3, run.settlement_ledger.count_by_provider.fetch("vipay")
     assert_equal 10, run.attempt_ledger.by_outcome.fetch(:approved)
     assert_equal 1, run.attempt_ledger.by_outcome.fetch(:rejected)
     report = run.report.to_h
-    assert_equal run.traffic.distribution, report.fetch(:assignment_distribution)
+    assert_equal run.primary_assignment_ledger.distribution, report.fetch(:assignment_distribution)
     assert_equal run.settlement_ledger.distribution, report.fetch(:settlement_distribution)
     assert_equal run.attempt_ledger.distribution, report.fetch(:attempt_distribution)
     assert RubyRouting::Case::StrictValidator.new(run).call.valid?
@@ -250,6 +267,8 @@ class AuthoritativeCaseRunnerTest < Minitest::Test
       assert_equal run.dataset.operations.sum(&:amount), run.traffic.total_volume
       assert_equal 0, run.state.fetch("spacepayments").daily_approved_amount
       assert_equal 0, run.settlement_ledger.count_by_provider.fetch("spacepayments")
+      assert_equal 1, run.report.to_h.fetch(:final_selection_distribution).fetch("spacepayments").fetch(:count)
+      assert_equal 0, run.report.to_h.fetch(:settlement_distribution).fetch("spacepayments").fetch(:count)
       expected_terminal_outcomes = terminal_status == :rejected ? 4 : 1
       assert_equal expected_terminal_outcomes, run.attempt_ledger.by_outcome.fetch(terminal_status)
       assert RubyRouting::Case::StrictValidator.new(run).call.valid?

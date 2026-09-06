@@ -3,12 +3,14 @@
 require_relative "../test_helper"
 
 class AuthoritativeCaseFactorsTest < Minitest::Test
-  def provider(id, priority:, conversion: Rational(1, 2))
+  def provider(id, priority:, conversion: Rational(1, 2), daily_amount_limit: 10_000_000,
+               daily_approved_amount: 0, in_progress_count_limit: 100,
+               in_progress_amount_limit: 10_000_000)
     RubyRouting::Case::Provider.new(
       payment_system: id, status: "active", traffic_percentage: 50, priority: priority,
-      limit_amount_min: 1, limit_amount_max: 100_000, daily_amount_limit: 10_000_000,
-      daily_approved_amount: 0, in_progress_count_limit: 100, in_progress_count: 0,
-      in_progress_amount_limit: 10_000_000, in_progress_amount: 0,
+      limit_amount_min: 1, limit_amount_max: 100_000, daily_amount_limit: daily_amount_limit,
+      daily_approved_amount: daily_approved_amount, in_progress_count_limit: in_progress_count_limit,
+      in_progress_count: 0, in_progress_amount_limit: in_progress_amount_limit, in_progress_amount: 0,
       available_requisites: 10, conversion_24h: conversion, avg_latency_sec: 10,
       banks: [], exclude_banks: false, provider_margin_pct: 1,
       merchant_margin_pct: 1, allow_negative_agreement: false
@@ -42,7 +44,7 @@ class AuthoritativeCaseFactorsTest < Minitest::Test
 
     assert_equal "first", resolution.selected_provider
     assert_operator resolution.score_for("first"), :>, resolution.score_for("second")
-    assert_equal Rational(1, 1), resolution.traces.fetch("first").first.normalized
+    assert_equal Rational(1, 2), resolution.traces.fetch("first").first.normalized
   end
 
   def test_count_and_volume_are_independent_evidence_in_one_resolution
@@ -70,7 +72,7 @@ class AuthoritativeCaseFactorsTest < Minitest::Test
     assert_equal Rational(1, 1), resolution.traces.fetch("a").last.weight
   end
 
-  def test_fallback_phase_does_not_counterfactually_reassign_the_primary_operation
+  def test_fallback_phase_reuses_final_portfolio_objectives
     b = provider("b", priority: 9)
     c = provider("c", priority: 1)
     targets = RubyRouting::Case::TrafficTargets.new(
@@ -79,7 +81,6 @@ class AuthoritativeCaseFactorsTest < Minitest::Test
       volume_share: { a: 0, b: Rational(4, 5), c: Rational(1, 5) }
     )
     ledger = RubyRouting::Case::TrafficLedger.new(%w[a b c], targets: targets)
-    ledger.record_assignment!(provider_id: "a", amount: operation.amount)
     resolver = RubyRouting::Case::ConflictResolver.new(weights: { count: 1, volume: 1 })
 
     resolution = resolver.resolve(
@@ -95,9 +96,12 @@ class AuthoritativeCaseFactorsTest < Minitest::Test
     )
 
     assert_equal :fallback, resolution.phase
-    assert_equal "c", resolution.selected_provider
-    assert_empty resolution.traces.fetch("b")
-    assert_empty resolution.traces.fetch("c")
+    # The final-selected ledger has not recorded this operation yet. Allocation
+    # objectives can therefore rank the remaining candidates without counting
+    # the rejected primary assignment as a final outcome.
+    assert_equal "b", resolution.selected_provider
+    assert_equal %i[count volume], resolution.traces.fetch("b").map(&:factor)
+    assert_equal %i[count volume], resolution.traces.fetch("c").map(&:factor)
   end
 
   def test_equal_raw_factor_is_non_discriminating_and_does_not_claim_contribution
@@ -136,6 +140,39 @@ class AuthoritativeCaseFactorsTest < Minitest::Test
     assert resolution.traces.fetch("p").all? { |e| e.raw.is_a?(Integer) || e.raw.is_a?(Rational) }
     assert_equal Rational(0, 1), resolution.score_for("p")
     assert resolution.traces.fetch("p").all? { |evidence| evidence.reason.include?("non-discriminating") }
+  end
+
+  def test_zero_rpm_limit_has_no_intensity_headroom_without_dividing_by_zero
+    state = RubyRouting::Case::ProviderCaseState.new(provider("p", priority: 1), rpm_limit: 0)
+    resolution = RubyRouting::Case::ConflictResolver.new(weights: { intensity: 1 }).resolve(
+      candidates: [state], normalization_candidates: [state],
+      operation: operation, traffic: RubyRouting::Case::TrafficLedger.new(["p"]),
+      as_of: operation.created_at
+    )
+    evidence = resolution.traces.fetch("p").first
+
+    assert_equal Rational(0, 1), evidence.raw
+    assert_equal Rational(0, 1), evidence.normalized
+    assert_equal Rational(0, 1), evidence.contribution
+    assert_includes evidence.reason, "rolling RPM headroom=0/1"
+  end
+
+  def test_zero_capacity_limit_has_no_load_headroom_without_dividing_by_zero
+    state = RubyRouting::Case::ProviderCaseState.new(
+      provider("p", priority: 1, daily_amount_limit: 0)
+    )
+    resolution = RubyRouting::Case::ConflictResolver.new(weights: { load: 1 }).resolve(
+      candidates: [state], normalization_candidates: [state],
+      operation: operation, traffic: RubyRouting::Case::TrafficLedger.new(["p"]),
+      as_of: operation.created_at
+    )
+    evidence = resolution.traces.fetch("p").first
+
+    assert_equal Rational(66_333, 100_000), evidence.raw
+    assert_equal Rational(0, 1), evidence.normalized
+    assert_equal Rational(0, 1), evidence.contribution
+    assert_includes evidence.reason, "current daily/concurrent headroom=66333/100000"
+    assert_includes evidence.reason, "non-discriminating"
   end
 
   def test_resolution_provider_identity_does_not_use_structured_to_s_coercion

@@ -2,8 +2,10 @@
 
 Ruby baseline: **CRuby 4.0.6**. Keep the submission Ruby-only and dependency-light.
 
-Use exact `Integer`/`Rational` arithmetic for routing authority. Convert to organizer-facing numeric percentages only at the report compatibility boundary under explicit rounding.
+Use exact `Integer`/`Rational` arithmetic for routing authority. Float/decimal presentation belongs only at explicit organizer-facing boundaries with deterministic rounding.
 
-Use Minitest and repository Rake tasks. Determinism is mandatory; correctness tests must not depend on uncontrolled sleep/randomness.
+Prefer small typed value objects, pure factor/evaluation functions and deterministic transformations. Avoid hidden global state, process timezone dependence, uncontrolled randomness and sleep-based correctness tests.
 
-Current business authority is TZ/organizer contract -> completed SPEC-019 -> compatible completed SPEC-018/SPEC-017/SPEC-016 -> completed v0.4.3 ExecPlan/matrix. This file cannot redefine case semantics.
+Use Minitest and repository Rake tasks. Add independent/metamorphic tests where self-replay would merely confirm the same bug twice.
+
+Current business authority is `TZ/organizer contract -> SPEC-021 -> completed compatible SPEC-020/019/018/017/016 -> scorecard/active plan/matrix`. This guide cannot redefine case semantics.

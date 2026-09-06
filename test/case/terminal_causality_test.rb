@@ -3,9 +3,9 @@
 require_relative "../test_helper"
 
 class AuthoritativeCaseTerminalCausalityTest < Minitest::Test
-  def provider(id, traffic:, priority:, banks: [])
+  def provider(id, traffic:, priority:, banks: [], status: "active")
     RubyRouting::Case::Provider.new(
-      payment_system: id, status: "active", traffic_percentage: traffic, priority: priority,
+      payment_system: id, status: status, traffic_percentage: traffic, priority: priority,
       limit_amount_min: 1, limit_amount_max: 10_000, daily_amount_limit: 1_000_000,
       daily_approved_amount: 0, in_progress_count_limit: 10, in_progress_count: 0,
       in_progress_amount_limit: 1_000_000, in_progress_amount: 0, available_requisites: 10,
@@ -28,7 +28,7 @@ class AuthoritativeCaseTerminalCausalityTest < Minitest::Test
         provider("a", traffic: 50, priority: 1, banks: ["other"]),
         provider("b", traffic: 50, priority: 2, banks: ["other"]),
         provider(terminal_id, traffic: 0, priority: 99),
-        provider(terminal_id == "spacepayments" ? "zero-provider" : "spacepayments", traffic: 0, priority: 100)
+        provider(terminal_id == "spacepayments" ? "zero-provider" : "spacepayments", traffic: 0, priority: 100, status: "enabled")
       ],
       history: [], operations: [operation]
     )
@@ -61,7 +61,7 @@ class AuthoritativeCaseTerminalCausalityTest < Minitest::Test
     assert_equal 1, causes.fetch(:terminal_fallback_assignments)
     refute_nil detail
     assert_equal 1, detail.fetch(:evidence).fetch(:terminal_fallback_assignments)
-    assert_equal({ "bank_not_in_list" => 2, "zero_participation" => 1 }, detail.fetch(:evidence).fetch(:hard_excluded_alternatives))
+    assert_equal({ "bank_not_in_list" => 2, "inactive_provider" => 1 }, detail.fetch(:evidence).fetch(:hard_excluded_alternatives))
     assert_includes detail.fetch(:action), "terminal fallback"
     assert report.fetch(:recommendations).any? { |text| text.include?("terminal fallback") }
   end

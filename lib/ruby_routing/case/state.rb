@@ -23,8 +23,6 @@ module RubyRouting
         provider = provider_state.provider
         reason = if !provider.active?
           :inactive_provider
-        elsif provider.traffic_percentage.zero? && !terminal
-          :zero_participation
         elsif provider.limit_amount_min && operation.amount < provider.limit_amount_min
           :amount_below_minimum
         elsif provider.limit_amount_max && operation.amount > provider.limit_amount_max
@@ -56,8 +54,13 @@ module RubyRouting
                   :routed_count, :routed_volume, :approved_count,
                   :rejected_count, :expired_count, :daily_date
 
-      def initialize(provider, rpm_limit: nil, rpm_window_seconds: 60, daily_date: nil)
+      def initialize(provider, rpm_limit: nil, rpm_window_seconds: 60, daily_date: nil,
+                     business_calendar: BusinessCalendar.new(utc_offset_seconds: 0))
         @provider = provider
+        unless business_calendar.is_a?(BusinessCalendar)
+          raise InputError, "business_calendar must be a BusinessCalendar"
+        end
+        @business_calendar = business_calendar
         @daily_approved_amount = provider.daily_approved_amount
         @daily_date = daily_date.nil? ? nil : calendar_day(validate_time!(daily_date))
         @transient_count = 0
@@ -180,7 +183,7 @@ module RubyRouting
       private
 
       def calendar_day(value)
-        value.utc.strftime("%Y-%m-%d")
+        @business_calendar.date_for(value)
       end
 
       def validate_time!(value)
@@ -198,7 +201,8 @@ module RubyRouting
             provider,
             rpm_limit: rpm_limits[provider.payment_system],
             rpm_window_seconds: rpm_window_seconds,
-            daily_date: dataset.snapshot_at
+            daily_date: dataset.snapshot_at,
+            business_calendar: dataset.business_calendar
           )
         end
       end

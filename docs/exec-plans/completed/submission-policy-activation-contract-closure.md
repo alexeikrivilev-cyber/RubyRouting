@@ -6,6 +6,12 @@ Specification: `specifications/017-submission-policy-activation-contract-closure
 
 Opening baseline: `0187bf2558d58a52dfdb27e76694d6323addbcd6`.
 
+Historical note: the Phase 2 primary-assignment accounting point below was the
+v0.4.1 contract. S21-H101 subsequently superseded its online target-ledger
+timing for the current v0.4.4 product: primary assignment remains explicit,
+while `Router#traffic` now commits the final selected provider after the
+cascade. This completed plan is retained as historical provenance.
+
 ## Objective
 
 Turn the completed v0.4.0 case engine into a submission path that actually uses its smart routing capabilities and has unambiguous accounting/output semantics. Work evidence-first; do not redesign working hard/state infrastructure.

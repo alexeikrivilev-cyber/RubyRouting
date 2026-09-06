@@ -39,7 +39,13 @@ Rake::TestTask.new(:case) do |task|
 end
 
 task :finalize_submission do
-  ruby "-Ilib", "bin/finalize_submission", "--queue", "data/operations_queue_10.json"
+  queue = ENV.fetch("SUBMISSION_QUEUE", "operations_queue_test.json")
+  abort "final submission queue must be operations_queue_test.json" unless File.basename(queue) == "operations_queue_test.json"
+  ruby "-Ilib", "bin/finalize_submission", "--queue", queue, "--verify-committed"
+end
+
+task :finalize_public_submission do
+  ruby "-Ilib", "bin/finalize_submission", "--queue", "data/operations_queue_10.json", "--verify-committed"
 end
 
 task :case_demo do

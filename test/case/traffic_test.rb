@@ -47,9 +47,13 @@ class AuthoritativeCaseTrafficLedgerTest < Minitest::Test
 
   def test_runner_report_uses_the_same_traffic_ledger_as_routing
     run = RubyRouting::Case::Runner.new.call
-    report = run.report.to_h.fetch(:distribution)
+    report = run.report.to_h
+    run.primary_assignment_ledger.distribution.each do |provider_id, values|
+      assert_equal values, report.fetch(:assignment_distribution).fetch(provider_id).slice(*values.keys)
+    end
     run.traffic.distribution.each do |provider_id, values|
-      assert_equal values, report.fetch(provider_id).slice(*values.keys)
+      assert_equal values.slice(:count, :volume, :count_share, :volume_share),
+        report.fetch(:final_selection_distribution).fetch(provider_id)
     end
     assert_equal run.traffic.total_count, run.decisions.length
     assert_equal 385_800, run.traffic.total_volume

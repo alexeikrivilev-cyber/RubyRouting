@@ -302,7 +302,7 @@ module RubyRouting
           remaining = ordered_external.dup
           cursor = 0
           attempt_index = 0
-          assignment_recorded = false
+          attempt_started = false
           loop do
             eligible = []
             remaining.dup.each do |provider|
@@ -318,7 +318,7 @@ module RubyRouting
             end
             break if eligible.empty?
 
-            fallback_resolution = assignment_recorded
+            fallback_resolution = attempt_started
             resolution = @run.resolver.resolve(
               candidates: eligible, operation: operation, traffic: replay_traffic,
               as_of: operation.created_at, phase: fallback_resolution ? :fallback : :primary,
@@ -330,12 +330,7 @@ module RubyRouting
             simulation = @run.simulator.call(
               operation, replay_state.fetch(resolution.selected_provider).provider, attempt_index: attempt_index
             )
-            unless assignment_recorded
-              replay_traffic.record_assignment!(
-                provider_id: resolution.selected_provider, amount: operation.amount
-              )
-              assignment_recorded = true
-            end
+            attempt_started = true
             add("#{operation.operation_id}: simulator replay differs for #{resolution.selected_provider}") unless actual&.status == simulation.status && actual.latency_sec == simulation.latency_sec
             expected_reason = if simulation.approved?
               resolution.selection_reason(candidate_count: eligible.length)
@@ -353,6 +348,9 @@ module RubyRouting
             cursor += 1 if actual&.provider == resolution.selected_provider
             if simulation.approved?
               replay_provider.record_route!(operation)
+              replay_traffic.record_assignment!(
+                provider_id: resolution.selected_provider, amount: operation.amount
+              )
               break
             end
             add("#{operation.operation_id}: failed provider must be an invoked selected attempt") unless actual&.decision == :selected && actual.attempted?
@@ -370,10 +368,7 @@ module RubyRouting
               add("#{operation.operation_id}: terminal simulator replay differs") unless actual.status == simulation.status && actual.latency_sec == simulation.latency_sec
               expected_reason = decision.attempts.length == 1 ? "terminal_fallback" : "external_providers_exhausted"
               add("#{operation.operation_id}: terminal reason differs") unless actual.reason == expected_reason
-              unless assignment_recorded
-                replay_traffic.record_assignment!(provider_id: terminal_id, amount: operation.amount)
-                assignment_recorded = true
-              end
+              replay_traffic.record_assignment!(provider_id: terminal_id, amount: operation.amount)
               terminal.reserve!(operation, as_of: operation.created_at)
               terminal.release!(operation)
               terminal.record_outcome!(operation, simulation.status)
@@ -407,30 +402,37 @@ module RubyRouting
       end
 
       def calendar_day(value)
-        value.utc.strftime("%Y-%m-%d")
+        @dataset.business_calendar.date_for(value)
       end
 
       def validate_traffic_conservation
         expected_count = @run.decisions.each_with_object(Hash.new(0)) do |decision, counts|
+          counts[decision.selected_provider] += 1
+        end
+        expected_volume = @run.decisions.each_with_object(Hash.new(0)) do |decision, volumes|
+          operation = operation_for(decision)
+          volumes[decision.selected_provider] += operation.amount if operation
+        end
+        @run.traffic.provider_ids.each do |provider_id|
+          add("#{provider_id}: final traffic count differs from decisions") unless @run.traffic.count_by_provider.fetch(provider_id) == expected_count[provider_id]
+          add("#{provider_id}: final traffic volume differs from decisions") unless @run.traffic.volume_by_provider.fetch(provider_id) == expected_volume[provider_id]
+        end
+        primary_ledger = primary_assignment_ledger
+        expected_primary_count = @run.decisions.each_with_object(Hash.new(0)) do |decision, counts|
           provider = primary_provider(decision)
           counts[provider] += 1 if provider
         end
-        expected_volume = @run.decisions.each_with_object(Hash.new(0)) do |decision, volumes|
+        expected_primary_volume = @run.decisions.each_with_object(Hash.new(0)) do |decision, volumes|
           provider = primary_provider(decision)
-          next unless provider
           operation = operation_for(decision)
-          volumes[provider] += operation.amount if operation
+          volumes[provider] += operation.amount if provider && operation
         end
-        @run.traffic.provider_ids.each do |provider_id|
-          add("#{provider_id}: traffic count differs from decisions") unless @run.traffic.count_by_provider.fetch(provider_id) == expected_count[provider_id]
-          add("#{provider_id}: traffic volume differs from decisions") unless @run.traffic.volume_by_provider.fetch(provider_id) == expected_volume[provider_id]
+        primary_ledger.provider_ids.each do |provider_id|
+          add("#{provider_id}: primary assignment count differs from decisions") unless primary_ledger.count_by_provider.fetch(provider_id) == expected_primary_count[provider_id]
+          add("#{provider_id}: primary assignment volume differs from decisions") unless primary_ledger.volume_by_provider.fetch(provider_id) == expected_primary_volume[provider_id]
         end
-        assigned_count = @run.decisions.count { |decision| primary_provider(decision) }
-        assigned_volume = @run.decisions.sum do |decision|
-          primary_provider(decision) ? (operation_for(decision)&.amount || 0) : 0
-        end
-        add("assignment traffic total count differs from primary assignments") unless @run.traffic.total_count == assigned_count
-        add("assignment traffic total volume differs from primary assignments") unless @run.traffic.total_volume == assigned_volume
+        add("primary assignment total count differs from decisions") unless primary_ledger.total_count == expected_primary_count.values.sum
+        add("primary assignment total volume differs from decisions") unless primary_ledger.total_volume == expected_primary_volume.values.sum
       end
 
       def validate_attempt_accounting
@@ -482,7 +484,8 @@ module RubyRouting
       def validate_report_projection
         expected = ReportBuilder.new(
           @dataset, @run.state, @run.traffic, @run.configuration, @run.decisions,
-          profile: @run.profile, attempt_ledger: @run.attempt_ledger,
+          profile: @run.profile, primary_assignment_ledger: @run.primary_assignment_ledger,
+          attempt_ledger: @run.attempt_ledger,
           settlement_ledger: @run.settlement_ledger
         ).call.to_h
         add("report is not recomputable from the run") unless expected == @run.report.to_h
@@ -525,6 +528,20 @@ module RubyRouting
 
       def primary_provider(decision)
         decision.attempts.find { |attempt| attempt.status }&.provider
+      end
+
+      def primary_assignment_ledger
+        @primary_assignment_ledger ||= @run.primary_assignment_ledger || begin
+          ledger = TrafficLedger.new(
+            @dataset.providers.map(&:payment_system), targets: @run.configuration.targets
+          )
+          @run.decisions.each do |decision|
+            provider = primary_provider(decision)
+            operation = operation_for(decision)
+            ledger.record_assignment!(provider_id: provider, amount: operation.amount) if provider && operation
+          end
+          ledger
+        end
       end
     end
 
@@ -653,6 +670,7 @@ module RubyRouting
         add("report artifact differs from the validated run") unless value == expected
         add("report artifact total_operations differs from queue") unless value["total_operations"] == @run.dataset.operations.length
         add("report artifact lacks assignment_distribution") unless value["assignment_distribution"].is_a?(Hash)
+        add("report artifact lacks final_selection_distribution") unless value["final_selection_distribution"].is_a?(Hash)
         add("report artifact lacks settlement_distribution") unless value["settlement_distribution"].is_a?(Hash)
         add("report artifact lacks attempt_distribution") unless value["attempt_distribution"].is_a?(Hash)
         profile = value["submission_profile"]

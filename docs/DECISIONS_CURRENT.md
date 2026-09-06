@@ -1,163 +1,697 @@
-# Current Decisions — Post-TZ v0.4.3 — VERSION_COMPLETE
-
-SPEC-018/v0.4.2, SPEC-017/v0.4.1 and SPEC-016/v0.4.0 remain accepted where not superseded below.
+# Current Decisions — Post-TZ v0.4.4 / SPEC-021
 
 ## Stable inherited decisions
 
-- authoritative TZ/rubric outrank pre-TZ assumptions;
-- hard eligibility stays outside scoring and reruns on fallback;
-- `RubyRouting::Case` is bounded from production UNKNOWN/economic ownership;
-- priority is lower-is-higher;
-- one `ConflictResolver` is the soft-goal authority;
-- primary and fallback use explicit phase context;
-- assignment, attempts and settlement remain separate ledgers;
-- public validator is a lower bound;
-- report base shape is TZ-compatible and rich fields are additive;
-- exact arithmetic remains internal; compatibility percentages are bounded output values;
-- terminal provider identity is explicit configuration;
-- neutral equal-valued factors claim zero causal contribution.
+- authoritative TZ/rubric outrank implementation convenience;
+- hard eligibility remains outside soft scoring and reruns on fallback;
+- one `ConflictResolver` remains routing-choice authority;
+- primary assignment, selection rationale, attempts, provider outcome, final provider and settlement remain separate facts;
+- exact arithmetic and deterministic simulation remain mandatory;
+- terminal fallback identity is explicit;
+- organizer base fields stay compatible while rich evidence is additive;
+- independent validators and SPEC-020 release/calendar protections remain required;
+- Case synthetic expiry never weakens production UNKNOWN/economic-owner safety.
 
-## TZD-055 — reopen release claim after fresh code-first audit
+## TZD-077 — autonomous score-first development
+
 Status: accepted.
 
-Decision: v0.4.2 remains a completed baseline, and v0.4.3 closed the five evidence gaps found by the fresh independent review: organizer distribution accounting point, semantic report oracle independence, candidate-set normalization stability, multi-day daily state, and missing amount-range neutrality. TZ19-106/107 were then found and closed during the blind stage.
+Decision: the coding agent owns discovery and priority ordering. Backlog/ExecPlan contain hypotheses and evidence state, not a fixed patch script. Fresh higher-value P0/P1 work supersedes planned ordering immediately.
 
-## TZD-056 — do not collapse primary/final/settlement accounting before authority is proven
-Status: accepted for investigation.
+Priority combines rubric value at risk/gain, correctness severity, confidence/hidden-test exposure, judge visibility and implementation/regression cost.
 
-Decision: keep current primary assignment, final selected provider and approved settlement facts separate. SPEC-019 must determine which one the organizer base `distribution` is intended to project. Internal ledgers survive any projection choice.
+## TZD-078 — product quality exceeds minimum compliance
 
-## TZD-057 — report semantic oracle must not use ReportBuilder expected values
 Status: accepted.
 
-Decision: shape validation and builder self-consistency are necessary but insufficient. Semantic report evidence must independently recompute totals/shares/targets/utilization/period from raw queue/providers/profile and serialized decisions.
+Decision: target product is constraint-safe, multi-objective, deterministic, provider-independent and causally explainable. Beyond-TZ work is justified when it strengthens scored flexibility, explainability, analytics, extensibility or release safety without speculative infrastructure.
 
-## TZD-058 — candidate-relative normalization is evidence-gated, not presumed safe
+## TZD-079 — stable scoring semantics are a quality requirement
+
+Status: accepted and implemented for built-in factors; broader objective semantics remain active.
+
+Decision: factor weights need stable business meaning. Candidate-set normalization, provider enumeration or other opportunity context must not create unexplained inversions solely from score mechanics. Built-in preference factors therefore normalize against their exact semantic `[0,1]` domains; count/volume use their fixed portfolio-loss domain. This is a minimal evidence-driven choice, not a mandate for future factor implementations.
+
+## TZD-092 — count/volume use a shared post-decision portfolio loss
+
+Status: accepted and implemented; target provenance and broader factor-scale audits remain active.
+
+Decision: count and volume are portfolio objectives, so each candidate is evaluated against the exact post-decision L1 deviation of the complete configured target map. Both use higher-is-better `-L1` raw values on the shared fixed range `[-2, 0]`; built-in preference factors use their own fixed semantic `[0,1]` range. Equal candidate loss remains non-discriminating and contributes zero.
+
+## TZD-093 — zero-weight factors cannot define positive-objective scale
+
+Status: accepted and implemented; broader alternate-path disablement evidence remains active.
+
+Decision: the resolver may retain zero-weight factors in transparent traces, but their explicit zero contribution and the fixed built-in factor domains prevent a disabled business preference from altering a winner indirectly through normalization. Opportunity-relative frontier logic remains guarded for any future factor that explicitly opts into it.
+
+## TZD-094 — judge evidence uses the canonical Case engine
+
+Status: accepted and implemented; score evidence remains subject to blind audit.
+
+Decision: judge-visible factor/lifecycle evidence is generated by a small runnable surface over `ConflictResolver`, `Router` and `ReportBuilder`. Synthetic scenarios may vary typed targets, providers and outcomes, but they cannot introduce a second chooser, public-operation branch or alternate accounting authority.
+
+## TZD-095 — absent optional RPM configuration is neutral
+
+Status: accepted and implemented; canonical intensity policy remains optional.
+
+Decision: when `intensity` is positively configured but a candidate has no optional `rpm_limit`, that candidate contributes the neutral raw baseline `0` and may not claim maximum RPM headroom. A configured limit still contributes its exact rolling headroom, while the existing hard RPM gate remains independent and absolute. The Router-level regression is in `test/case/intensity_neutrality_test.rb`.
+
+## TZD-096 — finite-workload volume gaps are explicit evidence
+
+Status: accepted and implemented; broader counterfactual recommendations remain active.
+
+Decision: when a provider's positive volume-target gap is smaller than the minimum whole operation amount in the actual Case queue, the report must expose that finite-workload granularity as quantitative evidence rather than implying that a policy or hard-eligibility change can close the gap. This lower-bound diagnosis is emitted only when hard exclusions and hard-forced assignments do not already explain the deficit; it does not alter allocation or claim general subset-sum infeasibility. The regression is in `test/case/volume_recommendation_test.rb`.
+
+## TZD-097 — generated Case surfaces share one product version
+
+Status: accepted and implemented; input profile provenance remains independent.
+
+Decision: generated report, runnable demo and judge evidence use `RubyRouting::Case::VERSION` as their product-surface version. The loaded submission profile keeps its own explicit `profile_id` and deterministic seed as input provenance; changing those identifiers is a policy/data change, not an implicit consequence of a Case engine release.
+
+Implementation evidence: `test/case/version_metadata_test.rb` checks all three generated surfaces against the shared Case version authority.
+
+## TZD-098 — terminal fallback is never a normal target
+
+Status: accepted and implemented; partial non-terminal target mass remains an explicit supported diagnostic mode.
+
+Decision: an explicitly configured terminal provider is a safety fallback, not a normal routing competitor. Case configuration rejects any positive count or volume target for that provider instead of accepting a target that the resolver can never pursue while an external provider is eligible. Generic partial target maps remain allowed for bounded infeasibility/coverage scenarios and are not silently renormalized.
+
+Implementation evidence: `test/case/configuration_test.rb#test_terminal_provider_cannot_have_a_positive_routing_target` and the terminal-causality Case suite.
+
+## TZD-099 — structural recommendation evidence owns a known deficit
+
+Status: accepted and implemented; broader counterfactual recommendations remain active.
+
+Decision: when the actual Case run records hard exclusions for a provider and that provider is below its configured count or volume target, the report emits the structural constraint recommendation as the causal advice and suppresses duplicate generic target-unmet entries. A generic target recommendation remains valid when no structural hard-exclusion evidence explains the deficit; finite-workload granularity remains a separate diagnosis. This is report-only evidence policy and does not change allocation, hard eligibility or target semantics.
+
+Implementation evidence: `test/case/recommendation_test.rb#test_structural_under_target_exposes_observed_hard_exclusion_causes` and the canonical serialized `routing_report_test.json`.
+
+## TZD-100 — fallback keeps the organizer projection reversible
+
+Status: superseded by TZD-162 and TZD-165.
+
+Historical decision: the primary-assignment projection was temporarily retained while the fallback wording was unresolved. The three populations remain separate; this provisional choice no longer governs the compact organizer report or its target analytics.
+
+## TZD-101 — zero RPM is a typed no-headroom boundary
+
+Status: accepted and implemented; hard RPM eligibility remains authoritative.
+
+Decision: an explicitly configured `rpm_limit` of zero is valid typed configuration but provides no intensity headroom. The intensity factor must return exact raw `0` rather than divide by zero; Router hard eligibility still excludes the provider before scoring. Missing RPM configuration retains its separate neutral/no-preference explanation. This closes a factor-boundary failure without changing selection, fallback or RPM window semantics.
+
+Implementation evidence: `test/case/factors_test.rb#test_zero_rpm_limit_has_no_intensity_headroom_without_dividing_by_zero` and adjacent Case RPM suites.
+
+## TZD-102 — rich assignment target evidence is independently recomputed
+
+Status: accepted and implemented; canonical target provenance remains a separate business-contract question.
+
+Decision: the independent organizer semantic validator must derive the rich assignment distribution from raw queue amounts, serialized primary decisions and the supplied profile. It therefore recomputes exact assignment count/volume, count and volume shares, both target dimensions, and both deviations, while rejecting negative or over-mass target maps. Shape-valid corruption of a serialized rich target or deviation must not pass merely because a correlated builder or serialized artifact validator would reject it elsewhere. This is validator evidence only; it does not alter allocation or the current primary-assignment projection.
+
+Implementation evidence: `test/case/report_semantic_test.rb`, including forged assignment target/deviation rejection and configured volume-target mass validation.
+
+## TZD-103 — serialized final provider must follow the attempt chain
+
+Status: accepted and implemented.
+
+Decision: an independent report oracle must not accept a known provider identity that is disconnected from the serialized lifecycle. For each decision with selected attempts, `selected_provider` must equal the provider of the last selected attempt; this preserves the final provider after a fallback while rejecting shape-valid identity tampering. The rule validates linkage only and does not collapse primary, attempt or settlement populations.
+
+Implementation evidence: `test/case/report_semantic_test.rb#test_independent_oracle_rejects_final_provider_not_backed_by_last_selected_attempt`.
+
+## TZD-104 — serialized final outcome must follow the attempt chain
+
+Status: accepted and implemented.
+
+Decision: the independent semantic oracle must verify that a decision's top-level `simulated_result` is the outcome of its last selected attempt. Otherwise a shape-valid artifact could forge approval/rejection and compensate projected utilization without changing the attempt history. This preserves explicit attempt and final-outcome semantics, including fallback, without changing the Case simulator or production kernel.
+
+Implementation evidence: `test/case/report_semantic_test.rb#test_independent_oracle_rejects_final_outcome_not_backed_by_last_selected_attempt`.
+
+## TZD-105 — every selected attempt carries a typed outcome
+
+Status: accepted and implemented.
+
+Decision: the independent semantic oracle must reject a selected attempt whose `simulated_result` is absent or outside `approved`, `rejected`, or `expired`, even when the top-level decision and projected utilization are forged consistently. Every selected interaction remains part of the auditable attempt chain; this guard does not alter simulation or financial accounting.
+
+Implementation evidence: `test/case/report_semantic_test.rb#test_independent_oracle_rejects_selected_attempt_without_an_outcome`.
+
+## TZD-106 — report population metrics require an independent serialized decision oracle
+
+Status: accepted and implemented.
+
+Decision: the independent organizer semantic validator must recompute report population metrics from raw queue amounts and serialized decision attempts, rather than trusting ReportBuilder or only checking report shape. `skip_reasons`, attempt/final outcome counts, fallback count, assignment/traffic totals, settlement totals and success metrics are all linked to the serialized lifecycle. A hard-skipped attempt cannot carry a provider outcome, and fallback evidence is derived only from an earlier selected attempt. This guards judge-visible analytics without collapsing primary assignment, attempts or settlement into one ledger.
+
+Implementation evidence: `test/case/report_semantic_test.rb#test_independent_oracle_rejects_shape_valid_population_accounting_tampering` and the canonical serialized artifact validation path.
+
+## TZD-107 — independent report evidence covers per-provider attempt and settlement ledgers
+
+Status: accepted and implemented.
+
+Decision: the organizer semantic validator must independently recompute the rich per-provider attempt and settlement projections, not only their totals. Attempt counts/volumes/shares and typed outcome counts derive from serialized selected attempts; settlement counts/volumes/shares derive from approved final decisions. This preserves the distinct accounting populations while rejecting shape-valid report forgery without using ReportBuilder as an oracle.
+
+Implementation evidence: `test/case/report_semantic_test.rb#test_independent_oracle_rejects_shape_valid_attempt_and_settlement_tampering` and the fallback semantic regression.
+
+## TZD-080 — selection rationale and outcome are distinct concepts
+
+Status: accepted semantic target; organizer-compatible projection remains active work.
+
+Decision: “why this provider was selected” and “what the provider returned” are different facts. Minimal DTO compatibility may constrain serialization, but rich evidence must not label rejection/expiry as the original routing rationale.
+
+Implementation evidence: the internal Case attempt now retains `selection_reason` separately from its minimal outcome `reason`; rich explanations use the former for primary/final rationale, while serialized organizer decisions keep the latter.
+
+## TZD-081 — rubric evidence is first-class product evidence
+
 Status: accepted.
 
-Decision: the previous no-change decision is reopened only for a focused candidate-addition/removal campaign. Change normalization only if real supported-factor/profile behavior produces a material unjustified A/B inversion or misleading causal trace. Preserve exact arithmetic and one resolver.
+Decision: every scored routing capability should have a deterministic runnable scenario using the canonical Case engine. Tests remain necessary, but a judge should not need to infer support from implementation internals.
 
-## TZD-059 — missing optional amount preference should be neutral
-Status: candidate decision pending reproducer.
+## TZD-082 — official TZ remains immutable authority
 
-Decision direction: absence of a preferred amount band must not mean maximum preference. Confirm with an additional-provider regression, then encode neutral/non-discriminating absence with minimal impact on current configured providers.
+Status: accepted.
 
-## TZD-060 — daily limits require an explicit temporal contract
+Decision: SPEC-021, Product North Star, matrix and scorecard are derived engineering views. Organizer clarification supersedes bounded assumptions; never reinterpret TZ wording to preserve current behavior.
+
+## TZD-083 — no hidden business objective outside configured score
+
+Status: accepted invariant; current implementation requires audit.
+
+Decision: zero-weight/disabled/absent business factors do not influence preference through tie-break, provider ordering or alternate code paths. Tie-break is deterministic and either semantically neutral or explicit configuration with evidence.
+
+Current decision: exact composite-score ties use provider id only. Configured priority influences selection only through its explicit weighted factor contribution. Router-level regression evidence is in `test/case/tie_break_semantics_test.rb`.
+
+## TZD-084 — allocation objective must be portfolio-meaningful
+
+Status: accepted invariant; current formulation requires evidence.
+
+Decision: count/volume are routing-distribution objectives. Candidate ordering should correspond to an explicit post-decision portfolio objective for supported target semantics. If current factor formulation is equivalent, prove it with a small independent oracle; otherwise replace it with the simplest exact explainable objective.
+
+## TZD-085 — target provenance/mass is configuration semantics
+
+Status: accepted direction.
+
+Decision: target source, target mass and terminal participation are business contracts. Configuration should not silently accept economically incoherent target combinations merely because individual values parse. Exact acceptance rules follow authoritative/business evidence rather than arbitrary restrictions.
+
+## TZD-086 — final artifact freshness is separate from artifact trackability
+
+Status: accepted release rule.
+
+Decision: development may commit public-fixture `_test` artifacts for reproducible evidence. Final submission must prove root artifact bytes were regenerated/validated from the actual hidden queue and pushed at the exact release HEAD. Correct filenames alone are insufficient provenance.
+
+## TZD-087 — five-layer technical North Star
+
+Status: accepted.
+
+Decision: technical evolution is organized around `Opportunity -> Portfolio Objective -> Execution Cascade -> Evidence/Analytics -> Independent Release Evidence`. The model is a direction for autonomous discovery, not a fixed implementation sequence.
+
+## TZD-088 — call-site behavior is part of scoring semantics
+
+Status: accepted evidence rule.
+
+Decision: resolver-level tests cannot evidence Router-level invariants when the Router chooses the live candidate/normalization set. Score-critical metamorphic properties must be exercised through the actual canonical routing path as well as isolated factor/resolver tests.
+
+Historical seed: Router supplied the live eligible set as a normalization pool on the pre-fix path. Built-in factors now use fixed semantic domains, and the Router-level perturbation evidence below is the authority for their irrelevant-candidate stability; an explicit pool API alone would not have been proof.
+
+## TZD-091 — dominated candidates cannot define score scale
+
+Status: accepted and implemented for built-in factors.
+
+Decision: built-in Case preference factors use a fixed exact `[0,1]` semantic domain, so neither dominated nor non-dominated eligible candidates can redefine A/B weight meaning through candidate-set min/max scaling. Count/volume retain their separate fixed portfolio-loss domain. The Router-level regression covers both reproduced candidate-addition inversions; any future factor that opts into opportunity-relative normalization must provide its own evidence and explicit pool.
+
+## TZD-089 — better-than-TZ means better evidence and decisions, not more infrastructure
+
+Status: accepted.
+
+Decision: superior product quality should come from safer opportunity semantics, stronger portfolio decisions, clearer lifecycle evidence, better feasibility/counterfactual analytics, configurability and judge-visible proof. Infrastructure not tied to those dimensions is out of scope.
+
+## TZD-090 — neutral exact-score tie-break
+
 Status: accepted and implemented.
 
-Decision: the TZ permits an ordered queue and does not impose a single-day
-restriction. A deterministic cross-midnight reproducer showed that cumulative
-daily usage carried the supplied snapshot baseline into a later UTC date. The
-case state therefore scopes `daily_approved_amount` to the UTC calendar date:
-the snapshot baseline applies on its snapshot date, and later dates start at
-zero before that date's approved outcomes. Other sequential state (in-progress,
-RPM, attempts, routes and settlements) remains continuous. No persistence or
-scheduler is introduced.
+Decision: after the configured composite score is calculated, an exact tie is resolved by normalized provider id. Provider `priority` is not consulted as a hidden business objective; when configured with positive weight it is already represented in the composite score. The invariant is exercised through the canonical `Router`, including swapped priority values and equal exact scores.
 
-## TZD-061 — fallback accounting point remains an explicit authority ambiguity
-Status: evidence-closed for the current implementation; organizer meaning remains ambiguous.
+## TZD-108 — demo strategy evidence must use independent target semantics
 
-Decision: a deterministic `vipay rejected -> payflow approved` probe proves that
-primary assignment, final selected provider and approved settlement are different
-populations. The literal TZ says `distribution by provider` and requires actual vs
-target shares, but does not define which population applies after fallback; the
-public sample/validator has no rejected/expired fallback accounting case. Keep the
-existing primary-assignment base projection as the conservative reversible choice:
-fallback attempts must not silently rewrite allocation-target truth. Preserve final
-selection and approved settlement as separate rich projections, with attempts as a
-third population. Revisit only on explicit organizer clarification or a material
-validator/rubric counterexample.
+Status: accepted and implemented for the runnable Case demo.
 
-## TZD-062 — serialized report semantics require a separate raw-input oracle
+Decision: a judge-facing count-vs-volume comparison must not reuse one target map for both dimensions. The main demo uses an explicit exact volume target map separate from its count target map; target and actual values remain emitted by the canonical `TrafficLedger`/Router output. This is evidence configuration only and does not rewrite the canonical submission profile's `provider.traffic_percentage` provenance.
+
+## TZD-109 — aggregate attempt totals share the serialized attempt authority
+
 Status: accepted and implemented.
 
-Decision: `OrganizerReportContractValidator` remains the independent shape/type
-check, while `OrganizerReportSemanticValidator` independently parses raw
-providers/queue/profile plus serialized decisions/report. It recomputes queue
-coverage, primary-assignment counts/shares, declared targets, approved-settlement
-daily utilization and the UTC period. It does not call `ReportBuilder`, `Run` or
-Router replay for expected values. Finalization and the case CLI run it after the
-write/read boundary; shape-valid tamper regressions prove business-value drift is
-rejected.
+Decision: rich `attempt_totals` count and volume must be independently derived from the serialized selected-attempt population, just like the per-provider attempt distribution. The semantic validator links both aggregate fields to the same raw operation amounts and does not collapse attempt, assignment or settlement ledgers.
 
-## TZD-063 — resolver normalization requires an explicit opportunity pool
+## TZD-110 — serialized decisions terminate at the final selected attempt
+
 Status: accepted and implemented.
 
-Decision: candidate-relative min/max normalization is only meaningful when its
-reference set is the complete opportunity pool for that resolution. An
-independent A/B/C campaign confirmed that adding a hard-eligible non-winning C
-could otherwise rescale count/conversion factors and invert A/B without changing
-their raw evidence. `ConflictResolver` therefore fails closed unless callers
-provide `normalization_candidates` containing every scored candidate. Canonical
-Router and stateful replay pass the complete current hard-eligible pool; callers
-comparing subsets must pass the same pool explicitly. This preserves the
-existing public allocation outputs while removing a silent alternate authority.
+Decision: a serialized Case decision may contain hard skips before selected attempts and earlier failed selected attempts before fallback, but its final selected attempt must be the last attempt. The independent semantic oracle rejects trailing attempts after that terminal selection so the reported final provider/outcome remains an unambiguous lifecycle boundary.
 
-## TZD-064 — absent preferred amount configuration is neutral
+## TZD-111 — serialized attempts are typed lifecycle objects
+
 Status: accepted and implemented.
 
-Decision: an optional provider preferred amount band is a soft preference, not
-an implicit universal match. A deterministic additional-provider probe showed
-that returning raw `1` for absence made an unconfigured provider the strongest
-amount preference. `AmountPreferenceFactor` now returns exact raw `0` when the
-band is absent; equal raw values remain non-discriminating with zero causal
-contribution. Configured bands and hard min/max eligibility remain separate and
-unchanged.
+Decision: each serialized decision attempt must be an Object before the oracle derives skip, selected, fallback or ledger populations. Non-object entries are malformed input, not an ignorable extension.
 
-## TZD-065 — terminal zero-participation identity remains explicit
-Status: evidence-closed; no change required.
+## TZD-112 — selected attempts carry typed rationale
 
-Decision: a deterministic additional-provider probe confirmed that terminal
-identity is selected explicitly and is not hardcoded to the provider name
-`spacepayments`. The configured terminal must remain an active
-zero-participation self-provider, while other zero-participation providers stay
-outside the external candidate pool. This matches the supplied provider data
-and TZ terminal convention.
-
-## TZD-066 — direct terminal deviation needs report-level causality
 Status: accepted and implemented.
 
-Decision: when every external provider is hard-ineligible, terminal fallback can
-legitimately produce a positive actual share against a zero target. A generated
-probe showed that the previous rich report exposed the decision but not a
-quantitative report recommendation. `ReportBuilder` now records terminal
-fallback assignment count, hard-excluded alternative reasons and a deterministic
-terminal-deviation recommendation with target/actual count and volume. This is
-explanatory evidence only; terminal routing and accounting semantics are
-unchanged.
+Decision: every serialized selected attempt must contain a non-empty string `reason`. This is the minimal lifecycle explanation needed to keep the decision artifact complete; rich resolver rationale remains a separate internal/report field.
 
-## TZD-067 — independent semantic oracle fails closed on malformed raw inputs
+## TZD-113 — each serialized decision visits a provider at most once
+
 Status: accepted and implemented.
 
-Decision: the raw-input semantic validator is a strict validation boundary, so
-malformed provider/queue/profile/report roots, identities and non-exact target
-values must produce ordinary validation errors rather than uncaught method or
-coercion exceptions. This does not replace the canonical Case input loader or
-turn malformed data into valid domain input. The blind reproducer and regression
-live in `test/case/report_semantic_test.rb`.
+Decision: a serialized Case decision must not repeat a known provider in its attempt chain. The canonical bounded router removes a provider after its hard exclusion or selected invocation, so repetition is malformed lifecycle evidence rather than an additional population event.
 
-## TZD-068 — empty Case queues have exact zero report shares
+## TZD-114 — serialized attempt reasons use the bounded Case vocabulary
+
 Status: accepted and implemented.
 
-Decision: because the canonical Case loader permits an empty queue, the
-independent report oracle must validate its generated report rather than crash
-on a zero denominator. An empty queue has exact zero count shares for every
-provider; this is a Case/report boundary fact and does not alter production
-routing semantics. Regression coverage lives in
-`test/case/report_semantic_test.rb`.
+Decision: serialized attempt reasons must be non-empty strings from the Case contract's hard-exclusion, provider-outcome, selection, fallback and terminal reason sets. The independent report oracle validates vocabulary only; it does not become a second resolver or infer a score.
 
-## Open organizer assumptions
+## TZD-115 — structural under-target advice requires hard-capacity evidence
 
-- exact accounting population intended by base report `distribution` when fallback occurs;
-- exact hidden-queue day-span guarantee;
-- exact hidden validator behavior beyond supplied contracts;
-- exact simulated expiry algorithm and requisites lifecycle beyond supplied fields.
+Status: accepted and implemented.
 
-Keep these reversible and do not present assumptions as organizer facts.
+Decision: an observed hard exclusion is not by itself proof that a provider's under-target count or volume is structurally constrained. The report may suppress generic under-target advice only when the corresponding configured target exceeds the exact upper bound obtained by treating every non-excluded operation as hard-eligible. This is a report-only counterfactual bound; it does not alter routing, eligibility or accounting.
 
-## Closure record
+## TZD-116 — under-target recommendation suppression is dimension-specific
 
-v0.4.3 / SPEC-019 is VERSION_COMPLETE at exact pushed HEAD
-`13efbeba48f1726b91b71b1677d3541dd4f9f433`; fresh verification and exact-head
-Actions run `33852436704` passed. The remaining assumptions above are explicit
-organizer ambiguities, not locally actionable defects.
+Status: accepted and implemented.
+
+Decision: count and volume deficits have independent causal gates. A hard-capacity bound may suppress generic count advice only for an unattainable count target, and may suppress generic volume advice only for an unattainable volume target. Structural evidence for one dimension must not hide actionable evidence for the other.
+
+## TZD-117 — provider-derived target sources require complete mass
+
+Status: accepted and implemented.
+
+Decision: when `SubmissionProfile` derives count or volume targets from provider `traffic_percentage`, the active non-terminal provider map must sum exactly to one. Under- and over-mass raw provider configuration is rejected at the typed profile boundary and by the independent serialized report oracle using exact arithmetic. Explicit `configured` target maps remain a separate, intentionally partial diagnostic source and are not silently renormalized.
+
+## TZD-118 — supplied provider-source profiles retain the mass invariant
+
+Status: accepted and implemented.
+
+Decision: a programmatically supplied typed `SubmissionProfile` cannot claim `provider.traffic_percentage` provenance while carrying an incomplete target map. The constructor enforces exact mass for each dimension that declares the provider-derived source, closing the alternate `Runner(profile:)` path without requiring a second derivation authority. Explicit `configured` profiles remain allowed to carry partial diagnostic maps.
+
+## TZD-119 — typed profile sources use one bounded vocabulary
+
+Status: accepted and implemented.
+
+Decision: `SubmissionProfile` constructors and file loading share the same source contract: count targets must be `provider.traffic_percentage`, and volume targets must be either `provider.traffic_percentage` or explicit `configured`. A direct typed object cannot introduce an unsupported source that the canonical loader would reject.
+
+## TZD-120 — release verification binds artifacts to committed HEAD bytes
+
+Status: accepted and implemented.
+
+Decision: validating current worktree artifacts and proving Git trackability is not sufficient for a pushed submission. Release-level finalization must also compare the validated root artifact bytes with the exact committed `HEAD`; a valid artifact generated from another queue is not release-ready until committed. The guard is an extension of `SubmissionManifest`, not a deployment subsystem, and ordinary generation remains separate from committed-release verification.
+
+## TZD-121 — provider-derived target provenance is dataset-bound at the Router boundary
+
+Status: accepted and implemented.
+
+Decision: exact target mass alone does not prove a `provider.traffic_percentage` claim. Typed profiles supplied directly must be checked against the loaded dataset's canonical provider-derived map before routing; the check lives on `SubmissionProfile` and is enforced by `Router` so both Runner and direct Router paths share the same authority. Explicitly configured volume targets remain intentionally independent.
+
+## TZD-122 — profile and configuration provenance cannot diverge
+
+Status: accepted and implemented.
+
+Decision: a typed submission profile's source and revision are part of the same policy provenance as its nested `CaseConfiguration`. Direct construction must reject a source or revision mismatch before routing; this prevents report metadata from describing a different policy than the configuration actually used.
+
+## TZD-123 — typed profile identity and provenance are non-empty
+
+Status: accepted and implemented.
+
+Decision: direct `SubmissionProfile` construction must enforce the same non-empty `profile_id` and `source` contract as the canonical file loader. Matching empty fields are not valid provenance merely because they can be copied into a nested configuration; the canonical Router must fail closed before routing.
+
+Implementation evidence: `test/case/submission_profile_test.rb#test_programmatic_profile_rejects_empty_identity_and_provenance`.
+
+## TZD-124 — report profile metadata is distinct from profile file ingress
+
+Status: evidence-closed under current authority.
+
+Decision: keep `SubmissionProfile#to_h` as the nested rich-report metadata projection and `SubmissionProfile.load` as the flat file-ingress contract. The typed configuration alone promises `CaseConfiguration#to_h` round-trip. Do not add a second profile serializer or reshape the report merely to make these two intentionally different boundaries round-trip until the authoritative TZ or an operator contract requires it.
+
+Evidence: deterministic configured-volume round-trip probe and canonical finalization; no routing or allocation change is justified.
+
+## TZD-125 — independent report semantics fail closed on malformed provider snapshots
+
+Status: accepted and implemented.
+
+Decision: the organizer semantic oracle must reject missing, unknown, inexact or cross-field-invalid provider snapshot data before recomputing report values, and must return a `ValidationResult` rather than leaking arithmetic/type exceptions. Exact `n/d` strings emitted by the Case serializer are accepted only for the known ratio fields and normalized to exact `Rational` values. This protects the independent artifact boundary without making it a second routing or input-loader authority.
+
+Implementation evidence: `test/case/report_semantic_test.rb#test_malformed_raw_provider_returns_validation_errors_instead_of_raising`, `test/case/scale_campaign_test.rb` and the S21-H31 finding record.
+
+## TZD-126 — independent report semantics fail closed on malformed queue snapshots
+
+Status: accepted and implemented.
+
+Decision: the organizer semantic oracle must validate the exact queue operation shape and absolute chronological order before using serialized decisions/report for recomputation. Missing or unknown operation fields, invalid scalar types, empty payout requisites, invalid timestamps and out-of-order operations produce validation errors rather than being reduced to identity coverage. This keeps the artifact boundary aligned with the authoritative queue loader without creating another routing path.
+
+Implementation evidence: `test/case/report_semantic_test.rb#test_malformed_raw_queue_returns_validation_errors_instead_of_raising` and the S21-H32 finding record.
+
+## TZD-127 — independent report semantics fail closed on malformed provider roots
+
+Status: accepted and implemented.
+
+Decision: the organizer semantic oracle must validate the provider snapshot root (`snapshot_at`, `gateway`, `merchant` and `providers`) before recomputing report values. Missing or wrongly typed root metadata is a provider-input contract failure, not an irrelevant field omission, and must return validation errors without leaking parser/arithmetic exceptions.
+
+Implementation evidence: `test/case/report_semantic_test.rb#test_malformed_raw_provider_root_returns_validation_errors_instead_of_raising` and the S21-H33 finding record.
+
+## TZD-128 — direct typed configuration provenance is non-empty
+
+Status: accepted and implemented.
+
+Decision: `CaseConfiguration` is also a canonical typed policy entrypoint, so its source provenance must be non-empty before `Runner(configuration:)` or direct `Router(configuration:)` can publish a run. The guard closes the alternate path without introducing a second policy authority; the existing non-empty `case-defaults` default remains valid.
+
+Implementation evidence: `test/case/configuration_test.rb#test_configuration_source_must_be_non_empty_for_direct_typed_entrypoint`, related profile/runner tests and the S21-H34 finding record.
+
+## TZD-129 — independent report semantics reject malformed provider bank identifiers
+
+Status: accepted and implemented.
+
+Decision: raw provider snapshots supplied to the independent organizer oracle must preserve the typed provider identifier contract: bank identifiers are trimmed non-empty strings without duplicates, and payment-system identifiers are non-empty after trimming. Otherwise a malformed provider snapshot can alter hard-constraint inputs while remaining report-semantic-compatible. The oracle returns validation errors without changing routing behavior.
+
+Implementation evidence: `test/case/report_semantic_test.rb#test_provider_identifier_and_bank_values_follow_typed_input_contract` and the S21-H35 finding record.
+
+## TZD-130 — independent report oracle rejects null artifact roots
+
+Status: accepted and implemented.
+
+Decision: literal JSON `null` is a valid JSON value but not a valid root for any independent report input. The oracle must distinguish a parse/read failure from a successfully parsed null and fail closed for null provider, queue, profile, decisions or report roots, without entering partial recomputation.
+
+Implementation evidence: `test/case/report_semantic_test.rb#test_null_raw_artifact_roots_return_validation_errors` and the S21-H36 finding record.
+
+## TZD-131 — submission rehearsal must be visible at the README boundary
+
+Status: accepted and evidence-closed.
+
+Decision: release documentation must make the explicit queue path, fixed root artifact names and two-phase finalization (`generate/validate`, then `--verify-committed` after commit) visible to operators and judges. The README now describes only the existing CLI/Rake behavior and must not imply that public `_test` artifacts stand in for a hidden queue.
+
+Evidence: README submission rehearsal section, existing finalization tests and the S21-H37 finding record; no runtime behavior changed.
+
+## TZD-132 — hard-forced recommendations require hard-eligibility evidence
+
+Status: accepted and evidence-closed.
+
+Decision: a provider selected under a one-factor policy is not thereby hard-forced. Recommendation causality may call an assignment hard-forced only when the canonical resolution says the provider was the only eligible candidate and the same decision records at least one hard-skipped alternative. Score dimensionality and hard eligibility remain separate authorities.
+
+Evidence: `test/case/recommendation_test.rb#test_single_factor_selection_between_eligible_providers_is_not_hard_forced`, the H38 counterexample and adjacent Case/finalization verification.
+
+## TZD-133 — bounded subset-sum evidence is advisory, not routing truth
+
+Status: accepted and evidence-closed.
+
+Decision: when a finite workload has no hard exclusion, hard-forced assignment or fallback cause, analytics may report that an integer volume target is unreachable by whole-operation combinations. The check is a bounded report-only bitset (maximum 64 operations and 250000 total volume units); it must never alter selection, ledgers, targets or feasibility gates. Larger or causally mixed workloads retain the existing conservative recommendations.
+
+Evidence: `test/case/volume_recommendation_test.rb#test_unreachable_volume_target_reports_bounded_subset_sum_evidence`, H39 campaign record and adjacent Case/finalization verification.
+
+## TZD-134 — dependency versions are release input, not local workspace state
+
+Status: accepted and evidence-closed.
+
+Decision: the repository tracks `Gemfile.lock` and includes the local and GitHub Actions Ruby platforms. `.gitignore` must not hide the lockfile; clean-checkout verification is expected to use the committed dependency graph rather than silently resolving a newer graph.
+
+Evidence: tracked `Gemfile.lock`, `bundle check`, current workflow platform declaration and H40 release-boundary audit.
+
+## TZD-135 — positive targets require an executable ordinary route
+
+Status: accepted and evidence-closed.
+
+Decision: a direct typed configuration cannot assign positive count or volume target mass to a non-terminal provider unless that provider is literal `active`. `traffic_percentage` is a soft target signal, not a hard eligibility gate; an active non-terminal provider with a zero target remains eligible and may be selected when other hard-eligible providers are unavailable. Terminal role is defined only by explicit `terminal_provider_id`, and provider-derived profiles keep terminal target mass at zero.
+
+Evidence: `test/case/terminal_identity_test.rb#test_router_rejects_positive_targets_for_a_non_routable_provider`, H41 alternate-path reproducer and adjacent configuration/finalization verification.
+
+## TZD-136 — provenance must be non-blank, not merely non-empty
+
+Status: accepted and evidence-closed.
+
+Decision: typed configuration/profile `source` and profile `profile_id` values must contain a non-whitespace character. The boundary preserves the supplied non-blank value for provenance display; it only rejects semantically empty whitespace strings across file and direct-constructor paths.
+
+Evidence: H42 direct/file reproducers and focused configuration/profile/runner verification.
+
+## TZD-137 — absent optional capacity is neutral load evidence
+
+Status: accepted and implemented.
+
+Decision: `LoadHeadroomFactor` must not treat an absent daily/concurrent capacity configuration as maximum headroom. If all optional capacity dimensions are absent, the factor emits exact neutral raw `0` and an explicit neutral explanation. When one or more dimensions are configured, their exact headroom average remains the load preference. Hard eligibility remains the preceding authority, so this changes only soft preference and explainability.
+
+Evidence: deterministic canonical Router reproducer in `test/case/load_neutrality_test.rb#test_missing_capacity_limits_are_neutral_instead_of_maximum_headroom`, focused factor/normalization/portfolio verification, full Case matrix and committed-head public finalization.
+
+## TZD-138 — load averages fixed dimensions with neutral missing inputs
+
+Status: accepted and implemented.
+
+Decision: load evidence has three stable capacity dimensions: daily amount, in-progress count and in-progress amount. A missing optional dimension contributes exact neutral `0`; it must not disappear and let the remaining configured dimensions be renormalized into maximum preference. Configured dimensions retain their exact headroom values and the hard evaluator remains authoritative for eligibility.
+
+Evidence: deterministic partial-configuration Router reproducer in `test/case/load_neutrality_test.rb#test_missing_capacity_dimensions_are_neutral_in_partial_configuration`, updated full-capacity factor conflict fixture, focused factor/normalization suites and inherited Case verification.
+
+## TZD-139 — zero capacity is typed no-headroom evidence
+
+Status: accepted and implemented.
+
+Decision: an explicitly configured zero daily or concurrent capacity is not absent configuration and is not a valid scoring denominator. When a direct resolver path receives such a provider, that dimension contributes exact raw `0`; the other fixed capacity dimensions retain their exact average. Router hard eligibility remains the authority that excludes a positive payout against zero capacity before normal scoring.
+
+Evidence: `test/case/factors_test.rb#test_zero_capacity_limit_has_no_load_headroom_without_dividing_by_zero`, adjacent state/load/normalization verification and full Case matrix.
+
+## TZD-140 — serialized explanations must preserve independently derivable lifecycle identity
+
+Status: accepted and implemented.
+
+Decision: the independent report oracle must fail closed when rich per-operation explanations disagree with the serialized decision chain on selected provider, primary assignment identity/reason, final reason, hard exclusions, failed attempts, fallback continuation, terminal identity or considered-provider coverage. Resolver score values remain outside this oracle because the compact decisions artifact does not independently carry their source facts; the oracle validates their shape and provider identity without pretending to recompute them.
+
+Evidence: blind artifact probe `explanations.op_101.selected_provider = "quickpay"` previously passed with `valid=true`; `test/case/report_semantic_test.rb#test_independent_oracle_rejects_explanation_identity_tampering`, semantic/serialized/finalization suites now reject selected-provider and hard-exclusion tampering.
+
+## TZD-141 — independent oracle binds raw-derived report projections
+
+Status: accepted and implemented.
+
+Decision: the independent report oracle recomputes report dataset metadata, post-run provider state and independently derivable deviation fields from raw provider/queue inputs, the profile's explicit RPM policy, serialized attempts and the already validated assignment projection. It does not infer history analytics from current financial facts; history remains an explicit raw-input boundary to add only when the validator receives and validates the history source itself.
+
+Evidence: blind artifact probes for `dataset.queue_volume`, `provider_state.vipay.daily_approved_amount` and `deviation_causes.vipay.hard_exclusions` previously passed; `test/case/report_semantic_test.rb#test_independent_oracle_rejects_rich_projection_tampering`, semantic/serialized/finalization verification now reject those mutations, including snapshot-offset daily state and RPM-window counts.
+
+## TZD-142 — history analytics require an explicit raw source
+
+Status: accepted and implemented.
+
+Decision: the independent report oracle validates history analytics only when the caller supplies the raw history CSV path. It then recomputes source identity, row/volume totals, provider populations, exact shares/rates/averages and p95 latency directly from the typed CSV values. The finalizer always supplies its history path; callers that omit it retain an explicit compatibility boundary and do not receive a false claim of history provenance.
+
+Evidence: blind shape-valid mutations of `history.rows` and `history.by_provider.vipay.approved` previously passed; `test/case/report_semantic_test.rb#test_independent_oracle_rejects_history_analytics_tampering` and public finalization now reject them, while the report remains calibration/trends-only and cannot influence eligibility.
+
+## TZD-143 — rich configuration and infeasibility projections are raw-derived
+
+Status: accepted and implemented.
+
+Decision: the independent report oracle binds the serialized configuration to provider identities, provider-derived count/volume targets, profile weights, hard/soft maps, simulation controls and profile provenance. It also recomputes the bounded infeasibility projection from public decision hard-forced evidence and independently validated assignment deviations; hard-forced counts are exact when the compact decision chain exposes `only_eligible_provider` plus hard skips.
+
+Evidence: blind mutations of `period_window.from`, `configuration.weights.count` and `infeasibility` previously passed; `test/case/report_semantic_test.rb#test_independent_oracle_rejects_period_window_tampering` and `#test_independent_oracle_rejects_configuration_and_infeasibility_tampering` now reject them, with semantic/scale/finalization suites green.
+
+## TZD-144 — serialized submission-profile provenance is independently bound
+
+Status: accepted and implemented.
+
+Decision: when the semantic oracle receives a raw submission profile, the rich report's `submission_profile` must have the exact bounded shape and match the raw profile's identity, source, revision and target-source declarations. Its nested configuration must equal the independently raw-derived report configuration; no report-only profile identity is trusted.
+
+Evidence: a blind mutation of `report.submission_profile.profile_id` was accepted before the guard and is now rejected by `test/case/report_semantic_test.rb#test_independent_oracle_rejects_submission_profile_identity_tampering`; focused semantic evidence is 34/147.
+
+## TZD-145 — recommendation presentation is bound to typed evidence
+
+Status: accepted and implemented.
+
+Decision: the independent report oracle treats the base recommendation string and rich `action` as deterministic projections of the typed recommendation kind/evidence. Provider identity, evidence and supported kind remain independently checked; arbitrary non-empty operator text is not sufficient.
+
+Evidence: blind mutations of recommendation text and action were accepted before the guard; `test/case/report_semantic_test.rb#test_independent_oracle_rejects_recommendation_text_tampering` and the expanded recommendation-provenance regression now reject them, with semantic evidence at 35/150.
+
+## TZD-146 — weight conflicts require canonical Router evidence
+
+Status: accepted and implemented.
+
+Decision: the judge-facing conflict claim is split transparently: the compact synthetic two-provider resolver probe remains a factor illustration, while `router_multi_goal_conflict` must run the canonical `RubyRouting::Case::Router` against the authoritative provider snapshot and queue with identical business inputs and only the conversion/load weights changed. The evidence includes configuration, first-selection score/factor contributions, all selected providers and assignment distributions; it does not introduce another chooser.
+
+Evidence: an independent Router probe found `{ conversion_24h: 4, load: 1 }` selects `payflow` for `op_101`, while `{ conversion_24h: 1, load: 4 }` selects `quickpay` on the same 10-operation workload. `test/case/evidence_cli_test.rb` asserts the reversal and canonical input binding.
+
+## TZD-147 — fallback evidence exposes the canonical causal explanation
+
+Status: accepted and implemented.
+
+Decision: the judge-facing fallback scenario must expose the existing `ReportBuilder#explanations` projection for the exercised operation alongside attempts, outcomes and settlement distribution. The evidence must bind the primary assignment rationale, each failed selected attempt and the terminal final selection without creating a presentation-only chooser or rewriting production outcome reasons.
+
+Evidence: an independent CLI probe showed `fallback_and_analytics` had attempts/outcomes/settlement but no explanation. It now emits the canonical `op_101` explanation; `test/case/evidence_cli_test.rb` checks primary-provider linkage, failed-attempt coverage, fallback continuation and terminal identity.
+
+## TZD-148 — Router evidence covers more than one objective pair
+
+Status: accepted and implemented.
+
+Decision: a judge-visible claim of configurable multi-goal routing should show more than one genuine objective conflict under the canonical Router. The evidence therefore keeps the conversion/load pair and adds a priority/load pair, changing only the two exact weight maps while reusing the same authoritative queue, providers, targets and hard eligibility.
+
+Evidence: the independent probe found conversion-heavy `payflow` versus load-heavy `quickpay`, and priority-heavy `vipay` versus load-heavy `quickpay` for `op_101`; `test/case/evidence_cli_test.rb` asserts both reversals and their full selected-provider maps.
+
+## TZD-149 — independent volume target evidence is Router-bound
+
+Status: accepted and implemented.
+
+Decision: the count-versus-volume judge scenario must not reuse one target map and merely change the active factor. `portfolio_conflict` now uses exact count targets `{payflow: 1/5, quickpay: 3/5, vipay: 1/5}` and an independently configured volume map `{payflow: 3/5, quickpay: 1/5, vipay: 1/5}`, both with terminal zero, and labels both sources explicitly as synthetic evidence inputs. Each strategy still runs through a fresh canonical Router against the same authoritative queue/provider data.
+
+Evidence: the independent Router probe produced distinct count and volume assignment maps with both target masses equal to one; `test/case/evidence_cli_test.rb` asserts the volume provenance and exact serialized target map.
+
+## TZD-150 — Router conflict evidence preserves profile target provenance
+
+Status: accepted and implemented.
+
+Decision: a synthetic conflict weight configuration may reuse canonical profile targets only if the evidence says so explicitly. Each `router_multi_goal_conflict` scenario now emits typed `count_target_source` and `volume_target_source` values from the loaded `SubmissionProfile`; only the factor weights are synthetic.
+
+Evidence: the independent evidence probe showed both Router conflict pairs use `provider.traffic_percentage` for count and volume targets; `test/case/evidence_cli_test.rb` binds the serialized target-source map to that profile contract.
+
+## TZD-151 — Fallback evidence names the three accounting populations
+
+Status: accepted and implemented.
+
+Decision: the judge-facing fallback evidence must keep primary assignment, final selected provider and approved settlement visibly distinct. `fallback_and_analytics.accounting_populations` now exposes those three populations side by side and includes canonical `final_outcomes`; primary and settlement use the canonical `ReportBuilder` ledgers, while final selection reuses the shared `ProviderAmountLedger` primitive over canonical decisions.
+
+Evidence: the fallback campaign now proves different primary/final/settlement distributions and exact equal workload totals without changing routing or organizer projection semantics; `test/case/evidence_cli_test.rb` asserts the distinction and terminal fallback linkage.
+
+## TZD-152 — Final-selection aggregation belongs to the canonical Case report
+
+Status: accepted and implemented.
+
+Decision: final selected-provider aggregation is a report fact, not an evidence-CLI projection. `ReportBuilder` now builds `final_selection_distribution` and `final_selection_totals` from the shared `ProviderAmountLedger` over canonical decisions; settlement remains approved-only and organizer `distribution` is the final-selected projection. The independent report oracle recomputes and validates the final-selection fields and final target analytics.
+
+Evidence: terminal rejected/expired runner cases prove final selection can include a provider absent from settlement; serialized finalization now carries the canonical fields and strict/public/independent validators remain green.
+
+## TZD-153 — Zero-weight factors are inert on the canonical Router path
+
+Status: accepted and evidence-closed.
+
+Decision: a factor configured with weight zero may remain visible in typed traces, but must not alter the Router winner or any positive-factor score. The deterministic regression covers count, volume, priority, amount, load, intensity and turnover-min alongside active conversion scoring; each disabled trace has zero weight and zero contribution.
+
+Evidence: `test/case/tie_break_semantics_test.rb#test_every_other_zero_weight_factor_is_inert_on_the_router_path` passes against the actual Router and preserves the existing positive-factor scores. No production change was necessary.
+
+## TZD-154 — Fallback evidence preserves canonical selection passes
+
+Status: accepted and implemented.
+
+Decision: judge-facing fallback evidence must show the factor-level rationale for each canonical primary/fallback resolver pass, not only aggregate score maps. `fallback_and_analytics.selection_traces` now projects the existing `Attempt#selection` values, including phase, resolver winner, exact scores and factor contributions; decisions and routing authority remain unchanged.
+
+Evidence: the official `op_101` expiry campaign exposes one primary and two fallback passes, each bound to its attempted provider and containing factor contributions; deterministic/privacy evidence remains green.
+
+## TZD-155 — Canonical Router evidence includes amount/conversion conflict
+
+Status: accepted and implemented.
+
+Decision: the judge-facing canonical Router conflict evidence must include a genuine amount-preference versus conversion conflict in addition to conversion/load and priority/load. On the same authoritative queue/provider snapshot, only the two exact weight maps change; the profile's preferred amount bands and all hard gates remain canonical.
+
+Evidence: `op_106` remains hard-eligible for `vipay` and `quickpay`; amount-heavy weights select `quickpay`, conversion-heavy weights select `vipay`, and both serialized first-selection traces expose amount and conversion contributions.
+
+## TZD-156 — Router conflict evidence binds hard eligibility to the reversal
+
+Status: accepted and implemented.
+
+Decision: a multi-goal winner reversal is judge-useful only when its candidate set is visible. The canonical amount/conversion evidence now projects the existing `op_106` attempts alongside the selection trace, showing `payflow` excluded by the hard amount limit while `vipay` and `quickpay` are the score candidates; no hard constraint is converted into a weighted preference.
+
+Evidence: focused evidence asserts the exact `amount_exceeds_limit` skip and the exact two-provider score map in both weight scenarios; the full Case matrix remains green.
+
+## TZD-157 — Common positive weight scaling is Router-invariant
+
+Status: accepted and evidence-closed.
+
+Decision: multiplying every positive routing weight by one common exact factor must not change the canonical Router winner or normalized/raw factor evidence. Composite scores, weights and contributions may scale by that factor; hard eligibility and deterministic tie semantics remain separate.
+
+Evidence: `test/case/tie_break_semantics_test.rb#test_common_positive_weight_scale_preserves_router_winner_and_normalized_evidence` compares actual Router runs at `{ conversion_24h: 1, load: 1 }` and `{ conversion_24h: 3, load: 3 }`, including every provider/factor trace.
+
+## TZD-158 — Optional factors have canonical Router evidence
+
+Status: accepted and implemented; canonical submission policy remains optional.
+
+Decision: optional `intensity` and `turnover_min` remain absent from the canonical submission profile, but their stateful semantics are demonstrated in a bounded synthetic campaign through the actual Case `Router`. A warmup operation makes provider `b` fail the hard amount gate and mutates canonical state; the conflict operation then compares each optional objective with conversion using exact weights while exposing the hard exclusion separately. This is evidence-only and does not activate optional factors in official policy.
+
+Evidence: `router_optional_factor_conflicts` in `bin/ruby_routing_case_evidence` runs fresh Router scenarios where intensity-heavy and turnover-heavy weights select `b`, while conversion-heavy weights select `a`; `test/case/evidence_cli_test.rb` binds the warmup `amount_below_minimum` attempt and both score candidates on the conflict operation.
+
+## TZD-159 — Fallback evidence has one causal attempt chain
+
+Status: accepted and implemented; evidence-only.
+
+Decision: judge-facing fallback evidence should not require a reader to join three parallel structures to understand primary selection, failed provider interaction, fallback selection, terminal policy and settlement. `fallback_and_analytics.causal_chain` now derives one ordered chain from canonical `Attempt` objects and their existing selection traces. Resolver and terminal-policy authority remain explicitly distinct; outcome reason and settlement are separate fields, while production decisions and accounting ledgers remain unchanged.
+
+Evidence: `test/case/evidence_cli_test.rb` asserts the exact `op_101` chain `vipay(primary/expired) -> payflow(fallback/expired) -> quickpay(fallback/expired) -> spacepayments(terminal/approved/settled)` and its resolver-versus-terminal authority labels.
+
+## TZD-160 — Additional-provider boundary is judge-visible
+
+Status: accepted and implemented; evidence-only.
+
+Decision: provider extensibility evidence must show more than typed construction. A bounded canonical Router campaign now adds an active executable `newpay` provider with a derived `1/10` traffic target and an `enabled` zero-participation shadow. It runs the same official queue under normal and reversed provider enumeration, proving the active provider can be selected, the status variant remains `inactive_provider` with zero target, and target provenance remains `provider.traffic_percentage`.
+
+Evidence: `router_provider_boundary` in `bin/ruby_routing_case_evidence` and its focused regression compare both orderings, exact count/volume target maps, selected `newpay` operations and the shadow's hard-exclusion reason.
+
+## TZD-161 — Direct Router resolver policy is configuration-bound
+
+Status: accepted and implemented.
+
+Decision: the supported direct `Router.new(..., resolver:)` entrypoint must not create a second policy authority. A supplied `ConflictResolver` may remain the routing implementation, but its validated `preferred_amount_ranges` and `min_turnovers` must also populate the Router's canonical `CaseConfiguration` and serialized configuration alongside its weights. Unknown or duplicate provider keys therefore fail through the existing typed configuration boundary rather than disappearing from evidence.
+
+Evidence: the deterministic alternate-entrypoint reproducer in `test/case/router_resolver_authority_test.rb` previously observed empty configuration maps while the resolver carried active amount/turnover policy; the regression now binds both maps and their `to_h` representation. Pushed checkpoint `398d2b1` passed full test (`949/14522`), independent property/model/concurrency/fault/Case matrices, clean-checkout finalization and public validation (`29/29`). No production accounting, hard-gate or public-profile semantics changed.
+
+## TZD-162 — Organizer distribution is final-selected
+
+Status: accepted and implemented.
+
+Decision: the compact organizer-facing `distribution` means the final selected provider population, so fallback does not make it silently describe only the primary assignment. `deviation_causes`, `infeasibility` and `recommendation_details` use the same final-selected population for actual/share/deviation claims. Primary assignment, attempt and approved settlement remain separate named report populations; no ledger is collapsed.
+
+Evidence: the deterministic rejected-primary Case reproducer now makes `distribution` equal `final_selection_distribution`, while `assignment_distribution` remains the primary `TrafficLedger` projection and `settlement_distribution` remains approved-only.
+
+## TZD-165 — final-selected analytics have one population authority
+
+Status: accepted and implemented.
+
+Decision: every organizer-facing target gap, cause, infeasibility claim and recommendation must use the final-selected population represented by compact `distribution`. Primary assignment remains available only through explicitly named assignment fields. The report must carry exact target/deviation values for the final population, and the independent semantic validator must recompute those values and reject final-distribution tampering.
+
+Evidence: the deterministic rejected-primary regression in `test/case/accounting_semantics_test.rb#test_target_causes_and_recommendations_use_the_final_population` and public finalization show QuickPay `70%` / target `25%`, VipPay `20%` / target `40%`, with causes and recommendations in the same coordinate system.
+
+## TZD-166 — Online target ledger commits the final selected provider (superseded)
+
+Status: accepted and implemented; fallback-factor clause superseded by TZD-167.
+
+Decision: the Case `Router#traffic` ledger is the online count/volume target authority for the finalized selected-provider population. It records an operation exactly once after an external attempt is approved or after the configured terminal provider is selected, and never records a rejected/expired external primary before fallback. The first provider selected for the cascade is retained in a separate `primary_assignment_ledger` for causal accounting and `assignment_distribution`.
+
+Evidence: the red fallback reproducer in `test/case/accounting_semantics_test.rb#test_primary_final_and_settlement_populations_remain_distinct_for_rejected_primary` showed the old VipPay target mutation despite final selection. The corrected `test_next_primary_resolution_observes_final_target_ledger_after_fallback` compares the next primary count factor against independent final-ledger and legacy-primary calculations; fallback phase/order/replay/strict-validation tests preserve primary, final, attempt and settlement separation.
+
+## TZD-167 — Fallback reuses the final-ledger portfolio objective
+
+Status: accepted and implemented.
+
+Decision: primary and fallback use the same configured weighted `ConflictResolver`. Count/volume are not silently removed after a rejected or expired primary. They evaluate the current operation against the final-selected `TrafficLedger`, which has not committed the current operation while fallback is being ranked; the rejected primary exists only in `primary_assignment_ledger` and therefore cannot be counted as a final portfolio assignment or double-counterfactual mutation. Hard eligibility, provider removal, outcome semantics and settlement accounting remain unchanged.
+
+Evidence: `test/case/fallback_phase_test.rb` reproduces a three-provider A-rejected cascade where count/volume select B over the priority-favored C; the Router selects B and records only B in final/settlement ledgers. `test/case/fallback_zero_weight_test.rb` proves disabled count/volume traces remain zero-contribution, and `test/case/evidence_cli_test.rb` binds the updated canonical fallback chain.
+
+## TZD-168 — Missing optional load/RPM input is non-discriminating
+
+Status: accepted and implemented.
+
+Decision: absent capacity dimensions do not enter the load average, and an entirely absent capacity policy is not a zero-quality candidate. Absent RPM policy is likewise not a candidate-relative minimum. Only typed optional values can make load/intensity discriminating; an explicit zero limit remains exact no-headroom evidence. With only one configured candidate, the factor is non-discriminating and contributes zero to every candidate. This is separate from hard admission and does not make missing policy claim maximum headroom.
+
+Evidence: `test/case/load_neutrality_test.rb` covers absent-all and partial capacity maps; `test/case/intensity_neutrality_test.rb` reverses which provider has the sole RPM policy; direct factor tests preserve explicit zero-capacity/zero-RPM behavior and strict serialized report validation remains independent.
+
+## TZD-163 — Decision summary is a causal-chain presentation
+
+Status: accepted and implemented.
+
+Decision: `explanations[*].decision_summary` is a stable human-readable projection of the existing ordered causal chain only. It introduces no selection logic, and the independent serialized semantic validator recomputes the text from the chain and rejects tampering.
+
+Evidence: runner output shows deterministic primary/fallback/terminal wording; semantic regression rejects an arbitrary summary.
+
+## TZD-164 — Actual submission task is explicit and fail-closed
+
+Status: accepted and implemented.
+
+Decision: `rake finalize_submission` targets `operations_queue_test.json` and always requests committed-byte verification. The public queue is never its default and is available only through the explicitly named `finalize_public_submission` smoke task.
+
+Evidence: `Rakefile`, README and CI workflow converge on separate actual/public paths; the actual task rejects a missing queue before writing artifacts.
+
+## TZD-169 — traffic percentage is a soft target, terminal role is explicit
+
+Status: accepted and implemented.
+
+Decision: `traffic_percentage == 0` does not create a hard exclusion for an active non-terminal provider. It remains a zero target in count/volume portfolio objectives, so a positive-target provider wins under an allocation-only objective when both are eligible; the zero-target provider is still available as a fallback when hard eligibility removes the other candidates. `terminal_provider_id` is the only terminal-role authority, and the terminal provider is excluded from ordinary candidates and invoked separately. Non-active providers remain hard-excluded by status, and positive direct targets for them remain rejected.
+
+Evidence: `test/case/state_test.rb#test_zero_target_active_provider_is_not_a_hard_exclusion`, `test/case/terminal_identity_test.rb#test_zero_target_active_provider_is_counted_as_a_soft_goal_and_can_be_fallback`, terminal-causality regressions, explicit profile/evidence terminal lookup and independent serialized validation.
+
+## Completion rule
+
+No planned-list exhaustion authorizes completion. Candidate requires no known material P0/P1 and strong scorecard coverage; final completion requires blind audit, rubric evidence, clean hidden-submission provenance/rehearsal and exact-head CI.

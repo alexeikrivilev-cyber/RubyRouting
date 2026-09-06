@@ -1,47 +1,55 @@
 # Documentation Authority
 
-Current Version Goal: **v0.4.3 — Adversarial Evidence & Contract Semantics Closure — VERSION_COMPLETE**.
+Program: **v0.4.4 — Competition 10/10 Convergence — ACTIVE**.
 
-Opening baseline: `277d6b68d568eceb88ece3b3e466987535ff75bd`.
+Governing spec: **SPEC-021 — Autonomous Product Excellence & Score Maximization — ACTIVE / ROLLING**.
 
-v0.4.2 / SPEC-018 remains a completed compatible implementation baseline. A fresh code-first audit found unresolved evidence gaps in accounting-point semantics, report semantic validation, normalization robustness, temporal daily state and missing amount-preference configuration. SPEC-019 governs the active cycle.
+Technical product direction: `docs/PRODUCT_NORTH_STAR.md`.
+
+Opening baseline: `50b969575f482610460b805d199acc725e8eb37b`.
 
 ## Normative order
 
 1. direct current user/instructor requirement;
 2. authoritative Hack.Genesis TZ and scoring rubric;
-3. organizer data/sample/reference/public validator for contracts they actually define;
-4. `specifications/019-adversarial-evidence-contract-semantics.md`;
-5. compatible completed SPEC-018, SPEC-017 and SPEC-016;
-6. `docs/exec-plans/completed/adversarial-evidence-contract-semantics.md`;
-7. `docs/POST_TZ_BACKLOG.md`;
-8. `docs/TZ_REQUIREMENT_MATRIX.md`;
-9. current architecture/decisions/completion/session/planning/workflow/testing;
-10. protected compatible production invariants;
-11. implementation/tests;
-12. historical documents.
+3. organizer data/sample/reference/public validator for contracts they explicitly define;
+4. `specifications/021-autonomous-product-excellence-score-maximization.md`;
+5. `docs/PRODUCT_NORTH_STAR.md`;
+6. compatible completed SPEC-020/019/018/017/016;
+7. `docs/COMPETITION_SCORECARD.md`;
+8. `docs/exec-plans/active/autonomous-product-excellence-score-maximization.md`;
+9. `docs/TZ_REQUIREMENT_MATRIX.md` and `docs/POST_TZ_BACKLOG.md`;
+10. current decisions/architecture/completion/session/planning/workflow/testing/roadmap;
+11. protected production invariants;
+12. implementation/tests/artifacts;
+13. historical docs.
 
-A lower source cannot silently override a higher source.
+Lower sources cannot silently override higher authority. Official TZ wording is immutable; internal SPEC/docs may only derive stricter engineering/evidence requirements.
 
-## Evidence authority
+## Autonomous planning rule
 
-Green tests prove only what their oracle is independent enough to prove. A replay of Router validates consistency, not necessarily intended semantics. A serializer equality test validates fidelity to the same builder, not organizer meaning.
+The active plan is rolling evidence, not command authority. The agent must inspect current code/data/artifacts, discover new hypotheses, estimate score/correctness value and may reorder/rewrite the plan whenever evidence changes priority.
 
-Every v0.4.3 material claim requires one of:
+A newly discovered material P0/P1 supersedes documented ordering immediately.
 
-- direct authoritative TZ/sample/rubric evidence;
-- an independent oracle derived from raw inputs and explicitly documented semantics;
-- an adversarial counterexample showing current behavior is materially wrong;
-- explicit evidence-closure when a hypothesis is falsified.
+## Evidence rules
 
-## Report rule
+- Documentation status is a claim, not proof.
+- Green tests prove only their oracle.
+- Router replay proves consistency, not intended business meaning.
+- Builder/serializer equality proves fidelity, not organizer semantics.
+- Resolver-level tests do not prove Router-level invariants if call-site candidate pools/order differ.
+- Score improvements require authoritative evidence, an independent/metamorphic counterexample/oracle, deterministic rubric evidence or explicit falsification/evidence-closure.
+- A finding closes only against current code/artifacts, not because a previous plan marked it done.
 
-The TZ-compatible base schema from v0.4.2 is protected. v0.4.3 audits the business meaning of base fields, especially `distribution` and `period`, and adds semantic validation without deleting rich assignment/attempt/settlement evidence.
+## Product rule
 
-## Organizer ambiguity
+The goal is not minimal compliance. Prefer one coherent five-layer product:
 
-When TZ/sample/public validator do not define a detail, do not invent an organizer fact. Preserve reversible internal semantics, document the assumption, and choose a conservative base projection. An ambiguity that can be safely represented does not justify broad architecture.
+`Opportunity -> Portfolio Objective -> Execution Cascade -> Evidence/Analytics -> Independent Release Evidence`.
 
-## Completion
+Beyond-TZ improvements are justified when they strengthen scored correctness, flexibility, explainability, analytics, extensibility or release safety without speculative infrastructure.
 
-v0.4.3 is VERSION_COMPLETE at exact pushed HEAD `13efbeba48f1726b91b71b1677d3541dd4f9f433`. v0.4.2's completed code/evidence remains compatible baseline evidence; the five v0.4.3 hypotheses, post-candidate blind findings, fresh verification and exact-head Actions run `33852436704` are recorded in the completed ExecPlan.
+## Completion rule
+
+No fixed task list can authorize `VERSION_COMPLETE`. Candidate requires no known material P0/P1 and no obvious high-value rubric gap. Completion additionally requires a blind code/data/artifact audit that ignores backlog/status, rubric-by-rubric deterministic evidence, clean final submission provenance/rehearsal and exact-head CI.

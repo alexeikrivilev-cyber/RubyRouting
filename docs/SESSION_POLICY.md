@@ -1,20 +1,23 @@
-# Session Policy — v0.4.3
+# Session Policy — autonomous score convergence
 
-Status: **VERSION_COMPLETE under SPEC-019**.
+Program: **v0.4.4 / SPEC-021 — ACTIVE**.
 
-Every coding session starts by fetching exact `main`, exact-head CI, SPEC-019, the one active ExecPlan, matrix/backlog and actual Case/data/artifacts. Do not trust a prior chat SHA.
+Every coding session begins with exact `main`, exact-head CI, current TZ/rubric, data/scripts, generated artifacts, scorecard and actual Case code. Do not start by blindly implementing the first backlog line.
 
-Work continuously while the next step is derivable. The default unit of work is one adversarial hypothesis, not one arbitrary file.
+The agent must:
 
-For each hypothesis:
+1. perform a short skeptical audit;
+2. update/rank findings by expected score/correctness value;
+3. mark already STRONG/PROTECTED surfaces as evidence-saturated when representative independent coverage and a recent blind pass exist;
+4. choose the best next hypothesis, applying a diminishing-return penalty to another same-class guard on a saturated surface;
+5. reproduce or falsify it independently;
+6. implement the smallest coherent correction or evidence-close it;
+7. run relevant focused, metamorphic/independent and adjacent tests;
+8. exercise serialized artifacts when the boundary is affected;
+9. update scorecard/matrix/backlog/ExecPlan;
+10. commit/push coherent evidence;
+11. continue while useful work is derivable.
 
-1. reproduce/falsify on exact HEAD;
-2. state the semantic contract;
-3. make the smallest justified code change or explicitly evidence-close without code change;
-4. run focused and adjacent tests;
-5. generate real artifacts and run independent validators where relevant;
-6. update matrix/plan/docs;
-7. commit/push coherent checkpoint;
-8. continue to the next highest-value open item.
+Independent evidence remains mandatory where semantic correlation could hide a material defect, but do not turn sessions into exhaustive malformed-input enumeration. If no distinct material failure class is reproduced on a saturated boundary, move to the highest-value PARTIAL rubric area—typically multi-goal semantics, causal explainability or judge-visible strategy evidence.
 
-Do not ask to continue when the active plan determines the next step. Do not mark VERSION_COMPLETE from backlog exhaustion alone.
+The agent may reorder or rewrite the active plan when evidence changes priorities. Do not ask for confirmation for ordinary reversible work inside SPEC-021. Do not declare completion because a session reached its initial checklist.

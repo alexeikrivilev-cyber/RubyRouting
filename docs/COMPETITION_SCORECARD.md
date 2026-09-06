@@ -1,0 +1,48 @@
+# Competition Scorecard — live evidence surface
+
+Program: **v0.4.4 ACTIVE / SPEC-021**.
+
+This file guides expected-value prioritization. It is not a promise of an exact judge score. Recompute posture from actual code/artifacts after material changes.
+
+| Rubric area | Points | Current posture | Main evidence / open risk |
+|---|---:|---|---|
+| Required root artifacts | 40 | STRONG / PROTECTED | explicit actual queue task bound to `operations_queue_test.json`, fixed paths, validators, manifest, Git trackability, clean-checkout reproducibility and release-level byte parity against committed `HEAD`; public `operations_queue_10.json` is an explicit smoke task only; final hidden-queue freshness still must be proven at submission time |
+| Routing correctness / hard constraints / fallback / state | 22 | STRONG | unified hard gate, sequential state, deterministic fallback and business calendar; continue hidden-like blind probes |
+| Flexible routing strategies | 32 | STRONG CAPABILITY / IMPROVED JUDGE EVIDENCE | count and genuinely independent volume targets now drive distinct canonical Router runs on the same skewed workload, alongside priority, amount, conversion, load plus Router-bound synthetic intensity/turnover evidence; absent optional capacity/RPM inputs are neutral and explicit zero capacity/RPM is no-headroom rather than a hidden preference or denominator; canonical submission policy remains intentionally narrower |
+| Multi-goal conflict resolution | 15 | IMPROVED / PARTIAL | one weighted ConflictResolver is now exercised through both direct factor probes and the canonical Router on the authoritative queue/provider snapshot, with explicit canonical target-source provenance, three controlled conversion/load, priority/load and amount/conversion weight reversals, deterministic pairwise changed-operation deltas and paired exact left/right resolver traces for every delta; the compact `bin/judge_demo` additionally shows one operation, two weight sets, two winners and exact conversion/load contributions; common positive weight-scale invariance, Router-level preference monotonicity for priority/amount/conversion/load/intensity/turnover, exact-tie and zero-weight leakage across primary and rejected-primary fallback paths, rejected-primary fallback provider-order invariance, fallback count/volume objective reuse against the final ledger, dominated/non-dominated candidate scale drift, count/volume portfolio-loss meaning and deterministic weight conflicts are covered, while broader factor semantics remain open |
+| Explainability | 10 | IMPROVED / PARTIAL | hard exclusions and score traces are strong; canonical serialized explanations now preserve exact per-provider factor raw/normalized/weight/contribution/reason traces with independent fixed-domain raw-to-normalized, canonical configuration-weight, factor-reason, contribution-sum and resolver-winner/reason semantics, one canonical ordered hard-gate/resolver/fallback/terminal causal chain and a short deterministic `decision_summary` derived from that chain with independently checked identity/outcome/settlement linkage, Router-level weight-conflict evidence preserves explicit first-operation versus focus-operation identity, and fallback evidence exposes the same chain alongside primary rationale, failed attempts, terminal final selection and explicit primary/final/settlement population blocks; broader counterfactual/operator narrative can still be stronger |
+| Analytics / recommendations | 11 | STRONG / IMPROVED STRUCTURAL + COUNTERFACTUAL + FINITE-WORKLOAD EVIDENCE | rich final-selected/assignment/attempt/settlement/utilization/causes, independently recomputed target/share/deviation and typed attempt objects/rationale/provider-unique/bounded-reason terminal decision-chain plus skip/attempt/final/fallback/assignment/traffic/aggregate-attempt/settlement population evidence with per-provider attempt outcomes, typed final-provider/outcome chain linkage, lifecycle explanation identity/coverage, raw-derived dataset/provider-state/deviation projections, explicit raw-history source/row/volume/provider/rate/latency recomputation, UTC period-window/configuration/target provenance, raw-bound submission-profile identity and infeasibility evidence, structural hard-exclusion advice only when a dimension-specific hard-eligibility capacity counterfactual proves that dimension's target unattainable, with independent structural count/reason/capacity evidence, generic advice preserved for attainable deficient dimensions, bounded minimum-operation and exact subset-sum whole-workload evidence, count workload-granularity recommendation now bound to exact floor/ceil attainability and absence of hard exclusions/forcing, volume workload-granularity recommendation now bound to exact gap/minimum-amount and absence of hard exclusions/forcing, subset-sum recommendation now independently bounded/recomputed for target reachability and nearest values, complete provider/kind recommendation set now independently derived with duplicate/omission/addition rejection and scale coverage, causal hard-forced classification, terminal fallback recommendation now bound to configured terminal identity, positive fallback assignments, over-target deviation and serialized hard-exclusion alternatives, daily near-limit recommendation now bound to exact projected utilization and threshold, independent fallback-population evidence, deterministic recommendation text/action/cause/eligibility provenance and serialized provider/action/detail checks; base distribution and all target analytics now share final-selected semantics, while broader counterfactual recommendations can become more decision-useful |
+| Technical quality | 10 | STRONG | Ruby-only, exact arithmetic, deterministic, typed config, canonical factor/provider-map ordering and direct-resolver policy provenance for equivalent Case inputs, dataset-bound and internally consistent non-empty profile/configuration provenance across loader and direct constructors, independent raw-input/report validators, tracked multi-platform dependency lock and extensive tests; generated Case surfaces share one current product version while input profile provenance remains explicit, direct routing rejects positive targets for non-active providers but keeps active zero-target providers eligible under the explicit terminal role boundary, fresh active-provider extension preserves exact derived target mass and provider-order invariance, and a 3,000-operation/five-provider hidden-like Router plus strict-validation probe passed without a material scale regression |
+
+## Current score-critical audit surfaces
+
+These are hypotheses, not a mandatory order. Re-rank after every fresh audit.
+
+- genuine multi-goal conflict semantics in the actual Router path and whether weight changes remain business-explainable rather than merely mathematically deterministic;
+- causal interpretation of the Router-level conflict trace across primary assignment, fallback and settlement;
+- causal judge-facing explanation of why a winner won across primary selection, fallback and settlement;
+- deterministic judge evidence for all eight typed factors, independent volume targets and several genuine multi-goal conflicts;
+- independent volume target provenance, broader business target provenance and explicit intensity/turnover scenarios;
+- score-scale stability for non-dominated candidate changes and portfolio objective meaning in the actual Router path;
+- zero-weight/disabled-factor independence on alternate Router/resolver paths beyond the covered priority cases;
+- organizer distribution/accounting semantics under fallback;
+- feasibility/recommendation/counterfactual quality, including finite-workload volume granularity and whether generic advice is suppressed when a stronger structural cause exists;
+- additional-provider/extensibility hidden-like campaigns beyond the covered active-provider order and unknown-key boundary campaigns;
+- final hidden artifact freshness/provenance;
+- any newly discovered P0/P1 with larger expected point loss.
+
+## Evidence saturation / ROI
+
+A STRONG/PROTECTED row with representative independent coverage, recent blind-audit evidence and no open material P0/P1 should receive a diminishing-return penalty in prioritization. Do not keep expanding semantic-oracle guards on such a row merely because another malformed permutation is possible.
+
+A distinct concrete counterexample or authoritative change immediately reopens the row. Otherwise bias the next engineering unit toward PARTIAL rows with larger point upside. At the current posture, the 15-point multi-goal conflict row, the 10-point explainability row and judge-visible proof of the 32-point strategy capability are generally higher expected value than more guard accumulation on already protected release/report boundaries.
+
+## Protected score value
+
+Do not casually risk the already strong 40-point release path, authoritative hard constraints, deterministic fallback, business calendar, public-validator compatibility or production safety kernel to gain cosmetic points elsewhere.
+
+## Score-maximization rule
+
+Prefer changes that improve more than one dimension at once—for example a stable multi-goal model plus causal explanation that improves conflict resolution, explainability and extensibility—or remove a catastrophic release risk. Avoid architecture that adds maintenance surface without rubric/evidence value.
+
+Independent validation should stop when it is sufficient to make a score-critical claim defensible; it should not become the dominant source of work after that claim is already strongly protected.

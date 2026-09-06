@@ -62,4 +62,39 @@ class AuthoritativeCaseDailyTemporalTest < Minitest::Test
     )
     assert RubyRouting::Case::StrictValidator.new(run).call.valid?
   end
+
+  def test_authoritative_plus_three_business_calendar_resets_at_local_midnight
+    dataset = RubyRouting::Case::Dataset.new(
+      snapshot_at: "2026-07-30T09:00:00+03:00", gateway: "gateway", merchant: "merchant",
+      providers: [
+        provider("a", priority: 0, traffic: 50, daily_limit: 110, daily_approved: 90),
+        provider("b", priority: 1, traffic: 50, daily_limit: 1_000, daily_approved: 0),
+        provider("spacepayments", priority: 99, traffic: 0, daily_limit: nil, daily_approved: 0)
+      ],
+      history: [],
+      operations: [
+        operation("mixed-display-offset", "2026-07-30T22:30:00+02:00"),
+        operation("local-late", "2026-07-30T23:59:00+03:00"),
+        operation("local-midnight", "2026-07-31T00:01:00+03:00"),
+        operation("utc-previous-day", "2026-07-31T00:30:00+03:00")
+      ]
+    )
+    configuration = RubyRouting::Case::CaseConfiguration.new(
+      provider_ids: %w[a b spacepayments], weights: { priority: 1 }, terminal_provider_id: "spacepayments"
+    )
+    router = RubyRouting::Case::Router.new(dataset, configuration: configuration)
+    decisions = router.run
+
+    assert_equal %w[a a a a], decisions.map(&:selected_provider)
+    assert_equal 20, router.state.fetch("a").daily_approved_amount
+    assert_equal "2026-07-31", router.state.fetch("a").daily_date
+    assert_equal 3 * 60 * 60, dataset.business_calendar.utc_offset_seconds
+
+    report = RubyRouting::Case::ReportBuilder.new(
+      dataset, router.state, router.traffic, router.configuration, decisions,
+      attempt_ledger: router.attempt_ledger, settlement_ledger: router.settlement_ledger
+    ).call
+    assert_equal "2026-07-30", report.to_h.fetch(:period)
+    assert_equal 20, report.to_h.fetch(:projected_daily_utilization).fetch("a").fetch(:used)
+  end
 end

@@ -14,11 +14,30 @@ class AuthoritativeCaseDemoTest < Minitest::Test
 
     assert status.success?, stderr
     payload = JSON.parse(stdout)
-    assert_equal "0.4.2", payload.fetch("version")
+    assert_equal RubyRouting::Case::VERSION, payload.fetch("version")
     count = payload.fetch("same_input_fresh_runtime_strategies").fetch("count")
     volume = payload.fetch("same_input_fresh_runtime_strategies").fetch("volume")
     refute_equal count.fetch("selected_providers"), volume.fetch("selected_providers")
     refute_equal count.fetch("distribution"), volume.fetch("distribution")
+    refute_equal(
+      count.fetch("configuration").fetch("count_share"),
+      count.fetch("configuration").fetch("volume_share"),
+      "demo strategy evidence must expose an independent volume target"
+    )
+    [count, volume].each do |strategy_result|
+      assert_equal(
+        strategy_result.fetch("configuration").fetch("count_share"),
+        strategy_result.fetch("distribution").to_h do |provider_id, values|
+          [provider_id, values.fetch("target_count_share")]
+        end
+      )
+      assert_equal(
+        strategy_result.fetch("configuration").fetch("volume_share"),
+        strategy_result.fetch("distribution").to_h do |provider_id, values|
+          [provider_id, values.fetch("target_volume_share")]
+        end
+      )
+    end
     simulation = payload.fetch("deterministic_conversion_simulation")
     assert_equal "official-smart-v0.4.2", simulation.fetch("report").fetch("submission_profile").fetch("profile_id")
     assert_equal "provider.traffic_percentage", simulation.fetch("report").fetch("submission_profile").fetch("volume_target_source")

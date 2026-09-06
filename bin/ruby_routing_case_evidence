@@ -1,0 +1,597 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "json"
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
+require "ruby_routing"
+
+module RubyRoutingCaseEvidence
+  module_function
+
+  ROOT = File.expand_path("..", __dir__)
+  PROVIDER_IDS = %w[a b].freeze
+
+  def provider(id, priority: 1, conversion: Rational(1, 2), daily_limit: 10_000,
+               daily_approved: 0, in_progress_count_limit: 100,
+               in_progress_count: 0, in_progress_amount_limit: 100_000,
+               in_progress_amount: 0)
+    RubyRouting::Case::Provider.new(
+      payment_system: id, status: "active", traffic_percentage: 50, priority: priority,
+      limit_amount_min: 1, limit_amount_max: 10_000, daily_amount_limit: daily_limit,
+      daily_approved_amount: daily_approved, in_progress_count_limit: in_progress_count_limit,
+      in_progress_count: in_progress_count, in_progress_amount_limit: in_progress_amount_limit,
+      in_progress_amount: in_progress_amount,
+      available_requisites: 10, conversion_24h: conversion, avg_latency_sec: 10,
+      banks: [], exclude_banks: false, provider_margin_pct: 1,
+      merchant_margin_pct: 1, allow_negative_agreement: false
+    )
+  end
+
+  def operation(id: "evidence-operation", amount: 100)
+    RubyRouting::Case::Operation.new(
+      operation_id: id, created_at: Time.utc(2026, 7, 30, 9), amount: amount,
+      bank: "sberbank", card_brand: nil,
+      payout_requisite: { "sbp" => { "phone" => "79000000000" } }
+    )
+  end
+
+  def targets(measure)
+    values = measure == :count ? { a: Rational(1, 2), b: Rational(1, 2) } : {}
+    volume = measure == :volume ? { a: Rational(1, 5), b: Rational(4, 5) } : {}
+    RubyRouting::Case::TrafficTargets.new(
+      provider_ids: PROVIDER_IDS, count_share: values, volume_share: volume
+    )
+  end
+
+  def resolve(providers:, weights:, item: operation, traffic: nil, min_turnovers: {},
+              preferred_amount_ranges: {}, rpm_events: false)
+    traffic ||= RubyRouting::Case::TrafficLedger.new(PROVIDER_IDS)
+    states = providers.map do |provider_item|
+      state = RubyRouting::Case::ProviderCaseState.new(
+        provider_item, rpm_limit: weights.key?(:intensity) ? 10 : nil
+      )
+      if rpm_events && provider_item.payment_system == "b"
+        state.reserve!(item, as_of: item.created_at)
+        state.release!(item)
+      end
+      state
+    end
+    RubyRouting::Case::ConflictResolver.new(
+      weights: weights, min_turnovers: min_turnovers,
+      preferred_amount_ranges: preferred_amount_ranges
+    ).resolve(
+      candidates: states, normalization_candidates: states,
+      operation: item, traffic: traffic, as_of: item.created_at
+    )
+  end
+
+  def evidence_case(weights:, providers: [provider("a"), provider("b")], **options)
+    traffic = options[:traffic]
+    resolution = resolve(providers: providers, weights: weights, **options)
+    {
+      configured_weights: weights,
+      target_shares: {
+        count: traffic&.targets&.count_share || {},
+        volume: traffic&.targets&.volume_share || {}
+      },
+      selected_provider: resolution.selected_provider,
+      scores: resolution.scores,
+      factors: resolution.traces.transform_values { |values| values.map(&:to_h) }
+    }
+  end
+
+  def portfolio_conflict
+    dataset = official_dataset
+    provider_ids = dataset.providers.map(&:payment_system)
+    terminal = official_profile(dataset).configuration.terminal_provider_id
+    external = provider_ids.reject { |id| id == terminal }
+    count_target_map = {
+      "payflow" => Rational(1, 5), "quickpay" => Rational(3, 5),
+      "spacepayments" => Rational(0, 1), "vipay" => Rational(1, 5)
+    }
+    volume_target_map = {
+      "payflow" => Rational(3, 5), "quickpay" => Rational(1, 5),
+      "spacepayments" => Rational(0, 1), "vipay" => Rational(1, 5)
+    }
+    target_set = RubyRouting::Case::TrafficTargets.new(
+      provider_ids: provider_ids, count_share: count_target_map, volume_share: volume_target_map
+    )
+    %i[count volume].to_h do |strategy|
+      configuration = RubyRouting::Case::CaseConfiguration.new(
+        provider_ids: provider_ids, targets: target_set, weights: { strategy => 1 },
+        terminal_provider_id: terminal, source: "case-evidence/#{strategy}"
+      )
+      router = RubyRouting::Case::Router.new(dataset, configuration: configuration)
+      decisions = router.run
+      [strategy.to_s, {
+        selected_providers: decisions.to_h { |decision| [decision.operation_id, decision.selected_provider] },
+        assignment_distribution: router.primary_assignment_ledger.distribution,
+        target_sources: {
+          count: "synthetic count target map",
+          volume: "synthetic independent volume target map"
+        },
+        configuration: configuration.to_h
+      }]
+    end
+  end
+
+  def multi_goal_conflict
+    providers = [
+      provider("a", conversion: Rational(9, 10), daily_limit: 1_000, daily_approved: 900,
+               in_progress_count_limit: 100, in_progress_count: 99,
+               in_progress_amount_limit: 100_000, in_progress_amount: 99_900),
+      provider("b", conversion: Rational(1, 10), daily_limit: 1_000, daily_approved: 0,
+               in_progress_count_limit: 100, in_progress_amount_limit: 100_000)
+    ]
+    %i[conversion_first load_first].to_h do |scenario|
+      weights = scenario == :conversion_first ? { conversion_24h: 2, load: 1 } : { conversion_24h: 1, load: 2 }
+      [scenario.to_s, evidence_case(weights: weights, providers: providers)]
+    end
+  end
+
+  # Keep the synthetic two-provider resolver probe above as a compact factor
+  # illustration, but also expose the same weight-conflict claim through the
+  # canonical Router and the authoritative queue/provider snapshot. A direct
+  # ConflictResolver call cannot prove that hard eligibility, state mutation,
+  # traffic accounting and the real Router call-site preserve the claim.
+  def router_multi_goal_conflict
+    dataset = official_dataset
+    profile = RubyRouting::Case::SubmissionProfile.load(
+      path: File.join(ROOT, "data/submission_profile.json"),
+      dataset: dataset
+    )
+    scenarios = {
+      conversion_first: { conversion_24h: 4, load: 1 },
+      load_first: { conversion_24h: 1, load: 4 },
+      priority_first: { priority: 4, load: 1 },
+      load_over_priority: { priority: 1, load: 4 },
+      amount_first: { amount: 4, conversion_24h: 1 },
+      conversion_over_amount: { amount: 1, conversion_24h: 4 }
+    }
+
+    selection_evidence = {}
+    scenario_evidence = scenarios.to_h do |scenario, weights|
+      configuration = RubyRouting::Case::CaseConfiguration.new(
+        provider_ids: dataset.providers.map(&:payment_system),
+        targets: profile.configuration.targets,
+        weights: weights,
+        preferred_amount_ranges: profile.configuration.preferred_amount_ranges,
+        terminal_provider_id: profile.configuration.terminal_provider_id,
+        simulation_seed: profile.configuration.simulation_seed,
+        simulation_mode: :approved,
+        source: "case-evidence/router-multi-goal/#{scenario}"
+      )
+      router = RubyRouting::Case::Router.new(dataset, configuration: configuration)
+      decisions = router.run
+      selection_evidence[scenario.to_s] = decisions.to_h do |decision|
+        [decision.operation_id, decision.attempts.filter_map(&:selection).last]
+      end
+      first = decisions.fetch(0)
+      conflict_operation = decisions.find { |decision| decision.operation_id == "op_106" }
+      [scenario.to_s, {
+        engine: "RubyRouting::Case::Router",
+        input: {
+          provider_source: "data/providers.json",
+          queue_source: "data/operations_queue_10.json",
+          operation_count: dataset.operations.length,
+          provider_ids: dataset.providers.map(&:payment_system)
+        },
+        configuration: configuration.to_h,
+        target_sources: {
+          count: profile.count_target_source,
+          volume: profile.volume_target_source
+        },
+        conflict_operation: {
+          operation_id: conflict_operation.operation_id,
+          selected_provider: conflict_operation.selected_provider,
+          attempts: conflict_operation.attempts.map(&:to_h),
+          selection: conflict_operation.selection
+        },
+        first_operation: {
+          operation_id: first.operation_id,
+          selected_provider: first.selected_provider
+        },
+        scenario: {
+          operation_id: conflict_operation.operation_id,
+          selected_provider: conflict_operation.selected_provider
+        },
+        selected_providers: decisions.to_h { |decision| [decision.operation_id, decision.selected_provider] },
+        first_selection: first.selection,
+        assignment_distribution: router.primary_assignment_ledger.distribution
+      }]
+    end
+    comparisons = {
+      "conversion_vs_load" => %w[conversion_first load_first],
+      "priority_vs_load" => %w[priority_first load_over_priority],
+      "amount_vs_conversion" => %w[amount_first conversion_over_amount]
+    }.to_h do |comparison, (left, right)|
+      left_selected = scenario_evidence.fetch(left).fetch(:selected_providers)
+      right_selected = scenario_evidence.fetch(right).fetch(:selected_providers)
+      changed_operations = left_selected.filter_map do |operation_id, left_provider|
+        right_provider = right_selected.fetch(operation_id)
+        next if left_provider == right_provider
+
+        {
+          operation_id: operation_id,
+          left_provider: left_provider,
+          right_provider: right_provider,
+          left_selection: selection_evidence.fetch(left).fetch(operation_id),
+          right_selection: selection_evidence.fetch(right).fetch(operation_id)
+        }
+      end
+      [comparison, {
+        left_scenario: left,
+        right_scenario: right,
+        left_weights: scenario_evidence.fetch(left).fetch(:configuration).fetch(:weights),
+        right_weights: scenario_evidence.fetch(right).fetch(:configuration).fetch(:weights),
+        changed_operations: changed_operations
+      }]
+    end
+    scenario_evidence.merge(comparisons: comparisons)
+  end
+
+  # Optional intensity/turnover inputs are intentionally absent from the
+  # canonical submission profile. This bounded synthetic Router campaign
+  # proves their stateful semantics without pretending they are official
+  # profile policy or adding another selection authority.
+  def router_optional_factor_conflicts
+    dataset = optional_factor_dataset
+    scenarios = {
+      intensity_first: { weights: { intensity: 4, conversion_24h: 1 }, rpm_limits: { "a" => 2, "b" => 10 } },
+      conversion_over_intensity: { weights: { intensity: 1, conversion_24h: 4 }, rpm_limits: { "a" => 2, "b" => 10 } },
+      turnover_first: { weights: { turnover_min: 4, conversion_24h: 1 }, min_turnovers: { "a" => 1_000, "b" => 1_000 } },
+      conversion_over_turnover: { weights: { turnover_min: 1, conversion_24h: 4 }, min_turnovers: { "a" => 1_000, "b" => 1_000 } }
+    }
+
+    scenarios.to_h do |scenario, options|
+      configuration = RubyRouting::Case::CaseConfiguration.new(
+        provider_ids: dataset.providers.map(&:payment_system),
+        weights: options.fetch(:weights),
+        rpm_limits: options.fetch(:rpm_limits, {}),
+        min_turnovers: options.fetch(:min_turnovers, {}),
+        terminal_provider_id: "spacepayments",
+        source: "case-evidence/router-optional/#{scenario}",
+        revision: 1
+      )
+      router = RubyRouting::Case::Router.new(dataset, configuration: configuration)
+      decisions = router.run
+      warmup = decisions.fetch(0)
+      conflict = decisions.fetch(1)
+      [scenario.to_s, {
+        engine: "RubyRouting::Case::Router",
+        input: {
+          source: "synthetic_case_data",
+          operation_count: dataset.operations.length,
+          operation_ids: dataset.operations.map(&:operation_id),
+          warmup_amount: dataset.operations.fetch(0).amount,
+          conflict_amount: dataset.operations.fetch(1).amount,
+          hard_gate_boundary: "provider b is below its minimum on warmup and eligible on conflict"
+        },
+        configuration: configuration.to_h,
+        warmup_operation: {
+          operation_id: warmup.operation_id,
+          selected_provider: warmup.selected_provider,
+          attempts: warmup.attempts.map(&:to_h),
+          selection: warmup.selection
+        },
+        conflict_operation: {
+          operation_id: conflict.operation_id,
+          selected_provider: conflict.selected_provider,
+          attempts: conflict.attempts.map(&:to_h),
+          selection: conflict.selection
+        },
+        selected_providers: decisions.to_h { |decision| [decision.operation_id, decision.selected_provider] }
+      }]
+    end
+  end
+
+  def optional_factor_dataset
+    provider_factory = lambda do |payment_system, conversion, minimum, traffic_percentage|
+      RubyRouting::Case::Provider.new(
+        payment_system: payment_system, status: "active", traffic_percentage: traffic_percentage,
+        priority: 1, limit_amount_min: minimum, limit_amount_max: 10_000,
+        daily_amount_limit: 10_000, daily_approved_amount: 0,
+        in_progress_count_limit: 100, in_progress_count: 0,
+        in_progress_amount_limit: 10_000, in_progress_amount: 0,
+        available_requisites: 10, conversion_24h: conversion, avg_latency_sec: 1,
+        banks: [], exclude_banks: false, provider_margin_pct: 1,
+        merchant_margin_pct: 1, allow_negative_agreement: false
+      )
+    end
+    operation_factory = lambda do |operation_id, amount, second|
+      RubyRouting::Case::Operation.new(
+        operation_id: operation_id, created_at: Time.utc(2026, 7, 30, 9, 0, second),
+        amount: amount, bank: "bank", card_brand: nil,
+        payout_requisite: { "sbp" => { "phone" => "79000000000" } }
+      )
+    end
+    RubyRouting::Case::Dataset.new(
+      snapshot_at: Time.utc(2026, 7, 30, 8), gateway: "synthetic-gateway", merchant: "synthetic-merchant",
+      providers: [
+        provider_factory.call("a", Rational(9, 10), 1, 50),
+        provider_factory.call("b", Rational(1, 10), 1_000, 50),
+        provider_factory.call("spacepayments", Rational(1, 1), nil, 0)
+      ],
+      history: [],
+      operations: [
+        operation_factory.call("optional-1", 900, 0),
+        operation_factory.call("optional-2", 1_000, 1)
+      ],
+      history_source: "synthetic-case-evidence"
+    )
+  end
+
+  # A bounded extensibility campaign keeps target provenance and status
+  # semantics visible on the canonical Router path. The added active provider
+  # is executable and selected; the enabled shadow has zero participation and
+  # must remain a hard exclusion rather than becoming a hidden candidate.
+  def router_provider_boundary
+    base = official_dataset
+    providers = extensibility_providers(base)
+    provider_ids = providers.map(&:payment_system)
+    target_shares = providers.to_h do |provider_item|
+      share = if provider_item.active? && provider_item.traffic_percentage.positive?
+        Rational(provider_item.traffic_percentage, 100)
+      else
+        Rational(0, 1)
+      end
+      [provider_item.payment_system, share]
+    end
+    targets = RubyRouting::Case::TrafficTargets.new(
+      provider_ids: provider_ids, count_share: target_shares, volume_share: target_shares
+    )
+    configuration = RubyRouting::Case::CaseConfiguration.new(
+      provider_ids: provider_ids,
+      targets: targets,
+      weights: { priority: 1, conversion_24h: 1 },
+      terminal_provider_id: "spacepayments",
+      simulation_mode: :approved,
+      source: "case-evidence/provider-boundary",
+      revision: 1
+    )
+    profile = RubyRouting::Case::SubmissionProfile.new(
+      profile_id: "synthetic-provider-boundary",
+      source: configuration.source,
+      revision: configuration.revision,
+      count_target_source: RubyRouting::Case::SubmissionProfile::TRAFFIC_TARGET_SOURCE,
+      volume_target_source: RubyRouting::Case::SubmissionProfile::TRAFFIC_TARGET_SOURCE,
+      configuration: configuration
+    )
+
+    {
+      canonical_order: providers,
+      reversed_order: providers.reverse
+    }.to_h do |scenario, ordered_providers|
+      dataset = RubyRouting::Case::Dataset.new(
+        snapshot_at: base.snapshot_at, gateway: base.gateway, merchant: base.merchant,
+        providers: ordered_providers, history: [], operations: base.operations,
+        history_source: "synthetic-provider-boundary"
+      )
+      router = RubyRouting::Case::Router.new(dataset, profile: profile)
+      decisions = router.run
+      shadow_attempts = decisions.flat_map(&:attempts).select { |attempt| attempt.provider == "enabled-shadow" }
+      [scenario.to_s, {
+        engine: "RubyRouting::Case::Router",
+        input: {
+          source: "synthetic_provider_extensibility",
+          operation_count: dataset.operations.length,
+          provider_order: ordered_providers.map(&:payment_system)
+        },
+        profile: {
+          profile_id: profile.profile_id,
+          source: profile.source,
+          revision: profile.revision,
+          count_target_source: profile.count_target_source,
+          volume_target_source: profile.volume_target_source
+        },
+        target_shares: {
+          count: router.configuration.targets.count_share,
+          volume: router.configuration.targets.volume_share
+        },
+        selected_providers: decisions.to_h { |decision| [decision.operation_id, decision.selected_provider] },
+        additional_provider: {
+          provider: "newpay",
+          status: "active",
+          traffic_percentage: 10,
+          target_share: target_shares.fetch("newpay"),
+          selected_operations: decisions.filter_map do |decision|
+            decision.operation_id if decision.selected_provider == "newpay"
+          end
+        },
+        status_variant: {
+          provider: "enabled-shadow",
+          status: "enabled",
+          traffic_percentage: 0,
+          target_share: target_shares.fetch("enabled-shadow"),
+          selected: decisions.any? { |decision| decision.selected_provider == "enabled-shadow" },
+          observed_reasons: shadow_attempts.map(&:reason).uniq
+        }
+      }]
+    end
+  end
+
+  def extensibility_providers(dataset)
+    providers = dataset.providers.to_h { |provider_item| [provider_item.payment_system, provider_item] }
+    clone_provider = lambda do |provider_id, **changes|
+      RubyRouting::Case::Provider.new(**providers.fetch(provider_id).to_h.merge(changes))
+    end
+    [
+      clone_provider.call("vipay"),
+      clone_provider.call("payflow", traffic_percentage: 25),
+      clone_provider.call("quickpay"),
+      clone_provider.call(
+        "quickpay", payment_system: "newpay", traffic_percentage: 10, priority: 1,
+        conversion_24h: Rational(98, 100)
+      ),
+      clone_provider.call(
+        "quickpay", payment_system: "enabled-shadow", traffic_percentage: 0,
+        priority: 5, status: "enabled"
+      ),
+      providers.fetch("spacepayments")
+    ]
+  end
+
+  def fallback_evidence
+    dataset = official_dataset
+    profile = RubyRouting::Case::SubmissionProfile.load(
+      path: File.join(ROOT, "data/submission_profile.json"), dataset: dataset
+    )
+    terminal = profile.configuration.terminal_provider_id
+    outcomes = dataset.providers.reject { |item| item.payment_system == terminal }.to_h do |item|
+      [["op_101", item.payment_system], :expired]
+    end
+    router = RubyRouting::Case::Router.new(
+      dataset, profile: profile,
+      simulator: RubyRouting::Case::DeterministicSimulator.new(
+        outcomes: outcomes, seed: profile.configuration.simulation_seed,
+        mode: profile.configuration.simulation_mode
+      )
+    )
+    decisions = router.run
+    decision = decisions.find { |item| item.operation_id == "op_101" }
+    selection_traces = decision.attempts.filter_map do |attempt|
+      next unless attempt.selection
+
+      {
+        provider: attempt.provider,
+        phase: attempt.selection.fetch(:phase),
+        selected_by_resolver: attempt.selection.fetch(:selected_provider),
+        scores: attempt.selection.fetch(:scores),
+        factors: attempt.selection.fetch(:factors)
+      }
+    end
+    report = RubyRouting::Case::ReportBuilder.new(
+      dataset, router.state, router.traffic, router.configuration, decisions,
+      profile: profile, attempt_ledger: router.attempt_ledger,
+      settlement_ledger: router.settlement_ledger
+    ).call.to_h
+    {
+      operation_id: decision.operation_id,
+      selected_provider: decision.selected_provider,
+      attempts: decision.attempts.map(&:to_h),
+      selection_traces: selection_traces,
+      causal_chain: report.fetch(:explanations).fetch(decision.operation_id).fetch(:causal_chain),
+      outcomes: report.fetch(:outcomes),
+      final_outcomes: report.fetch(:final_outcomes),
+      fallbacks: report.fetch(:fallbacks),
+      explanation: report.fetch(:explanations).fetch(decision.operation_id),
+      infeasibility: report.fetch(:infeasibility),
+      recommendations: report.fetch(:recommendations),
+      recommendation_details: report.fetch(:recommendation_details),
+      settlement_distribution: report.fetch(:settlement_distribution),
+      accounting_populations: {
+        primary_assignment: {
+          distribution: report.fetch(:assignment_distribution),
+          totals: report.fetch(:assignment_totals)
+        },
+        final_selected_provider: {
+          distribution: report.fetch(:final_selection_distribution),
+          totals: report.fetch(:final_selection_totals)
+        },
+        approved_settlement: {
+          distribution: report.fetch(:settlement_distribution),
+          totals: report.fetch(:settlement_totals)
+        }
+      }
+    }
+  end
+
+  def official_dataset
+    RubyRouting::Case::Input.load(
+      providers_path: File.join(ROOT, "data/providers.json"),
+      history_path: File.join(ROOT, "data/operations_history.csv"),
+      queue_path: File.join(ROOT, "data/operations_queue_10.json")
+    )
+  end
+
+  def run
+    factors = {
+      "count" => evidence_case(
+        weights: { count: 1 },
+        traffic: begin
+          ledger = RubyRouting::Case::TrafficLedger.new(
+            PROVIDER_IDS, targets: targets(:count)
+          )
+          2.times { ledger.record_assignment!(provider_id: "b", amount: 100) }
+          ledger
+        end
+      ),
+      "volume" => evidence_case(
+        weights: { volume: 1 },
+        traffic: begin
+          ledger = RubyRouting::Case::TrafficLedger.new(
+            PROVIDER_IDS, targets: targets(:volume)
+          )
+          ledger.record_assignment!(provider_id: "b", amount: 1_000)
+          ledger
+        end
+      ),
+      "priority" => evidence_case(
+        weights: { priority: 1 },
+        providers: [provider("a", priority: 1), provider("b", priority: 2)]
+      ),
+      "amount" => evidence_case(
+        weights: { amount: 1 }, item: operation(amount: 150),
+        preferred_amount_ranges: {
+          a: { min: 100, max: 200 }, b: { min: 700, max: 800 }
+        }
+      ),
+      "conversion_24h" => evidence_case(
+        weights: { conversion_24h: 1 },
+        providers: [provider("a", conversion: Rational(9, 10)), provider("b", conversion: Rational(1, 10))]
+      ),
+      "load" => evidence_case(
+        weights: { load: 1 },
+        providers: [provider("a", daily_limit: 10_000), provider("b", daily_limit: 1_000, daily_approved: 900)]
+      ),
+      "intensity" => evidence_case(
+        weights: { intensity: 1 }, rpm_events: true,
+        item: operation(id: "intensity-evidence")
+      ),
+      "turnover_min" => evidence_case(
+        weights: { turnover_min: 1 }, min_turnovers: { a: 1_000, b: 0 }
+      )
+    }
+    {
+      version: RubyRouting::Case::VERSION,
+      engine: "RubyRouting::Case::ConflictResolver",
+      canonical_submission_policy: canonical_submission_policy,
+      factors: factors,
+      multi_goal_conflict: multi_goal_conflict,
+      router_multi_goal_conflict: router_multi_goal_conflict,
+      router_optional_factor_conflicts: router_optional_factor_conflicts,
+      router_provider_boundary: router_provider_boundary,
+      portfolio_conflict: portfolio_conflict,
+      fallback_and_analytics: fallback_evidence
+    }
+  end
+
+  def canonical_submission_policy
+    profile = official_profile(official_dataset)
+    {
+      profile_id: profile.profile_id,
+      source: profile.source,
+      revision: profile.revision,
+      count_target_source: profile.count_target_source,
+      volume_target_source: profile.volume_target_source,
+      configuration: profile.configuration.to_h,
+      scenario_policy_scope: {
+        "factors" => "synthetic_case_inputs",
+        "multi_goal_conflict" => "synthetic_case_inputs",
+        "router_multi_goal_conflict" => "canonical_case_data + synthetic_weights",
+        "router_optional_factor_conflicts" => "synthetic_case_data + synthetic_weights",
+        "router_provider_boundary" => "synthetic_provider_extensibility + provider_traffic_targets",
+        "portfolio_conflict" => "synthetic_case_configurations",
+        "fallback_and_analytics" => "canonical_submission_profile"
+      }
+    }
+  end
+
+  def official_profile(dataset)
+    RubyRouting::Case::SubmissionProfile.load(
+      path: File.join(ROOT, "data/submission_profile.json"), dataset: dataset
+    )
+  end
+end
+
+puts JSON.pretty_generate(RubyRouting::Case::Serializer.json_value(RubyRoutingCaseEvidence.run))

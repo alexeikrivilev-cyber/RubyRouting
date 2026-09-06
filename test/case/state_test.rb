@@ -118,6 +118,18 @@ class AuthoritativeCaseStateTest < Minitest::Test
     assert at_boundary.eligible?
   end
 
+  def test_zero_target_active_provider_is_not_a_hard_exclusion
+    evaluator = RubyRouting::Case::HardConstraintEvaluator.new
+    result = evaluator.call(
+      RubyRouting::Case::ProviderCaseState.new(provider(traffic_percentage: 0)),
+      operation,
+      as_of: operation.created_at
+    )
+
+    assert result.eligible?
+    assert_nil result.reason
+  end
+
   def test_invalid_release_fails_without_corrupting_transient_state
     state = RubyRouting::Case::ProviderCaseState.new(provider)
     item = operation(amount: 10)
@@ -139,7 +151,6 @@ class AuthoritativeCaseStateTest < Minitest::Test
     checks = {
       inactive_provider: [provider(status: "inactive"), :inactive_provider],
       enabled_provider_is_not_active: [provider(status: "enabled"), :inactive_provider],
-      zero_participation: [provider(traffic_percentage: 0), :zero_participation],
       amount_below_minimum: [provider(limit_amount_min: 20), :amount_below_minimum],
       amount_exceeds_limit: [provider(limit_amount_max: 5), :amount_exceeds_limit],
       daily_amount_limit: [provider(daily_amount_limit: 5), :daily_amount_limit],

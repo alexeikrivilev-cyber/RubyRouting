@@ -1,71 +1,65 @@
-# Completion Policy — no premature done
+# Completion Policy — no premature 10/10
 
-Current version: **v0.4.3 / SPEC-019 — VERSION_COMPLETE**.
+Program: **v0.4.4 / SPEC-021 — ACTIVE**.
 
-Completed compatible baseline: **v0.4.2 / SPEC-018** at opening SHA `277d6b68d568eceb88ece3b3e466987535ff75bd`.
+Completion is a claim about actual code, artifacts and rubric evidence on an exact pushed HEAD. Green tests, a closed finding registry, or a high subjective score are insufficient.
 
-Completion is an evidence claim about the exact hidden-queue submission path and generated artifacts under the authoritative TZ. Green unit tests, self-consistent replay and shape-valid JSON are not enough.
+Stages:
 
-Stages: `ACTIVE -> SLICE_VERIFIED -> VERSION_CANDIDATE -> independent blind pass -> VERSION_COMPLETE`.
+`ACTIVE -> VERSION_CANDIDATE -> BLIND_AUDIT -> SCORE_CANDIDATE -> FINAL_REHEARSAL -> VERSION_COMPLETE`.
 
-## Mandatory v0.4.3 gates before candidate
+## VERSION_CANDIDATE gate
 
-1. organizer base distribution accounting point is supported by authoritative wording or a documented conservative ambiguity decision;
-2. fallback counterexample proves report/decision/accounting semantics are intentional;
-3. independent semantic report oracle recomputes total count, provider set, share_pct, target_pct, projected utilization and period without ReportBuilder expected values;
-4. report shape validator and semantic validator both pass real serialized finalization output;
-5. candidate-addition/removal normalization campaign either demonstrates and fixes a material defect or evidence-closes current normalization with concrete cases;
-6. hidden-queue daily temporal contract is established and current code is correct or fail-closed for cross-day input;
-7. a provider missing preferred amount configuration cannot obtain silent maximum soft preference;
-8. public organizer decisions validator remains green;
-9. assignment/attempt/settlement conservation stays exact;
-10. current matrix has no material P0/P1 PARTIAL/MISSING/CONFLICT.
+- no known material P0/P1 from current code/data/artifact analysis;
+- no obvious high-value rubric row remains unsupported without explicit authority/evidence closure;
+- no known hidden business objective contradicts configured policy semantics;
+- scoring invariants relevant to the current model have independent/metamorphic evidence;
+- lifecycle selection rationale/outcome/accounting projections are intentional and testable;
+- all material changes have focused and adjacent regression evidence;
+- canonical public finalization/validators remain green;
+- protected release/calendar and production-safety boundaries remain intact.
 
-Known-scope green gives VERSION_CANDIDATE only.
+## BLIND_AUDIT
 
-## Independent blind stage
+Ignore finding-registry status and attack implementation again. At minimum probe:
 
-After candidate, ignore backlog completion and attack actual code/artifacts again for:
-
-- builder/semantic-oracle correlation;
-- report distribution disagreement with decisions under fallback;
-- wrong denominator or percentage rounding at small counts;
-- provider-set omissions/extras;
-- target provenance drift;
-- utilization recomputation errors after rejection/fallback;
-- irrelevant-candidate normalization inversion;
-- missing optional factor config acting as positive preference;
-- cross-midnight daily-limit leakage;
-- direct terminal fallback causality gaps;
-- CLI/demo/finalization divergence and public-data overfit.
+- hard-gate bypass and fallback recheck;
+- allocation denominators/objective correctness;
+- factor disablement/zero weights;
+- hidden tie-break preferences;
+- provider ordering and irrelevant/dominated candidate effects;
+- target provenance/mass and missing config defaults;
+- fallback chronology and selection-rationale/outcome separation;
+- primary/final/settlement report populations;
+- terminal behavior and temporal boundaries;
+- additional providers/extensibility;
+- serializer/report recomputation;
+- alternate entrypoints and public-data overfit;
+- release artifact freshness/provenance.
 
 Any material P0/P1 returns ACTIVE.
 
-## Exact evidence before VERSION_COMPLETE
+## SCORE_CANDIDATE
 
-After the final material code change run fresh:
+Map every scored rubric row to deterministic judge-visible evidence. Unit-test capability alone is insufficient when a compact scenario can prove it safely. For multi-goal scoring, show actual factor evidence/weights and at least several conflicts where the outcome changes for an explainable reason.
 
-- `bundle check`;
-- `bundle exec rake test`;
-- property/model/concurrency/fault suites;
-- full Case suite;
-- all SPEC-019 adversarial campaigns;
-- canonical finalization;
-- public organizer decisions validator;
-- independent report shape validator;
-- independent report semantic validator;
-- strict in-memory + serialized validation;
-- clean-checkout finalization;
-- requirement/rubric traceability and docs consistency;
-- exact pushed-HEAD GitHub Actions success.
+Record organizer ambiguity explicitly; do not manufacture certainty.
 
-Never reuse stale CI and never declare completion while exact-head CI is pending.
+## FINAL_REHEARSAL
 
-## Closure evidence
+From clean checkout run full inherited/Case/adversarial suites, rubric evidence lab, public decisions validator, independent report validators, serialized strict validation, hidden-like deterministic campaigns and explicit finalization.
 
-v0.4.3 completed on exact pushed HEAD
-`13efbeba48f1726b91b71b1677d3541dd4f9f433`. The fresh full matrix, Case and
-adversarial campaigns, canonical and clean-checkout finalization, public and
-independent validators, docs sync and exact-head Actions run `33852436704`
-passed with zero failures/errors. The independent blind stage found and closed
-TZ19-106/107 before the final matrix; no material local P0/P1 remained.
+For the real hidden queue also confirm:
+
+- queue path/digest and operation count;
+- required root artifact names;
+- validated artifact hashes;
+- Git trackability and committed-byte equality;
+- final pushed HEAD contains those exact bytes;
+- docs/profile/version metadata describe the actual release sufficiently for judges/operators.
+
+## VERSION_COMPLETE
+
+Only after blind audit is clean, score evidence is strong enough to defend the implementation, final hidden-submission provenance/rehearsal is clean and exact-head Actions succeeds.
+
+New organizer authority or a later material skeptical finding reopens ACTIVE immediately. Completion is never irreversible by policy.

@@ -7,16 +7,17 @@ on:
 jobs:
   verify:
     name: Fast Ruby verification
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up CRuby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "4.0.6"
-          bundler-cache: true
+      - name: Verify preinstalled CRuby
+        shell: pwsh
+        run: |
+          ruby --version
+          ruby -e "abort('Expected CRuby 4.0.6, got ' + RUBY_VERSION) unless RUBY_VERSION == '4.0.6'"
+          bundle --version
 
       - name: Run full Ruby verification matrix
         run: |
@@ -30,22 +31,25 @@ jobs:
       - name: Verify authoritative case submission artifacts
         run: |
           bundle exec rake case
-          bundle exec rake finalize_submission
+          bundle exec rake finalize_public_submission
+          git diff --exit-code -- routing_decisions_test.json routing_report_test.json
           ruby scripts/validate_10.rb routing_decisions_test.json
           bundle exec ruby -Ilib bin/ruby_routing_case_demo > case_demo.json
+          bundle exec ruby -Ilib bin/ruby_routing_case_evidence > case_evidence.json
 
   product_evidence:
     name: Bounded product evidence
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up CRuby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "4.0.6"
-          bundler-cache: true
+      - name: Verify preinstalled CRuby
+        shell: pwsh
+        run: |
+          ruby --version
+          ruby -e "abort('Expected CRuby 4.0.6, got ' + RUBY_VERSION) unless RUBY_VERSION == '4.0.6'"
+          bundle --version
 
       - name: Run bounded performance and demo evidence
         run: |

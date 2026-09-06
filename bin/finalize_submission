@@ -10,10 +10,11 @@ root = File.expand_path("..", __dir__)
 options = {
   providers: File.join(root, "data/providers.json"),
   history: File.join(root, "data/operations_history.csv"),
-  queue: File.join(root, "data/operations_queue_10.json"),
+  queue: nil,
   profile: File.join(root, "data/submission_profile.json"),
   decisions: File.join(root, "routing_decisions_test.json"),
-  report: File.join(root, "routing_report_test.json")
+  report: File.join(root, "routing_report_test.json"),
+  verify_committed: false
 }
 
 OptionParser.new do |parser|
@@ -22,9 +23,14 @@ OptionParser.new do |parser|
   parser.on("--history PATH", "history CSV") { |value| options[:history] = value }
   parser.on("--queue PATH", "test or hidden operation queue JSON") { |value| options[:queue] = value }
   parser.on("--profile PATH", "typed submission policy profile JSON") { |value| options[:profile] = value }
+  parser.on("--verify-committed", "require validated root bytes to match Git HEAD") { options[:verify_committed] = true }
 end.parse!
 
 begin
+  raise RubyRouting::Case::InputError, "explicit --queue PATH is required; public fixture use must name the queue explicitly" if options[:queue].nil?
+
+  public_queue = File.expand_path(File.join(root, "data/operations_queue_10.json"))
+  queue_kind = File.expand_path(options[:queue]) == public_queue ? "public_fixture" : "explicit_submission_queue"
   run = RubyRouting::Case::Runner.new(
     providers_path: options[:providers], history_path: options[:history], queue_path: options[:queue],
     profile_path: options[:profile]
@@ -38,11 +44,18 @@ begin
   RubyRouting::Case::OrganizerReportContractValidator.new(options[:report]).validate!
   RubyRouting::Case::OrganizerReportSemanticValidator.new(
     providers_path: options[:providers], queue_path: options[:queue],
-    profile_path: options[:profile], decisions_path: options[:decisions],
+    history_path: options[:history], profile_path: options[:profile], decisions_path: options[:decisions],
     report_path: options[:report]
   ).validate!
+  manifest = RubyRouting::Case::SubmissionManifest.build(
+    root: root, queue_path: options[:queue], decisions_path: options[:decisions], report_path: options[:report]
+  )
+  manifest.verify!
+  manifest.verify_committed! if options[:verify_committed]
+  puts "queue_kind=#{queue_kind} queue=#{File.expand_path(options[:queue])}"
+  puts "committed_head_verified=true" if options[:verify_committed]
+  puts "submission_manifest=#{JSON.generate(manifest.to_h)}"
   puts "generated #{options[:decisions]} and #{options[:report]}"
-  public_queue = File.expand_path(File.join(root, "data/operations_queue_10.json"))
   if File.expand_path(options[:queue]) == public_queue
     validator = File.join(root, "scripts/validate_10.rb")
     success = system(RbConfig.ruby, validator, options[:decisions])

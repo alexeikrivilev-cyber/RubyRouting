@@ -76,10 +76,11 @@ module RubyRouting
         hard_skipped attempted_approved attempted_rejected attempted_expired terminal_non_approval
       ].freeze
 
-      attr_reader :provider, :decision, :reason, :status, :latency_sec, :selection, :classification
+      attr_reader :provider, :decision, :reason, :status, :latency_sec, :selection,
+                  :selection_reason, :classification
 
       def initialize(provider:, decision:, reason:, status: nil, latency_sec: nil, selection: nil,
-                     classification: nil)
+                     selection_reason: nil, classification: nil)
         raise OutputError, "attempt decision must be selected or skipped" unless %i[selected skipped].include?(decision)
         @provider = Input.assert_id(provider, "attempt provider")
         @decision = decision
@@ -87,6 +88,7 @@ module RubyRouting
         @status = status
         @latency_sec = latency_sec
         @selection = selection
+        @selection_reason = selection_reason && Input.assert_id(selection_reason, "attempt selection reason")
         @classification = classification || default_classification
         unless CLASSIFICATIONS.include?(@classification)
           raise OutputError, "unsupported internal attempt classification #{@classification.inspect}"
@@ -153,7 +155,7 @@ module RubyRouting
 
     class Router
       attr_reader :dataset, :state, :traffic, :attempt_ledger, :settlement_ledger,
-                  :configuration, :profile, :simulator, :resolver
+                  :primary_assignment_ledger, :configuration, :profile, :simulator, :resolver
 
       def initialize(dataset, simulator: nil, terminal_provider_id: nil,
                      rpm_limits: {}, traffic_targets: nil, resolver: nil, configuration: nil,
@@ -175,6 +177,7 @@ module RubyRouting
           unless profile.is_a?(SubmissionProfile)
             raise InputError, "case router profile must be SubmissionProfile"
           end
+          profile.validate_against!(dataset)
           profile.configuration
         elsif !configuration.nil?
           CaseConfiguration.from(configuration, provider_ids: provider_ids)
@@ -184,7 +187,9 @@ module RubyRouting
             terminal_provider_id: terminal_provider_id,
             rpm_limits: rpm_limits,
             targets: traffic_targets,
-            weights: resolver ? resolver.weights : RoutingWeights.new
+            weights: resolver ? resolver.weights : RoutingWeights.new,
+            min_turnovers: resolver ? resolver.min_turnovers : {},
+            preferred_amount_ranges: resolver ? resolver.preferred_amount_ranges : {}
           )
         end
         unless config.provider_ids == provider_ids.sort
@@ -198,6 +203,10 @@ module RubyRouting
           rpm_window_seconds: config.rpm_window_seconds
         )
         @traffic = TrafficLedger.new(
+          dataset.providers.map(&:payment_system),
+          targets: config.targets
+        )
+        @primary_assignment_ledger = TrafficLedger.new(
           dataset.providers.map(&:payment_system),
           targets: config.targets
         )
@@ -215,8 +224,19 @@ module RubyRouting
         end
         @terminal_provider_id = config.terminal_provider_id
         terminal = dataset.providers.find { |provider| provider.payment_system == @terminal_provider_id }
-        unless terminal&.active? && terminal.self_provider?
-          raise InputError, "terminal provider must be an active zero-participation provider"
+        unless terminal&.active?
+          raise InputError, "terminal provider must be active"
+        end
+        non_routable_targets = dataset.providers.filter_map do |provider|
+          next if provider.payment_system == @terminal_provider_id
+          next unless config.targets.count_share.fetch(provider.payment_system).positive? ||
+                      config.targets.volume_share.fetch(provider.payment_system).positive?
+          next if provider.active?
+
+          provider.payment_system
+        end
+        unless non_routable_targets.empty?
+          raise InputError, "case configuration contains non-routable provider targets: #{non_routable_targets.join(', ')}"
         end
         @providers = dataset.providers.sort_by { |provider| [provider.priority, provider.payment_system] }
         @hard_constraints = HardConstraintEvaluator.new
@@ -231,7 +251,8 @@ module RubyRouting
         attempts = []
         candidates = @providers.reject { |provider| provider.payment_system == @terminal_provider_id }
         attempt_index = 0
-        assignment_recorded = false
+        primary_assignment_recorded = false
+        attempt_started = false
         loop do
           eligible_states = []
           candidates.each do |provider|
@@ -251,7 +272,7 @@ module RubyRouting
 
           resolution = @resolver.resolve(
             candidates: eligible_states, operation: operation, traffic: traffic, as_of: as_of,
-            phase: assignment_recorded ? :fallback : :primary,
+            phase: attempt_started ? :fallback : :primary,
             # Keep normalization tied to the complete current opportunity
             # set. Alternate callers comparing subsets must pass the same
             # pool explicitly to avoid candidate-set scale drift.
@@ -260,10 +281,11 @@ module RubyRouting
           resolution_reason = resolution.selection_reason(candidate_count: eligible_states.length)
           provider = eligible_states.find { |item| item.provider.payment_system == resolution.selected_provider }.provider
           provider_state = state.fetch(provider.payment_system)
-          unless assignment_recorded
-            traffic.record_assignment!(provider_id: provider.payment_system, amount: operation.amount)
-            assignment_recorded = true
+          unless primary_assignment_recorded
+            primary_assignment_ledger.record_assignment!(provider_id: provider.payment_system, amount: operation.amount)
+            primary_assignment_recorded = true
           end
+          attempt_started = true
           provider_state.reserve!(operation, as_of: as_of)
           simulation = @simulator.call(operation, provider, attempt_index: attempt_index)
           provider_state.release!(operation)
@@ -272,11 +294,13 @@ module RubyRouting
           attempt_index += 1
           if simulation.approved?
             provider_state.record_route!(operation)
+            traffic.record_assignment!(provider_id: provider.payment_system, amount: operation.amount)
             settlement_ledger.record!(provider_id: provider.payment_system, amount: operation.amount)
             attempts << Attempt.new(
               provider: provider.payment_system, decision: :selected, reason: resolution_reason,
               status: simulation.status, latency_sec: simulation.latency_sec,
-              selection: resolution.to_h, classification: :attempted_approved
+              selection: resolution.to_h, selection_reason: resolution_reason,
+              classification: :attempted_approved
             )
             return Decision.new(
               operation_id: operation.operation_id,
@@ -292,7 +316,7 @@ module RubyRouting
             provider: provider.payment_system, decision: :selected,
             reason: simulation.status == :expired ? "provider_expired" : "provider_rejected",
             status: simulation.status, latency_sec: simulation.latency_sec,
-            selection: resolution.to_h,
+            selection: resolution.to_h, selection_reason: resolution_reason,
             classification: simulation.status == :expired ? :attempted_expired : :attempted_rejected
           )
           candidates = candidates.reject { |candidate| candidate.payment_system == provider.payment_system }
@@ -304,9 +328,9 @@ module RubyRouting
           raise OutputError, "terminal self-provider #{@terminal_provider_id} is ineligible: #{terminal_eligibility.reason}"
         end
         terminal_reason = attempts.empty? ? "terminal_fallback" : "external_providers_exhausted"
-        unless assignment_recorded
-          traffic.record_assignment!(provider_id: @terminal_provider_id, amount: operation.amount)
-          assignment_recorded = true
+        unless primary_assignment_recorded
+          primary_assignment_ledger.record_assignment!(provider_id: @terminal_provider_id, amount: operation.amount)
+          primary_assignment_recorded = true
         end
         terminal.reserve!(operation, as_of: as_of)
         simulation = @simulator.call(operation, terminal.provider, attempt_index: attempt_index)
@@ -314,6 +338,7 @@ module RubyRouting
         terminal.record_outcome!(operation, simulation.status)
         attempt_ledger.record!(provider_id: @terminal_provider_id, amount: operation.amount, status: simulation.status)
         terminal.record_route!(operation) if simulation.approved?
+        traffic.record_assignment!(provider_id: @terminal_provider_id, amount: operation.amount)
         settlement_ledger.record!(provider_id: @terminal_provider_id, amount: operation.amount) if simulation.approved?
         attempts << Attempt.new(
           provider: @terminal_provider_id, decision: :selected, reason: terminal_reason,

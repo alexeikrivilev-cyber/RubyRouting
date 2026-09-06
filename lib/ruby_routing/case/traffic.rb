@@ -81,8 +81,9 @@ module RubyRouting
         @volume_by_provider.dup.freeze
       end
 
-      # This ledger is the routing-target authority: record the first provider
-      # selected for an operation before its simulated outcome is known.
+      # This ledger is the routing-target authority: record the final selected
+      # provider once the operation's fallback cascade is complete. Primary
+      # assignments are kept in a separate ledger by the Case Router.
       def record_assignment!(provider_id:, amount:)
         provider_id = provider_key(provider_id)
         raise InputError, "traffic amount must be a positive Integer" unless amount.is_a?(Integer) && amount.positive?
@@ -127,6 +128,33 @@ module RubyRouting
             deficit_after: @targets.volume_share.fetch(provider_id) - Rational(post_volume_value, post_volume)
           }
         }.freeze
+      end
+
+      # Return the exact post-decision portfolio loss for one hypothetical
+      # assignment. Unlike `counterfactual`, this evaluates every configured
+      # provider against the target distribution, not only the candidate being
+      # considered. The resolver turns the loss into a higher-is-better raw
+      # factor by negating it.
+      def post_decision_loss(measure:, provider_id:, amount:)
+        provider_id = provider_key(provider_id)
+        raise InputError, "traffic amount must be a positive Integer" unless amount.is_a?(Integer) && amount.positive?
+
+        values = measure_values(measure).dup
+        if measure == :count
+          values[provider_id] += 1
+          total = @total_count + 1
+          target_values = @targets.count_share
+        elsif measure == :volume
+          values[provider_id] += amount
+          total = @total_volume + amount
+          target_values = @targets.volume_share
+        else
+          raise InputError, "unsupported traffic measure #{measure.inspect}"
+        end
+
+        target_values.sum do |candidate_id, target|
+          (Rational(values.fetch(candidate_id), total) - target).abs
+        end
       end
 
       def distribution

@@ -67,10 +67,6 @@ module RubyRouting
         status == "active"
       end
 
-      def self_provider?
-        traffic_percentage.zero?
-      end
-
       def to_h
         {
           payment_system: payment_system,
@@ -151,10 +147,11 @@ module RubyRouting
 
     class Dataset
       attr_reader :snapshot_at, :gateway, :merchant, :providers, :history,
-                  :operations, :history_source
+                  :operations, :history_source, :business_calendar
 
       def initialize(snapshot_at:, gateway:, merchant:, providers:, history:, operations:,
                      history_source: "operations_history.csv")
+        @business_calendar = BusinessCalendar.from(snapshot_at)
         @snapshot_at = Input.assert_time(snapshot_at, "snapshot_at")
         @gateway = Input.assert_string(gateway, "gateway")
         @merchant = Input.assert_string(merchant, "merchant")
@@ -183,7 +180,7 @@ module RubyRouting
         end
         providers = provider_values.map.with_index { |value, index| parse_provider(value, index) }
         Dataset.new(
-          snapshot_at: assert_time(provider_root.fetch("snapshot_at"), "snapshot_at"),
+          snapshot_at: provider_root.fetch("snapshot_at"),
           gateway: assert_string(provider_root.fetch("gateway"), "gateway"),
           merchant: assert_string(provider_root.fetch("merchant"), "merchant"),
           providers: providers,

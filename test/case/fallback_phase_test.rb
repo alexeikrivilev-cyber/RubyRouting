@@ -46,14 +46,15 @@ class AuthoritativeCaseFallbackPhaseTest < Minitest::Test
     router = RubyRouting::Case::Router.new(dataset, configuration: configuration, simulator: simulator)
     decision = router.run.fetch(0)
 
-    assert_equal "c", decision.selected_provider
-    assert_equal %w[a c], decision.attempts.map(&:provider)
+    assert_equal "b", decision.selected_provider
+    assert_equal %w[a b], decision.attempts.map(&:provider)
     assert_equal ["provider_rejected", "fallback_highest_composite_score"], decision.attempts.map(&:reason)
-    assert_equal 1, router.traffic.count_by_provider.fetch("a")
-    assert_equal 0, router.traffic.count_by_provider.fetch("c")
+    assert_equal 0, router.traffic.count_by_provider.fetch("a")
+    assert_equal 1, router.traffic.count_by_provider.fetch("b")
+    assert_equal 1, router.primary_assignment_ledger.count_by_provider.fetch("a")
     assert_equal 1, router.attempt_ledger.count_by_provider.fetch("a")
-    assert_equal 1, router.attempt_ledger.count_by_provider.fetch("c")
-    assert_equal 1, router.settlement_ledger.count_by_provider.fetch("c")
+    assert_equal 1, router.attempt_ledger.count_by_provider.fetch("b")
+    assert_equal 1, router.settlement_ledger.count_by_provider.fetch("b")
     assert_equal 0, router.settlement_ledger.count_by_provider.fetch("a")
     assert RubyRouting::Case::StrictValidator.new(
       RubyRouting::Case::Run.new(
@@ -61,6 +62,7 @@ class AuthoritativeCaseFallbackPhaseTest < Minitest::Test
         configuration: router.configuration, simulator: router.simulator,
         resolver: router.resolver, decisions: [decision], report: RubyRouting::Case::ReportBuilder.new(
           dataset, router.state, router.traffic, router.configuration, [decision],
+          primary_assignment_ledger: router.primary_assignment_ledger,
           attempt_ledger: router.attempt_ledger, settlement_ledger: router.settlement_ledger
         ).call,
         attempt_ledger: router.attempt_ledger, settlement_ledger: router.settlement_ledger
@@ -68,7 +70,7 @@ class AuthoritativeCaseFallbackPhaseTest < Minitest::Test
     ).call.valid?
   end
 
-  def test_independent_expected_fallback_is_lower_priority_c_not_legacy_counterfactual_b
+  def test_fallback_allocation_objective_is_based_on_uncommitted_final_ledger
     targets = RubyRouting::Case::TrafficTargets.new(
       provider_ids: %w[a b c],
       count_share: { a: Rational(4, 10), b: Rational(4, 10), c: Rational(2, 10) },
@@ -88,9 +90,10 @@ class AuthoritativeCaseFallbackPhaseTest < Minitest::Test
       operation: operation, traffic: ledger, as_of: operation.created_at, phase: :fallback
     )
 
-    expected_fallback_provider = "c" # lower official priority rank: c=1, b=9
+    expected_fallback_provider = "b" # portfolio target remains active after primary rejection
     assert_equal expected_fallback_provider, fallback_resolution.selected_provider
-    assert_equal "b", legacy_counterfactual.selected_provider
+    assert_equal expected_fallback_provider, legacy_counterfactual.selected_provider
+    assert_equal %i[count volume priority], fallback_resolution.traces.fetch("b").map(&:factor)
     assert_equal :fallback, fallback_resolution.phase
   end
 end

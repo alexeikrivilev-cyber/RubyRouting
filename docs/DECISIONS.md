@@ -1,5 +1,7 @@
 # Decisions Pointer
 
-Current decision authority: **`DECISIONS_CURRENT.md`** under **v0.4.3 / SPEC-019 — VERSION_COMPLETE**.
+Current product decisions are in `DECISIONS_CURRENT.md`.
 
-Historical decision files are retained as evidence only. When they conflict with authoritative TZ, SPEC-019 or current decisions, the current authority wins.
+Program: **v0.4.4 / SPEC-021 — ACTIVE**.
+
+Historical decision files remain evidence only and cannot override authoritative TZ, SPEC-021 or fresh material counterexamples.

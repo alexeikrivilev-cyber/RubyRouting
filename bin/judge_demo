@@ -1,0 +1,76 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "json"
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
+require "ruby_routing"
+
+module RubyRoutingJudgeDemo
+  module_function
+
+  def provider(id, conversion:, daily_approved:, in_progress_count:, in_progress_amount:)
+    RubyRouting::Case::Provider.new(
+      payment_system: id, status: "active", traffic_percentage: 50, priority: 1,
+      limit_amount_min: 1, limit_amount_max: 10_000, daily_amount_limit: 10_000,
+      daily_approved_amount: daily_approved, in_progress_count_limit: 100,
+      in_progress_count: in_progress_count, in_progress_amount_limit: 100_000,
+      in_progress_amount: in_progress_amount, available_requisites: 10,
+      conversion_24h: conversion, avg_latency_sec: 10, banks: [], exclude_banks: false,
+      provider_margin_pct: 1, merchant_margin_pct: 1, allow_negative_agreement: false
+    )
+  end
+
+  def operation
+    RubyRouting::Case::Operation.new(
+      operation_id: "judge-demo-001", created_at: Time.utc(2026, 7, 30, 9), amount: 100,
+      bank: "sberbank", card_brand: nil,
+      payout_requisite: { "sbp" => { "phone" => "79000000000" } }
+    )
+  end
+
+  def run(weights, states, traffic, item)
+    resolution = RubyRouting::Case::ConflictResolver.new(weights: weights).resolve(
+      candidates: states, normalization_candidates: states,
+      operation: item, traffic: traffic, as_of: item.created_at
+    )
+    selected = resolution.selected_provider
+    {
+      weights: weights,
+      winner: selected,
+      factors: resolution.traces.fetch(selected).map do |trace|
+        { factor: trace.factor, contribution: trace.contribution, raw: trace.raw }
+      end
+    }
+  end
+
+  item = operation
+  providers = [
+    provider("payflow", conversion: Rational(9, 10), daily_approved: 9_000,
+              in_progress_count: 90, in_progress_amount: 90_000),
+    provider("quickpay", conversion: Rational(1, 10), daily_approved: 0,
+              in_progress_count: 0, in_progress_amount: 0)
+  ]
+  states = providers.map { |provider_item| RubyRouting::Case::ProviderCaseState.new(provider_item) }
+  traffic = RubyRouting::Case::TrafficLedger.new(providers.map(&:payment_system))
+  scenarios = [
+    run({ conversion_24h: 4, load: 1 }, states, traffic, item),
+    run({ conversion_24h: 1, load: 4 }, states, traffic, item)
+  ]
+  first, second = scenarios
+  changed_factor = first.fetch(:factors).zip(second.fetch(:factors)).filter_map do |left, right|
+    next if left.fetch(:contribution) == right.fetch(:contribution)
+
+    { factor: left.fetch(:factor), left: left.fetch(:contribution), right: right.fetch(:contribution) }
+  end
+  output = {
+    demo: "one payout; same providers and inputs; only weights change",
+    operation_id: item.operation_id,
+    scenarios: scenarios,
+    decision_change: {
+      from: first.fetch(:winner), to: second.fetch(:winner),
+      reason: "load receives four times the weight instead of one; the load contribution overtakes conversion",
+      changed_contributions: changed_factor
+    }
+  }
+  puts JSON.pretty_generate(RubyRouting::Case::Serializer.json_value(output))
+end

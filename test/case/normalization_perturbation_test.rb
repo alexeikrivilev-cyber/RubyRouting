@@ -7,12 +7,13 @@ class AuthoritativeCaseNormalizationPerturbationTest < Minitest::Test
     count: 2, volume: 2, priority: 1, amount: 1, conversion_24h: 2, load: 1
   }.freeze
 
-  def provider(id, priority:, conversion:, daily:, traffic: 40)
+  def provider(id, priority:, conversion:, daily:, traffic: 40,
+               in_progress_count_limit: 100, in_progress_amount_limit: 10_000)
     RubyRouting::Case::Provider.new(
       payment_system: id, status: "active", traffic_percentage: traffic, priority: priority,
       limit_amount_min: 1, limit_amount_max: 10_000, daily_amount_limit: 10_000,
-      daily_approved_amount: daily, in_progress_count_limit: 100, in_progress_count: 0,
-      in_progress_amount_limit: 10_000, in_progress_amount: 0, available_requisites: 100,
+      daily_approved_amount: daily, in_progress_count_limit: in_progress_count_limit, in_progress_count: 0,
+      in_progress_amount_limit: in_progress_amount_limit, in_progress_amount: 0, available_requisites: 100,
       conversion_24h: conversion, avg_latency_sec: 1, banks: [], exclude_banks: false,
       provider_margin_pct: 1, merchant_margin_pct: 1, allow_negative_agreement: false
     )
@@ -92,6 +93,44 @@ class AuthoritativeCaseNormalizationPerturbationTest < Minitest::Test
     end
   end
 
+  def test_router_keeps_ab_stable_when_a_dominated_eligible_provider_is_added
+    a = scoring_provider("a", conversion: Rational(9, 10), daily: 700)
+    b = scoring_provider("b", conversion: Rational(4, 5), daily: 0)
+    c = scoring_provider("c", conversion: Rational(0, 1), daily: 900)
+
+    base = route_with([a, b, terminal_provider])
+    expanded = route_with([a, b, c, terminal_provider])
+
+    assert_equal "b", base.fetch(:selected)
+    assert_equal "b", expanded.fetch(:selected)
+    refute_equal "c", expanded.fetch(:selected)
+    %w[a b].each do |provider_id|
+      assert_equal base.fetch(:scores).fetch(provider_id), expanded.fetch(:scores).fetch(provider_id)
+      assert_equal base.fetch(:traces).fetch(provider_id), expanded.fetch(:traces).fetch(provider_id)
+    end
+    assert_operator expanded.fetch(:traces).fetch("c").fetch(:conversion_24h).fetch(:raw), :<,
+      expanded.fetch(:traces).fetch("a").fetch(:conversion_24h).fetch(:raw)
+    assert_operator expanded.fetch(:traces).fetch("c").fetch(:load).fetch(:raw), :<,
+      expanded.fetch(:traces).fetch("b").fetch(:load).fetch(:raw)
+  end
+
+  def test_router_keeps_ab_stable_when_a_non_dominated_provider_changes_the_scale
+    a = stable_scale_provider("a", priority: 6, conversion: Rational(17, 20), daily: 300)
+    b = stable_scale_provider("b", priority: 4, conversion: Rational(1, 4), daily: 350)
+    c = stable_scale_provider("c", priority: 5, conversion: Rational(19, 20), daily: 800)
+
+    base = route_with_stable_scale([a, b, terminal_provider])
+    expanded = route_with_stable_scale([a, b, c, terminal_provider])
+
+    assert_equal "a", base.fetch(:selected)
+    assert_equal "a", expanded.fetch(:selected)
+    refute_equal "c", expanded.fetch(:selected)
+    %w[a b].each do |provider_id|
+      assert_equal base.fetch(:scores).fetch(provider_id), expanded.fetch(:scores).fetch(provider_id)
+      assert_equal base.fetch(:traces).fetch(provider_id), expanded.fetch(:traces).fetch(provider_id)
+    end
+  end
+
   private
 
   def raw_factors(resolution, provider_id)
@@ -102,5 +141,82 @@ class AuthoritativeCaseNormalizationPerturbationTest < Minitest::Test
     a = resolution.traces.fetch("a").find { |item| item.factor == factor }
     b = resolution.traces.fetch("b").find { |item| item.factor == factor }
     a.normalized - b.normalized
+  end
+
+  def scoring_provider(id, conversion:, daily:)
+    RubyRouting::Case::Provider.new(
+      payment_system: id, status: "active", traffic_percentage: 50, priority: 1,
+      limit_amount_min: 1, limit_amount_max: 10_000, daily_amount_limit: 1_000,
+      daily_approved_amount: daily, in_progress_count_limit: nil, in_progress_count: 0,
+      in_progress_amount_limit: nil, in_progress_amount: 0, available_requisites: 10,
+      conversion_24h: conversion, avg_latency_sec: 1, banks: [], exclude_banks: false,
+      provider_margin_pct: 1, merchant_margin_pct: 1, allow_negative_agreement: false
+    )
+  end
+
+  def stable_scale_provider(id, priority:, conversion:, daily:)
+    RubyRouting::Case::Provider.new(
+      payment_system: id, status: "active", traffic_percentage: 50, priority: priority,
+      limit_amount_min: 1, limit_amount_max: 10_000, daily_amount_limit: 1_000,
+      daily_approved_amount: daily, in_progress_count_limit: nil, in_progress_count: 0,
+      in_progress_amount_limit: nil, in_progress_amount: 0, available_requisites: 10,
+      conversion_24h: conversion, avg_latency_sec: 1, banks: [], exclude_banks: false,
+      provider_margin_pct: 1, merchant_margin_pct: 1, allow_negative_agreement: false
+    )
+  end
+
+  def terminal_provider
+    RubyRouting::Case::Provider.new(
+      payment_system: "spacepayments", status: "active", traffic_percentage: 0, priority: 99,
+      limit_amount_min: nil, limit_amount_max: nil, daily_amount_limit: nil,
+      daily_approved_amount: 0, in_progress_count_limit: nil, in_progress_count: 0,
+      in_progress_amount_limit: nil, in_progress_amount: 0, available_requisites: 1,
+      conversion_24h: Rational(1, 1), avg_latency_sec: 1, banks: [], exclude_banks: false,
+      provider_margin_pct: 0, merchant_margin_pct: 1, allow_negative_agreement: false
+    )
+  end
+
+  def route_with(providers)
+    item = operation
+    dataset = RubyRouting::Case::Dataset.new(
+      snapshot_at: Time.utc(2026, 7, 30, 8), gateway: "gateway", merchant: "merchant",
+      providers: providers, history: [], operations: [item]
+    )
+    configuration = RubyRouting::Case::CaseConfiguration.new(
+      provider_ids: providers.map(&:payment_system), weights: { conversion_24h: 1, load: 1 },
+      terminal_provider_id: "spacepayments"
+    )
+    router = RubyRouting::Case::Router.new(dataset, configuration: configuration)
+    selected = router.run.fetch(0)
+    attempt = selected.attempts.find { |candidate| candidate.decision == :selected }
+    {
+      selected: selected.selected_provider,
+      scores: attempt.selection.fetch(:scores),
+      traces: attempt.selection.fetch(:factors).transform_values do |values|
+        values.to_h { |evidence| [evidence.fetch(:factor).to_sym, evidence] }
+      end
+    }
+  end
+
+  def route_with_stable_scale(providers)
+    item = operation
+    dataset = RubyRouting::Case::Dataset.new(
+      snapshot_at: Time.utc(2026, 7, 30, 8), gateway: "gateway", merchant: "merchant",
+      providers: providers, history: [], operations: [item]
+    )
+    configuration = RubyRouting::Case::CaseConfiguration.new(
+      provider_ids: providers.map(&:payment_system),
+      weights: { priority: 1, conversion_24h: 1, load: 1 }, terminal_provider_id: "spacepayments"
+    )
+    router = RubyRouting::Case::Router.new(dataset, configuration: configuration)
+    decision = router.run.fetch(0)
+    attempt = decision.attempts.find { |candidate| candidate.decision == :selected }
+    {
+      selected: decision.selected_provider,
+      scores: attempt.selection.fetch(:scores),
+      traces: attempt.selection.fetch(:factors).transform_values do |values|
+        values.to_h { |evidence| [evidence.fetch(:factor).to_sym, evidence] }
+      end
+    }
   end
 end

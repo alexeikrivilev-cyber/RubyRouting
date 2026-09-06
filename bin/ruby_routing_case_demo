@@ -17,12 +17,21 @@ submission_profile = RubyRouting::Case::SubmissionProfile.load(
 provider_ids = dataset.providers.map(&:payment_system)
 terminal_provider_id = submission_profile.configuration.terminal_provider_id
 external_provider_ids = provider_ids.reject { |provider_id| provider_id == terminal_provider_id }
-target_values = [Rational(1, 5), Rational(1, 5), Rational(3, 5)]
-target_map = external_provider_ids.each_with_index.to_h { |provider_id, index| [provider_id, target_values.fetch(index, Rational(0, 1))] }
+count_target_values = [Rational(1, 5), Rational(1, 5), Rational(3, 5)]
+count_target_map = external_provider_ids.each_with_index.to_h do |provider_id, index|
+  [provider_id, count_target_values.fetch(index, Rational(0, 1))]
+end
+# Keep the strategy comparison honest: volume is a separately configured
+# portfolio objective, not a relabelled count target. The skew favours the
+# high-capacity provider while leaving the count objective unchanged.
+volume_target_values = [Rational(1, 10), Rational(1, 5), Rational(7, 10)]
+volume_target_map = external_provider_ids.each_with_index.to_h do |provider_id, index|
+  [provider_id, volume_target_values.fetch(index, Rational(0, 1))]
+end
 targets = RubyRouting::Case::TrafficTargets.new(
   provider_ids: provider_ids,
-  count_share: target_map,
-  volume_share: target_map
+  count_share: count_target_map,
+  volume_share: volume_target_map
 )
 
 strategies = %i[count volume].each_with_object({}) do |strategy, result|
@@ -59,7 +68,7 @@ simulation_router = RubyRouting::Case::Router.new(dataset, profile: submission_p
 simulation_decisions = simulation_router.run
 
 output = {
-  version: "0.4.2",
+  version: RubyRouting::Case::VERSION,
   dataset: {
     queue_operations: dataset.operations.length,
     queue_volume: dataset.operations.sum(&:amount),

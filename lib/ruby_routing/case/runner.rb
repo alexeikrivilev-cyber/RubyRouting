@@ -3,14 +3,15 @@
 module RubyRouting
   module Case
     class Run
-      attr_reader :dataset, :state, :traffic, :attempt_ledger, :settlement_ledger,
+      attr_reader :dataset, :state, :traffic, :primary_assignment_ledger, :attempt_ledger, :settlement_ledger,
                   :configuration, :profile, :simulator, :resolver, :decisions, :report
 
       def initialize(dataset:, state:, traffic:, configuration:, simulator:, resolver:, decisions:, report:,
-                     profile: nil, attempt_ledger: nil, settlement_ledger: nil)
+                     profile: nil, primary_assignment_ledger: nil, attempt_ledger: nil, settlement_ledger: nil)
         @dataset = dataset
         @state = state
         @traffic = traffic
+        @primary_assignment_ledger = primary_assignment_ledger
         @attempt_ledger = attempt_ledger
         @settlement_ledger = settlement_ledger
         @configuration = configuration
@@ -81,6 +82,7 @@ module RubyRouting
           dataset: dataset,
           state: router.state,
           traffic: router.traffic,
+          primary_assignment_ledger: router.primary_assignment_ledger,
           configuration: router.configuration,
           profile: router.profile,
           attempt_ledger: router.attempt_ledger,
@@ -90,7 +92,8 @@ module RubyRouting
           decisions: decisions,
           report: ReportBuilder.new(
             dataset, router.state, router.traffic, router.configuration, decisions,
-            profile: router.profile, attempt_ledger: router.attempt_ledger,
+            profile: router.profile, primary_assignment_ledger: router.primary_assignment_ledger,
+            attempt_ledger: router.attempt_ledger,
             settlement_ledger: router.settlement_ledger
           ).call
         )

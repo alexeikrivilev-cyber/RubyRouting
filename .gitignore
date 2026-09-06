@@ -1,5 +1,2 @@
 .bundle/
 vendor/bundle/
-Gemfile.lock
-routing_decisions_test.json
-routing_report_test.json

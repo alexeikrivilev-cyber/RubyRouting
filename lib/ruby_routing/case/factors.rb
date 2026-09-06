@@ -43,6 +43,22 @@ module RubyRouting
         "#{key}=#{raw}"
       end
 
+      # Optional factor inputs must be distinguishable from an explicit
+      # zero-valued policy. A missing input contributes no evidence; a typed
+      # zero remains real no-headroom evidence.
+      def configured_for?(provider_state:, min_turnover: nil, preferred_amount_range: nil)
+        true
+      end
+
+      # Built-in preference factors expose a stable unit interval so an
+      # unrelated eligible provider cannot redefine the meaning of a weight
+      # by changing the candidate-set min/max. Allocation factors override
+      # this when their raw value has a stable, dimensionally shared
+      # portfolio-loss range.
+      def normalization_bounds
+        [Rational(0, 1), Rational(1, 1)].freeze
+      end
+
     end
 
     class CountShareFactor < FactorDefinition
@@ -51,8 +67,17 @@ module RubyRouting
       end
 
       def raw(provider_state:, operation:, traffic:, as_of:, min_turnover: nil, preferred_amount_range: nil)
-        traffic.counterfactual(provider_id: provider_state.provider.payment_system, amount: operation.amount)
-          .fetch(:count).fetch(:deficit_after)
+        -traffic.post_decision_loss(
+          measure: :count, provider_id: provider_state.provider.payment_system, amount: operation.amount
+        )
+      end
+
+      def reason(raw)
+        "post-decision count portfolio L1 loss=#{-raw}"
+      end
+
+      def normalization_bounds
+        [Rational(-2, 1), Rational(0, 1)].freeze
       end
 
     end
@@ -63,8 +88,17 @@ module RubyRouting
       end
 
       def raw(provider_state:, operation:, traffic:, as_of:, min_turnover: nil, preferred_amount_range: nil)
-        traffic.counterfactual(provider_id: provider_state.provider.payment_system, amount: operation.amount)
-          .fetch(:volume).fetch(:deficit_after)
+        -traffic.post_decision_loss(
+          measure: :volume, provider_id: provider_state.provider.payment_system, amount: operation.amount
+        )
+      end
+
+      def reason(raw)
+        "post-decision volume portfolio L1 loss=#{-raw}"
+      end
+
+      def normalization_bounds
+        [Rational(-2, 1), Rational(0, 1)].freeze
       end
 
     end
@@ -136,20 +170,41 @@ module RubyRouting
 
       def raw(provider_state:, operation:, traffic:, as_of:, min_turnover: nil, preferred_amount_range: nil)
         provider = provider_state.provider
-        values = []
-        if provider.daily_amount_limit
-          values << Rational(provider.daily_amount_limit - provider_state.daily_approved_amount - operation.amount, provider.daily_amount_limit)
+        headroom = lambda do |limit, used|
+          # A zero capacity is a typed no-headroom boundary. Router normally
+          # hard-excludes it before scoring, but direct resolver callers must
+          # remain total and exact rather than dividing by zero.
+          next Rational(0, 1) if limit.nil? || limit.zero?
+
+          Rational(limit - used, limit)
         end
-        if provider.in_progress_count_limit
-          values << Rational(provider.in_progress_count_limit - provider_state.in_progress_count - 1, provider.in_progress_count_limit)
+        values = [
+          [provider.daily_amount_limit, provider_state.daily_approved_amount + operation.amount],
+          [provider.in_progress_count_limit, provider_state.in_progress_count + 1],
+          [provider.in_progress_amount_limit, provider_state.in_progress_amount + operation.amount]
+        ].filter_map do |limit, used|
+          next if limit.nil?
+
+          headroom.call(limit, used)
         end
-        if provider.in_progress_amount_limit
-          values << Rational(provider.in_progress_amount_limit - provider_state.in_progress_amount - operation.amount, provider.in_progress_amount_limit)
-        end
-        values.empty? ? Rational(1, 1) : values.sum / values.length
+        # An absent dimension contributes no evidence; average only typed
+        # capacity dimensions. An entirely absent policy is handled as
+        # non-discriminating by the resolver rather than as worst headroom.
+        values.empty? ? Rational(0, 1) : values.sum / values.length
       end
 
-      def reason(raw)
+      def configured_for?(provider_state:, min_turnover: nil, preferred_amount_range: nil)
+        provider = provider_state.provider
+        [
+          provider.daily_amount_limit,
+          provider.in_progress_count_limit,
+          provider.in_progress_amount_limit
+        ].any? { |limit| !limit.nil? }
+      end
+
+      def reason(raw, configured: true)
+        return "capacity limits absent; neutral/no load preference" unless configured
+
         "current daily/concurrent headroom=#{raw}"
       end
     end
@@ -160,12 +215,21 @@ module RubyRouting
       end
 
       def raw(provider_state:, operation:, traffic:, as_of:, min_turnover: nil, preferred_amount_range: nil)
-        return Rational(1, 1) unless provider_state.rpm_limit
+        # An absent optional RPM policy is not evidence of maximum headroom.
+        # Keep it at the neutral baseline so a partially configured provider
+        # cannot win merely because this factor has no input for it.
+        return Rational(0, 1) if provider_state.rpm_limit.nil? || provider_state.rpm_limit.zero?
 
         Rational(provider_state.rpm_limit - provider_state.rpm_count(as_of), provider_state.rpm_limit)
       end
 
-      def reason(raw)
+      def configured_for?(provider_state:, min_turnover: nil, preferred_amount_range: nil)
+        !provider_state.rpm_limit.nil?
+      end
+
+      def reason(raw, rpm_limit: nil)
+        return "RPM limit absent; neutral/no intensity preference" unless rpm_limit
+
         "rolling RPM headroom=#{raw}"
       end
     end
@@ -214,7 +278,7 @@ module RubyRouting
         unless values.is_a?(Hash)
           raise InputError, "routing weights must be a Hash"
         end
-        @values = values.each_with_object({}) do |(key, weight), result|
+        parsed = values.each_with_object({}) do |(key, weight), result|
           unless key.is_a?(String) || key.is_a?(Symbol)
             raise InputError, "routing weight factor keys must be String or Symbol"
           end
@@ -225,6 +289,10 @@ module RubyRouting
           end
           raise InputError, "weight #{factor} must be non-negative" if weight.negative?
           result[factor] = weight
+        end.freeze
+        @values = FactorRegistry::DEFINITIONS.each_with_object({}) do |definition, result|
+          factor = definition.key
+          result[factor] = parsed.fetch(factor) if parsed.key?(factor)
         end.freeze
         raise InputError, "at least one routing factor must have positive weight" if @values.values.none?(&:positive?)
         freeze
@@ -278,9 +346,7 @@ module RubyRouting
 
     class ConflictResolver
       PHASES = %i[primary fallback].freeze
-      ALLOCATION_FACTORS = %i[count volume].freeze
-
-      attr_reader :weights
+      attr_reader :weights, :min_turnovers, :preferred_amount_ranges
 
       def initialize(weights: RoutingWeights.new, min_turnovers: {}, preferred_amount_ranges: {})
         @weights = weights.is_a?(RoutingWeights) ? weights : RoutingWeights.new(weights)
@@ -346,6 +412,15 @@ module RubyRouting
             )]
           end
         end
+        configured_values = active_weights.each_with_object({}) do |(factor_key, _weight), result|
+          factor = FactorRegistry.fetch(factor_key)
+          result[factor_key] = candidates.to_h do |state|
+            [state.provider.payment_system, factor.configured_for?(
+              provider_state: state, min_turnover: @min_turnovers[state.provider.payment_system],
+              preferred_amount_range: @preferred_amount_ranges[state.provider.payment_system]
+            )]
+          end
+        end
         normalization_values = if normalization_candidates.equal?(candidates)
           raw_values
         else
@@ -360,16 +435,74 @@ module RubyRouting
             end
           end
         end
+        normalization_configured = if normalization_candidates.equal?(candidates)
+          configured_values
+        else
+          active_weights.each_with_object({}) do |(factor_key, _weight), result|
+            factor = FactorRegistry.fetch(factor_key)
+            result[factor_key] = normalization_candidates.to_h do |state|
+              [state.provider.payment_system, factor.configured_for?(
+                provider_state: state, min_turnover: @min_turnovers[state.provider.payment_system],
+                preferred_amount_range: @preferred_amount_ranges[state.provider.payment_system]
+              )]
+            end
+          end
+        end
+        # Zero-weight factors stay available as transparent trace data, but
+        # they are not allowed to define the Pareto frontier used to scale a
+        # positive objective. Otherwise a disabled business preference can
+        # alter a winner indirectly through normalization.
+        positive_factor_keys = active_weights.filter_map { |factor_key, weight| factor_key if weight.positive? }
+        normalization_provider_ids = non_dominated_provider_ids(
+          normalization_candidates, positive_factor_keys, normalization_values
+        )
         traces = candidates.each_with_object({}) do |state, result|
           provider_id = state.provider.payment_system
           result[provider_id] = active_weights.each_with_object([]) do |(factor_key, weight), evidence|
             factor = FactorRegistry.fetch(factor_key)
             raw = raw_values.fetch(factor_key).fetch(provider_id)
-            factor_values = normalization_values.fetch(factor_key).values
-            discriminating = factor_values.uniq.length > 1
-            normalized = discriminating ? normalize(raw, factor_values) : Rational(0, 1)
+            factor_values = factor.normalization_bounds
+            if factor_values
+              # Missing optional inputs are not hidden zero-quality evidence.
+              # Only typed values can make a factor discriminating; one
+              # configured candidate therefore cannot win solely because all
+              # other candidates omitted that optional policy.
+              available_values = normalization_values.fetch(factor_key).select do |candidate_id, _value|
+                normalization_configured.fetch(factor_key).fetch(candidate_id)
+              end.values
+              discriminating = available_values.uniq.length > 1
+            else
+              frontier_values = normalization_provider_ids.map do |normalization_provider_id|
+                normalization_values.fetch(factor_key).fetch(normalization_provider_id)
+              end
+              # A single Pareto-frontier point has no usable range for this
+              # factor (for example, one candidate strictly dominates another
+              # when priority is the only configured objective). Keep the full
+              # raw range in that case so the active factor does not disappear.
+              factor_values = if frontier_values.uniq.length > 1
+                frontier_values
+              else
+                normalization_values.fetch(factor_key).values
+              end
+              discriminating = factor_values.uniq.length > 1
+            end
+            configured = configured_values.fetch(factor_key).fetch(provider_id)
+            normalized = if configured && discriminating
+              normalize(raw, factor_values)
+            else
+              Rational(0, 1)
+            end
             reason = if factor_key == :amount
               factor.reason(raw, preferred_amount_range: @preferred_amount_ranges[provider_id])
+            elsif factor_key == :intensity
+              factor.reason(raw, rpm_limit: state.rpm_limit)
+            elsif factor_key == :load
+              configured = [
+                state.provider.daily_amount_limit,
+                state.provider.in_progress_count_limit,
+                state.provider.in_progress_amount_limit
+              ].any?
+              factor.reason(raw, configured: configured)
             else
               factor.reason(raw)
             end
@@ -381,8 +514,12 @@ module RubyRouting
           end.freeze
         end.freeze
         scores = traces.transform_values { |values| values.sum(&:contribution) }.freeze
+        # Once the configured composite score is equal, provider priority is
+        # not allowed to re-enter as an implicit business objective. If
+        # priority is configured, its factor contribution already participates
+        # in `scores`; otherwise the deterministic tie-break is provider id.
         selected = candidates.sort_by do |state|
-          [-(scores.fetch(state.provider.payment_system)), state.provider.priority, state.provider.payment_system]
+          [-(scores.fetch(state.provider.payment_system)), state.provider.payment_system]
         end.first.provider.payment_system
         Resolution.new(selected_provider: selected, scores: scores, traces: traces, phase: phase)
       end
@@ -397,16 +534,32 @@ module RubyRouting
       end
 
       def weights_for(phase)
-        return @weights.values unless phase == :fallback
+        @weights.values
+      end
 
-        @weights.values.reject { |factor_key, _weight| ALLOCATION_FACTORS.include?(factor_key) }
+      # Candidate-relative min/max scaling is retained for the actual
+      # opportunity frontier. A provider dominated on every active raw factor
+      # cannot change that scale merely by entering the live eligible set.
+      def non_dominated_provider_ids(states, factor_keys, values)
+        provider_ids = states.map { |state| state.provider.payment_system }
+        provider_ids.reject do |provider_id|
+          provider_ids.any? do |other_id|
+            next false if other_id == provider_id
+
+            factor_keys.all? do |factor_key|
+              values.fetch(factor_key).fetch(other_id) >= values.fetch(factor_key).fetch(provider_id)
+            end && factor_keys.any? do |factor_key|
+              values.fetch(factor_key).fetch(other_id) > values.fetch(factor_key).fetch(provider_id)
+            end
+          end
+        end.freeze
       end
 
       def normalize(raw, values)
         min = values.min
         max = values.max
-
-        Rational(raw - min, max - min)
+        scaled = Rational(raw - min, max - min)
+        [[scaled, Rational(0, 1)].max, Rational(1, 1)].min
       end
 
     end
