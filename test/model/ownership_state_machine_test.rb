@@ -40,8 +40,10 @@ class OwnershipStateMachineTest < Minitest::Test
             status: status,
             attribution: status == :terminal_payout_failure ? :recipient : :provider
           )
-          coordinator.apply_observation(observation(current_commit, outcome, step_index))
-          model.observe(status)
+          coordinator.apply_observation(
+            observation(current_commit, outcome, step_index)
+          )
+          model.observe(status, owning_completion: false)
         end
 
         snapshot = coordinator.payout_snapshot(intent.id)

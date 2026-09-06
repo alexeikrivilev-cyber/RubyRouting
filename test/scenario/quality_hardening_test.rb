@@ -36,7 +36,7 @@ class QualityHardeningTest < Minitest::Test
         money: RubyRouting::Money.new(100, "RUB")
       )
       commit = coordinator.prepare_and_commit_decision(intent: payout, policy: routing_policy)
-      coordinator.mark_attempt_started(commit)
+      interaction_token = coordinator.mark_attempt_started(commit)
       coordinator.apply_observation(
         RubyRouting::ProviderObservation.new(
           observation_id: "quality-window-observation-#{index}",
@@ -45,7 +45,8 @@ class QualityHardeningTest < Minitest::Test
           operation_id: commit.proposal.operation_id,
           attempt_id: commit.proposal.attempt_id,
           outcome: outcome
-        )
+        ),
+        interaction_token: interaction_token
       )
     end
 
@@ -276,7 +277,7 @@ class QualityHardeningTest < Minitest::Test
         routing_context: route
       )
       commit = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-      coordinator.mark_attempt_started(commit)
+      interaction_token = coordinator.mark_attempt_started(commit)
       coordinator.apply_observation(
         RubyRouting::ProviderObservation.new(
           observation_id: "quality-mixed-age-old-observation-#{index}",
@@ -286,7 +287,8 @@ class QualityHardeningTest < Minitest::Test
           attempt_id: commit.proposal.attempt_id,
           outcome: outcome,
           observed_at: clock.now
-        )
+        ),
+        interaction_token: interaction_token
       )
     end
 
@@ -297,7 +299,7 @@ class QualityHardeningTest < Minitest::Test
       routing_context: route
     )
     commit = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(commit)
+    interaction_token = coordinator.mark_attempt_started(commit)
     coordinator.apply_observation(
       RubyRouting::ProviderObservation.new(
         observation_id: "quality-mixed-age-fresh-observation",
@@ -307,7 +309,8 @@ class QualityHardeningTest < Minitest::Test
         attempt_id: commit.proposal.attempt_id,
         outcome: RubyRouting::NormalizedOutcome.temporary_provider_failure(attribution: :provider),
         observed_at: clock.now
-      )
+      ),
+      interaction_token: interaction_token
     )
 
     as_of = clock.now
@@ -357,7 +360,7 @@ class QualityHardeningTest < Minitest::Test
         routing_context: route
       )
       commit = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-      coordinator.mark_attempt_started(commit)
+      interaction_token = coordinator.mark_attempt_started(commit)
       outcome = if outcome_kind == :success
         RubyRouting::NormalizedOutcome.success(attribution: :provider)
       else
@@ -374,7 +377,8 @@ class QualityHardeningTest < Minitest::Test
           operation_id: commit.proposal.operation_id,
           attempt_id: commit.proposal.attempt_id,
           outcome: outcome
-        )
+        ),
+        interaction_token: interaction_token
       )
     end
 

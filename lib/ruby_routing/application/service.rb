@@ -5,7 +5,7 @@ module RubyRouting
     # Stable product-facing facade. Transport adapters (HTTP, CLI, demo) use
     # this surface and therefore cannot silently create a second routing path.
     class Service
-      attr_reader :commands, :queries
+      attr_reader :commands, :queries, :recovery_executor
 
       def initialize(coordinator:, providers:, policy_registry: nil, configuration_store: nil)
         unless coordinator.is_a?(RubyRouting::State::Coordinator)
@@ -67,6 +67,8 @@ module RubyRouting
             policy_registry: @policy_registry,
             configuration_store: @configuration_store
           )
+          @recovery_executor = RubyRouting::Application::RecoveryExecutor.new(service: self)
+          @orchestrator = orchestrator
           @policy_registry.__send__(:bind_application!, self)
         rescue StandardError
           @policy_registry.__send__(:release_application_binding!, self)
@@ -95,6 +97,10 @@ module RubyRouting
 
       def apply_configuration(configuration)
         commands.apply_configuration(configuration)
+      end
+
+      def provider_adapter_ids
+        @orchestrator.provider_adapter_ids
       end
     end
   end

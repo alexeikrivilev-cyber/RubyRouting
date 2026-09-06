@@ -32,6 +32,20 @@ Rake::TestTask.new(:fault) do |task|
   task.verbose = true
 end
 
+Rake::TestTask.new(:case) do |task|
+  task.libs << "lib" << "test"
+  task.pattern = "test/case/**/*_test.rb"
+  task.verbose = true
+end
+
+task :finalize_submission do
+  ruby "-Ilib", "bin/finalize_submission", "--queue", "data/operations_queue_10.json"
+end
+
+task :case_demo do
+  ruby "-Ilib", "bin/ruby_routing_case_demo"
+end
+
 task :benchmark do
   ruby "-Ilib", "benchmark/baseline.rb"
 end

@@ -16,6 +16,8 @@ module RubyRouting
       MAX_QUERY_STRING_BYTES = 16_384
       MAX_AUDIT_PAGE_SIZE = 256
       MAX_AUDIT_OFFSET = 1_000_000
+      MAX_RECOVERY_BATCH_SIZE = RubyRouting::Application::RecoveryExecutor::MAX_BATCH_SIZE
+      DEFAULT_RECOVERY_DUE_WORK_LIMIT = MAX_RECOVERY_BATCH_SIZE
       ANALYTICS_QUERY_FIELDS = %w[
         policy_id policy_epoch policy_scope window cohort measure currency provider_id
         role outcome_class attribution
@@ -67,8 +69,17 @@ module RubyRouting
           error: "no_matching_policy",
           resolution: error.resolution.to_h
         )
+      rescue RubyRouting::Application::ConfigurationCompilationError => error
+        json_response(
+          422,
+          error: "invalid_configuration",
+          status: error.compilation.status,
+          diagnostics: error.compilation.diagnostics.map(&:to_h)
+        )
       rescue RubyRouting::ConfigurationDriftError
         json_response(503, error: "configuration_drift")
+      rescue RubyRouting::ProviderContractError
+        json_response(502, error: "provider_contract_error")
       rescue JSON::ParserError, RequestError, ArgumentError
         json_response(400, error: "invalid_request")
       rescue KeyError
@@ -96,8 +107,11 @@ module RubyRouting
           return analytics(env) if method == "GET"
         when ["v1", "configuration"]
           return configuration(env) if method == "GET"
+          return put_configuration(env) if method == "PUT"
         when ["v1", "recovery", "due-work"]
           return due_recovery_work(env) if method == "GET"
+        when ["v1", "recovery", "run"]
+          return recovery_run(env) if method == "POST"
         when ["v1", "providers"]
           return providers(env) if method == "GET"
         when ["v1", "quality"]
@@ -282,24 +296,66 @@ module RubyRouting
         }
       end
 
+      def put_configuration(env)
+        reject_unknown_query_parameters!(query_parameters(env), allowed: [])
+        configuration = RubyRouting::Application::RoutingConfiguration.decode(json_body(env))
+        configuration.compile.raise_if_invalid!
+        @service.apply_configuration(configuration)
+        snapshot = @service.queries.configuration_snapshot
+        {
+          body: {
+            revision: snapshot.revision,
+            status: @service.queries.configuration_status,
+            configuration: snapshot.configuration.to_h,
+            diagnostics: snapshot.diagnostics.map(&:to_h)
+          }
+        }
+      end
+
       def due_recovery_work(env)
         query = query_parameters(env)
-        reject_unknown_query_parameters!(query, allowed: ["as_of"])
+        reject_unknown_query_parameters!(query, allowed: %w[as_of limit])
         as_of = query.key?("as_of") ? Time.iso8601(query.fetch("as_of")) : nil
-        work = if query.key?("as_of")
-          @service.queries.due_work(as_of: as_of)
-        else
-          @service.queries.due_work
-        end
+        limit = bounded_query_integer(
+          query["limit"],
+          default: DEFAULT_RECOVERY_DUE_WORK_LIMIT,
+          minimum: 1,
+          maximum: MAX_RECOVERY_BATCH_SIZE
+        )
+        scan_time = as_of || @service.queries.current_time
+        work = @service.queries.due_work(as_of: scan_time, limit: limit)
         body = { due_work: work.map(&:to_h) }
         body[:as_of] = as_of unless as_of.nil?
         { body: body }
       end
 
+      def recovery_run(env)
+        reject_unknown_query_parameters!(query_parameters(env), allowed: [])
+        body = json_body(env)
+        reject_unknown_body_keys!(body, allowed: ["limit"])
+        limit = body.fetch("limit") do
+          raise RequestError, "recovery run limit is required"
+        end
+        unless limit.is_a?(Integer) && !limit.is_a?(TrueClass) && limit >= 0 && limit <= MAX_RECOVERY_BATCH_SIZE
+          raise RequestError, "recovery run limit is out of bounds"
+        end
+
+        { body: @service.recovery_executor.run(limit: limit).to_h }
+      end
+
       def providers(env)
         query = query_parameters(env)
         reject_unknown_query_parameters!(query, allowed: [])
-        { body: { providers: @service.queries.providers.map(&:to_h) } }
+        adapter_ids = @service.provider_adapter_ids
+        {
+          body: {
+            providers: @service.queries.providers.map do |opportunity|
+              opportunity.to_h.merge(
+                adapter_available: adapter_ids.include?(opportunity.provider_id)
+              ).freeze
+            end.freeze
+          }
+        }
       end
 
       def quality(env)
@@ -499,8 +555,6 @@ module RubyRouting
         {
           status: outcome.status,
           attribution: outcome.attribution,
-          provider_reference: outcome.provider_reference,
-          message: outcome.message,
           safe_to_release: outcome.safe_to_release?
         }
       end
@@ -547,7 +601,7 @@ module RubyRouting
         when Array
           value.map { |nested| json_safe(nested) }
         when Rational
-          { "numerator" => value.numerator, "denominator" => value.denominator }
+          "#{value.numerator}/#{value.denominator}"
         when RubyRouting::Money
           money_payload(value)
         when Time

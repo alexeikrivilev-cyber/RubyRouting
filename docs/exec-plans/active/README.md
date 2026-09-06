@@ -1,9 +1,12 @@
-# Current ExecPlan
+# Active ExecPlans
 
-Current pre-TZ execution authority:
+No implementation plan is active: v0.4.1 / SPEC-017 is complete. Its closure
+plan is archived at `../completed/submission-policy-activation-contract-closure.md`.
 
-- `pre-tz-economic-effect-safety.md` — **v0.3.5 Pre-TZ Economic Effect Safety & Adapter Readiness — ACTIVE**.
+Opening baseline: `0187bf2558d58a52dfdb27e76694d6323addbcd6`.
 
-Only the current execution plan belongs in this directory. The completed v0.3.4 plan is archived under `../completed/pre-tz-adversarial-edge-hardening.md` and must not act as a competing stop condition.
+The v0.4.0 plan remains archived at `../completed/authoritative-tz-submission-engine.md` and is baseline evidence, not the current work queue.
 
-Fresh agents follow the read order in `AGENTS.md`, inspect exact `main` before coding, start every v0.3.5 slice from a falsifiable hypothesis/measurement, and use the independent skeptical closure rule in `docs/COMPLETION_POLICY.md` before any completion claim.
+Fresh agents follow `README.md` → `AGENTS.md` → `docs/AUTHORITY.md` → the
+authoritative current specification → the completed closure evidence. Do not
+create a second active plan for the completed version.

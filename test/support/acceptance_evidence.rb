@@ -383,6 +383,246 @@ module TestSupport
     ],
     "PTZ4-104" => [
       "test/scenario/case_fidelity_campaign_test.rb#test_public_surfaces_preserve_every_multi_attempt_history_entry_after_restart"
+    ],
+    "PTZ5-001" => [
+      "test/concurrency/economic_effect_safety_test.rb#test_safe_release_callback_cannot_open_provider_b_while_primary_initiate_is_live"
+    ],
+    "PTZ5-002" => [
+      "test/concurrency/economic_effect_safety_test.rb#test_safe_release_callback_cannot_open_provider_b_while_same_provider_retry_is_live"
+    ],
+    "PTZ5-003" => [
+      "test/concurrency/economic_effect_safety_test.rb#test_safe_temporary_release_callback_cannot_open_provider_b_while_primary_initiate_is_live",
+      "test/concurrency/economic_effect_safety_test.rb#test_definitely_not_sent_late_completion_allows_fallback_only_after_live_call_ends",
+      "test/concurrency/economic_effect_safety_test.rb#test_adapter_exception_releases_fence_only_after_live_initiate_ends",
+      "test/concurrency/economic_effect_safety_test.rb#test_ambiguous_late_completion_does_not_open_fallback_after_live_call_ends",
+      "test/concurrency/economic_effect_safety_test.rb#test_terminal_callback_during_live_initiate_stops_without_opening_fallback"
+    ],
+    "PTZ5-004" => [
+      "test/concurrency/economic_effect_safety_test.rb#test_live_read_only_resolution_fences_fresh_assignment_after_release"
+    ],
+    "PTZ5-101" => [
+      "test/concurrency/economic_effect_safety_test.rb#test_authoritative_out_of_order_callbacks_do_not_regress_live_money_movement",
+      "test/concurrency/economic_effect_safety_test.rb#test_safe_release_callback_cannot_open_provider_b_while_primary_initiate_is_live",
+      "test/scenario/coordinator_safety_test.rb#test_callback_before_dispatch_invalidates_pending_dispatch_token",
+      "test/scenario/coordinator_safety_test.rb#test_callback_before_resolution_invalidates_pending_resolution_token"
+    ],
+    "PTZ5-102" => [
+      "test/scenario/orchestrator_simulator_test.rb#test_explicit_transport_error_is_conservatively_ambiguous_and_resolvable",
+      "test/scenario/orchestrator_simulator_test.rb#test_definitely_not_sent_transport_failure_releases_ownership",
+      "test/scenario/orchestrator_simulator_test.rb#test_raw_adapter_timeout_is_not_guessed_as_definitely_not_sent",
+      "test/scenario/orchestrator_simulator_test.rb#test_unclassified_adapter_fault_surfaces_without_losing_resumable_operation"
+    ],
+    "PTZ5-103" => [
+      "test/scenario/durable_crash_campaign_test.rb#test_crash_after_safe_release_restarts_with_fresh_fallback",
+      "test/scenario/restart_recovery_test.rb#test_restart_with_unknown_owner_never_unlocks_cross_provider_fallback",
+      "test/scenario/restart_recovery_test.rb#test_provider_catalog_removal_survives_restart_without_losing_admission_history",
+      "test/scenario/coordinator_safety_test.rb#test_stale_committed_decision_cannot_start_after_ownership_release",
+      "test/concurrency/due_recovery_workers_test.rb#test_concurrent_due_workers_start_one_status_resolution_after_restart"
+    ],
+    "PTZ5-104" => [
+      "test/scenario/case_fidelity_campaign_test.rb#test_case_campaign_preserves_count_volume_fallback_unknown_and_restart",
+      "test/scenario/case_fidelity_campaign_test.rb#test_public_surfaces_preserve_every_multi_attempt_history_entry_after_restart",
+      "test/scenario/deterministic_scenario_matrix_test.rb#test_canonical_orchestrator_matrix_preserves_lifecycle_safety",
+      "test/scenario/demo_scenario_test.rb#test_demo_is_explicitly_simulated_and_exercises_safe_fallback",
+      "test/scenario/long_history_replay_test.rb#test_long_seeded_history_preserves_live_replay_and_restart_conservation"
+    ],
+    "PTZ5-105" => [
+      "test/scenario/history_performance_evidence_test.rb#test_bounded_history_profile_measures_density_analytics_and_restore",
+      "test/scenario/history_performance_evidence_test.rb#test_bounded_profile_measures_concurrent_canonical_throughput"
+    ],
+    "PTZ5-106" => [
+      "test/scenario/projection_replay_test.rb#test_stale_authoritative_observation_cannot_change_health_projection",
+      "test/scenario/projection_replay_test.rb#test_late_authoritative_sequence_cursor_prevents_older_health_evidence",
+      "test/unit/observation_ledger_test.rb#test_restore_rejects_health_evidence_that_violates_authoritative_order",
+      "test/unit/observation_ledger_test.rb#test_restore_keeps_an_exact_duplicate_idempotent_after_a_newer_authoritative_event"
+    ],
+    "S10-001" => [
+      "test/concurrency/economic_effect_safety_test.rb#test_economically_decisive_live_resolution_cannot_open_provider_b_before_late_success"
+    ],
+    "S10-002" => [
+      "test/scenario/durable_crash_campaign_test.rb#test_fresh_process_after_independent_release_without_completion_cannot_start_provider_b",
+      "test/scenario/durable_crash_campaign_test.rb#test_fresh_process_after_held_release_and_ttl_expiry_keeps_reconciliation_owner"
+    ],
+    "S10-003" => [
+      "test/concurrency/economic_effect_safety_test.rb#test_raw_timeout_after_independent_release_does_not_open_cross_provider_fallback",
+      "test/concurrency/economic_effect_safety_test.rb#test_adapter_exception_releases_fence_only_after_live_initiate_ends",
+      "test/concurrency/economic_effect_safety_test.rb#test_status_lookup_definitely_not_sent_does_not_release_original_unknown",
+      "test/concurrency/economic_effect_safety_test.rb#test_direct_definitely_not_sent_resolution_observation_cannot_release_original_unknown",
+      "test/concurrency/economic_effect_safety_test.rb#test_live_status_lookup_transport_variants_keep_fallback_closed_after_callback"
+    ],
+    "S10-004" => [
+      "test/concurrency/economic_effect_safety_test.rb#test_owning_completion_closes_external_causal_hold_when_provider_reuses_observation_id",
+      "test/concurrency/economic_effect_safety_test.rb#test_owning_completion_identity_ignores_local_interaction_duration",
+      "test/concurrency/economic_effect_safety_test.rb#test_transport_observation_ids_distinguish_initiate_and_resolution_exchanges",
+      "test/concurrency/economic_effect_safety_test.rb#test_any_external_safe_release_retains_owner_until_live_resolution_is_classified",
+      "test/unit/observation_ledger_test.rb#test_restore_rejects_causal_hold_for_a_non_current_operation",
+      "test/unit/replay_test.rb#test_lifecycle_replay_rejects_causal_completion_after_ownership_release",
+      "test/unit/replay_test.rb#test_lifecycle_replay_canonicalizes_padded_causal_completion_identity",
+      "test/concurrency/economic_effect_safety_test.rb#test_economically_decisive_live_resolution_cannot_open_provider_b_before_late_success",
+      "test/concurrency/economic_effect_safety_test.rb#test_safe_release_after_ttl_keeps_reconciliation_blocked_owner_without_owning_completion"
+    ],
+    "S10-101" => [
+      "test/scenario/configuration_ingress_test.rb#test_canonical_count_configuration_round_trips_through_hash_and_json",
+      "test/scenario/configuration_ingress_test.rb#test_canonical_volume_configuration_preserves_exact_rational_values",
+      "test/scenario/configuration_ingress_test.rb#test_decoder_rejects_unknown_duplicate_and_malformed_transport_fields",
+      "test/scenario/configuration_ingress_test.rb#test_decoded_configuration_publishes_only_through_commands_and_keeps_diagnostics"
+    ],
+    "S10-102" => [
+      "test/scenario/recovery_executor_test.rb#test_one_pass_is_sorted_bounded_and_uses_canonical_resume",
+      "test/scenario/recovery_executor_test.rb#test_zero_limit_is_a_bounded_noop_and_invalid_limits_fail_closed",
+      "test/scenario/recovery_executor_test.rb#test_provider_exception_is_structured_without_becoming_a_payout_outcome",
+      "test/scenario/recovery_executor_test.rb#test_duplicate_executor_workers_share_existing_coordinator_authority"
+    ],
+    "S10-103" => [
+      "test/scenario/operator_composition_campaign_test.rb#test_decoded_configuration_drives_count_volume_fallback_executor_and_restart"
+    ],
+    "S11-001" => [
+      "test/scenario/recovery_executor_test.rb#test_durable_corruption_aborts_the_pass_instead_of_becoming_an_item_error",
+      "test/scenario/recovery_executor_test.rb#test_programming_failure_aborts_the_pass_instead_of_becoming_an_item_error",
+      "test/scenario/recovery_executor_test.rb#test_configuration_drift_aborts_the_pass_instead_of_becoming_an_item_error",
+      "test/scenario/recovery_executor_test.rb#test_typed_provider_failure_does_not_hide_independent_due_work"
+    ],
+    "S11-002" => [
+      "test/scenario/recovery_executor_test.rb#test_future_scan_timestamp_is_rejected_instead_of_misrepresenting_execution_time",
+      "test/scenario/recovery_executor_test.rb#test_scan_timestamp_is_not_reported_as_the_execution_timestamp"
+    ],
+    "S11-003" => [
+      "test/concurrency/economic_effect_safety_test.rb#test_unknown_without_resolution_capability_keeps_owner_after_independent_safe_release",
+      "test/concurrency/economic_effect_safety_test.rb#test_owning_completion_closes_external_causal_hold_when_provider_reuses_observation_id",
+      "test/concurrency/economic_effect_safety_test.rb#test_economically_decisive_live_resolution_cannot_open_provider_b_before_late_success"
+    ],
+    "S11-004" => [
+      "test/unit/observation_ledger_test.rb#test_restore_uses_the_same_identity_rule_as_live_observation",
+      "test/unit/observation_ledger_test.rb#test_causal_hold_blocks_safe_release_until_owning_completion",
+      "test/unit/replay_test.rb#test_lifecycle_replay_rejects_causal_completion_after_ownership_release",
+      "test/concurrency/economic_effect_safety_test.rb#test_unknown_without_resolution_capability_keeps_owner_after_independent_safe_release"
+    ],
+    "S11-101" => [
+      "test/scenario/http_app_test.rb#test_http_put_configuration_uses_the_canonical_decoder_and_application_publication",
+      "test/scenario/http_app_test.rb#test_http_configuration_surface_round_trips_exact_rational_values",
+      "test/scenario/http_app_test.rb#test_http_put_configuration_rejects_malformed_input_without_mutating_the_active_generation",
+      "test/scenario/http_app_test.rb#test_http_put_configuration_returns_bounded_compiler_diagnostics_without_partial_publication"
+    ],
+    "S11-102" => [
+      "test/scenario/http_app_test.rb#test_http_recovery_run_delegates_to_the_bounded_executor_and_resolves_the_pinned_provider",
+      "test/scenario/http_app_test.rb#test_http_recovery_run_rejects_unbounded_or_malformed_controls_without_execution",
+      "test/scenario/http_app_test.rb#test_http_recovery_run_does_not_expose_raw_provider_exception_messages",
+      "test/scenario/recovery_executor_test.rb#test_zero_limit_is_a_bounded_noop_and_invalid_limits_fail_closed"
+    ],
+    "S11-103" => [
+      "test/scenario/demo_scenario_test.rb#test_case_demo_reports_canonical_count_volume_fallback_unknown_recovery_and_analytics",
+      "test/scenario/demo_scenario_test.rb#test_case_demo_report_is_deterministic_and_contains_no_runtime_timestamps"
+    ],
+    "S11-104" => [
+      "test/scenario/decision_explanation_test.rb#test_explanation_describes_held_safe_release_without_leaking_causal_hold",
+      "test/scenario/decision_explanation_test.rb#test_application_and_http_explanation_projects_routing_evidence_without_recipient_data"
+    ],
+    "S12-001" => [
+      "test/scenario/orchestrator_simulator_test.rb#test_malformed_provider_observation_surfaces_without_synthetic_unknown",
+      "test/scenario/recovery_executor_test.rb#test_post_return_provider_validation_failure_aborts_instead_of_becoming_an_item_error",
+      "test/scenario/orchestrator_simulator_test.rb#test_raw_adapter_timeout_is_not_guessed_as_definitely_not_sent"
+    ],
+    "S12-002" => [
+      "test/scenario/http_app_test.rb#test_http_due_work_is_bounded_by_default_and_explicit_limit",
+      "test/scenario/http_app_test.rb#test_http_due_work_rejects_invalid_bounds_before_querying"
+    ],
+    "S12-003" => [
+      "test/scenario/demo_scenario_test.rb#test_case_demo_isolates_count_vs_volume_on_the_same_skewed_workload",
+      "test/scenario/case_fidelity_campaign_test.rb#test_case_campaign_preserves_count_volume_fallback_unknown_and_restart"
+    ],
+    "S12-004" => [
+      "test/scenario/configuration_ingress_test.rb#test_configuration_export_is_the_explicit_fresh_bootstrap_input",
+      "test/scenario/configuration_crash_consistency_test.rb#test_fresh_process_crash_after_provider_publication_restarts_only_with_a_coherent_generation"
+    ],
+    "S12-005" => [
+      "test/scenario/http_app_test.rb#test_http_provider_projection_exposes_configured_but_uncallable_adapters",
+      "test/scenario/allocation_opportunity_test.rb#test_missing_adapter_is_operational_exclusion_not_functional_cohort_loss"
+    ],
+    "S12-006" => [
+      "test/acceptance_traceability_test.rb#test_every_spec_acceptance_scenario_maps_to_an_executable_test_method"
+    ],
+    "PTZ9-001" => [
+      "test/scenario/http_app_test.rb#test_http_does_not_report_post_provider_contract_failure_as_invalid_request"
+    ],
+    "PTZ9-002" => [
+      "test/scenario/recovery_executor_test.rb#test_raw_initiate_failure_becomes_immediate_due_work_without_changing_identity",
+      "test/scenario/recovery_executor_test.rb#test_raw_resolve_failure_stays_due_for_executor_and_retries_same_operation",
+      "test/scenario/recovery_executor_test.rb#test_raw_provider_failure_without_recovery_capability_is_not_advertised_as_due",
+      "test/scenario/restart_recovery_test.rb#test_fresh_process_discovers_and_resumes_durable_raw_provider_failure"
+    ],
+    "PTZ9-003" => [
+      "test/scenario/demo_scenario_test.rb#test_case_demo_isolates_count_vs_volume_on_the_same_skewed_workload",
+      "test/scenario/demo_scenario_test.rb#test_case_demo_uses_distinct_fresh_runtimes_for_strategy_evidence"
+    ],
+    "PTZ9-004" => [
+      "test/scenario/provider_adapter_contract_test.rb#test_universal_executable_port_is_rejected_before_any_payout_work",
+      "test/scenario/provider_adapter_contract_test.rb#test_idempotent_retry_capability_uses_initiate_and_never_resolve",
+      "test/scenario/recovery_executor_test.rb#test_raw_provider_failure_without_recovery_capability_is_not_advertised_as_due"
+    ],
+    "PTZ9-005" => [
+      "test/acceptance_traceability_test.rb#test_every_spec_acceptance_scenario_maps_to_an_executable_test_method"
+    ],
+    "PTZ9-006" => [
+      "test/unit/replay_test.rb#test_lifecycle_replay_rejects_provider_failure_evidence_that_does_not_match_current_operation",
+      "test/scenario/recovery_executor_test.rb#test_raw_resolve_failure_stays_due_for_executor_and_retries_same_operation"
+    ],
+    "PTZ9-007" => [
+      "test/scenario/orchestrator_simulator_test.rb#test_not_implemented_adapter_fault_releases_guard_without_provider_failure_marker"
+    ],
+    "PTZ9-008" => [
+      "test/scenario/orchestrator_simulator_test.rb#test_post_return_duration_processing_error_is_not_provider_contract_or_recovery",
+      "test/scenario/orchestrator_simulator_test.rb#test_application_fault_after_valid_provider_return_is_not_provider_contract_error"
+    ],
+    "PTZ10-001" => [
+      "test/scenario/http_app_test.rb#test_http_payout_surfaces_allowlist_outcomes_but_preserve_internal_provider_evidence"
+    ],
+    "PTZ10-002" => [
+      "test/scenario/recovery_executor_test.rb#test_historical_due_work_does_not_expose_a_future_raw_failure_marker",
+      "test/scenario/recovery_executor_test.rb#test_historical_due_work_does_not_expose_a_future_reconciliation_block"
+    ],
+    "PTZ10-003" => [
+      "test/scenario/durable_crash_campaign_test.rb#test_fresh_process_after_independent_release_without_completion_cannot_start_provider_b",
+      "test/scenario/recovery_executor_test.rb#test_fresh_recovery_executor_discovers_crashed_dispatching_status_lookup",
+      "test/scenario/recovery_executor_test.rb#test_fresh_recovery_executor_discovers_crashed_dispatching_idempotent_retry",
+      "test/scenario/recovery_executor_test.rb#test_crashed_dispatching_without_recovery_capability_stays_pinned_and_not_due",
+      "test/concurrency/due_recovery_workers_test.rb#test_concurrent_recovery_executors_start_one_restart_resolution"
+    ],
+    "PTZ10-004" => [
+      "test/scenario/orchestrator_simulator_test.rb#test_malformed_provider_observation_surfaces_without_synthetic_unknown",
+      "test/scenario/orchestrator_simulator_test.rb#test_raw_adapter_timeout_is_not_guessed_as_definitely_not_sent",
+      "test/scenario/orchestrator_simulator_test.rb#test_application_fault_after_valid_provider_return_is_not_provider_contract_error",
+      "test/scenario/http_app_test.rb#test_http_reports_post_return_application_fault_as_internal_error"
+    ],
+    "PTZ10-005" => [
+      "test/scenario/orchestrator_simulator_test.rb#test_fatal_apply_failure_does_not_strand_the_process_local_interaction_guard",
+      "test/scenario/durable_crash_campaign_test.rb#test_fatal_apply_process_death_restarts_from_durable_attempt_without_provider_b"
+    ],
+    "PTZ10-006" => [
+      "test/scenario/demo_scenario_test.rb#test_case_demo_isolates_count_vs_volume_on_the_same_skewed_workload",
+      "test/scenario/demo_scenario_test.rb#test_case_demo_uses_distinct_fresh_runtimes_for_strategy_evidence"
+    ],
+    "PTZ10-007" => [
+      "test/acceptance_traceability_test.rb#test_every_spec_acceptance_scenario_maps_to_an_executable_test_method"
+    ],
+    "PTZ11-001" => [
+      "test/scenario/recovery_executor_test.rb#test_post_return_contract_failure_is_not_same_process_restart_work",
+      "test/scenario/recovery_executor_test.rb#test_post_return_application_failure_is_not_same_process_restart_work",
+      "test/scenario/recovery_executor_test.rb#test_fatal_adapter_failure_is_live_only_but_fresh_process_recovery_remains_discoverable",
+      "test/scenario/orchestrator_simulator_test.rb#test_fatal_apply_failure_does_not_strand_the_process_local_interaction_guard",
+      "test/scenario/orchestrator_simulator_test.rb#test_not_implemented_adapter_fault_releases_guard_without_provider_failure_marker"
+    ],
+    "PTZ11-002" => [
+      "test/scenario/recovery_executor_test.rb#test_raw_resolve_failure_respects_resolution_budget_in_due_work_and_restart",
+      "test/scenario/recovery_executor_test.rb#test_raw_resolve_failure_uses_backoff_for_the_next_allowed_interaction",
+      "test/scenario/recovery_executor_test.rb#test_restart_recovery_respects_zero_resolution_budget_before_provider_io"
+    ],
+    "PTZ11-003" => [
+      "test/scenario/http_app_test.rb#test_http_raw_provider_failure_is_generic_non_leaking_and_keeps_canonical_due_work"
+    ],
+    "PTZ11-004" => [
+      "test/scenario/recovery_executor_test.rb#test_due_work_as_of_is_not_historical_time_travel",
+      "test/scenario/recovery_executor_test.rb#test_historical_due_work_does_not_expose_a_future_raw_failure_marker",
+      "test/scenario/recovery_executor_test.rb#test_historical_due_work_does_not_expose_a_future_reconciliation_block"
     ]
   }.freeze
 end

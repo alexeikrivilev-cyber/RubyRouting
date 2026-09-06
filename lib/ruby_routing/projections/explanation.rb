@@ -60,11 +60,12 @@ module RubyRouting
         :conflicts,
         :reconciliation_blocked,
         :next_action,
-        :next_action_at
+        :next_action_at,
+        :disposition
       ) do
         def initialize(status:, unresolved:, latest_observation:, observations:, settlement:,
                        reversals:, conflicts:, reconciliation_blocked:, next_action:,
-                       next_action_at:)
+                       next_action_at:, disposition:)
           super(
             status: status,
             unresolved: unresolved,
@@ -75,7 +76,8 @@ module RubyRouting
             conflicts: RubyRouting::ImmutableData.deep_freeze(conflicts),
             reconciliation_blocked: RubyRouting::ImmutableData.deep_freeze(reconciliation_blocked),
             next_action: next_action,
-            next_action_at: next_action_at&.utc&.freeze
+            next_action_at: next_action_at&.utc&.freeze,
+            disposition: disposition
           )
         end
 
@@ -90,7 +92,8 @@ module RubyRouting
             conflicts: conflicts,
             reconciliation_blocked: reconciliation_blocked,
             next_action: next_action,
-            next_action_at: next_action_at
+            next_action_at: next_action_at,
+            disposition: disposition
           }.freeze
         end
       end
@@ -143,7 +146,8 @@ module RubyRouting
             conflicts: conflicts,
             reconciliation_blocked: reconciliation_blocked,
             next_action: current_snapshot&.next_action,
-            next_action_at: current_snapshot&.next_action_at
+            next_action_at: current_snapshot&.next_action_at,
+            current_operation_id: current_snapshot&.ownership&.operation_id
           )
         )
       end
@@ -316,7 +320,7 @@ module RubyRouting
         end
 
         def result_for(current_status:, observations:, settlement:, reversals:, conflicts:,
-                       reconciliation_blocked:, next_action:, next_action_at:)
+                       reconciliation_blocked:, next_action:, next_action_at:, current_operation_id:)
           status = current_status || if reversals.any?
             :reversed
           elsif settlement
@@ -338,8 +342,24 @@ module RubyRouting
             conflicts: conflicts,
             reconciliation_blocked: reconciliation_blocked,
             next_action: next_action,
-            next_action_at: next_action_at
+            next_action_at: next_action_at,
+            disposition: disposition_for(
+              status: status,
+              latest_observation: observations.last,
+              reconciliation_blocked: reconciliation_blocked,
+              current_operation_id: current_operation_id
+            )
           )
+        end
+
+        def disposition_for(status:, latest_observation:, reconciliation_blocked:, current_operation_id:)
+          return nil unless %i[pending unknown reconciliation_blocked].include?(status)
+          return nil unless latest_observation
+          return nil unless latest_observation[:operation_id] == current_operation_id
+          return nil unless latest_observation[:conflict] == false
+          return nil unless latest_observation[:safe_to_release] == true && latest_observation[:applied] == false
+
+          reconciliation_blocked ? :awaiting_reconciliation : :awaiting_causal_completion
         end
 
         def normalize_identity(value, label)

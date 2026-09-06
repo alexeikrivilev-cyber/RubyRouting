@@ -37,7 +37,7 @@ class AdmissionOracleTest < Minitest::Test
       clock.advance(random.rand(0..2))
       if active.any? && random.rand(3).zero?
         payout_id, commit = active.keys.sample(random: random)
-        coordinator.mark_attempt_started(commit)
+        interaction_token = coordinator.mark_attempt_started(commit)
         coordinator.apply_observation(
           RubyRouting::ProviderObservation.new(
             observation_id: "admission-oracle-release-#{step}",
@@ -46,7 +46,8 @@ class AdmissionOracleTest < Minitest::Test
             operation_id: commit.proposal.operation_id,
             attempt_id: commit.proposal.attempt_id,
             outcome: RubyRouting::NormalizedOutcome.safe_route_failure(attribution: :unknown)
-          )
+          ),
+          interaction_token: interaction_token
         )
         used_amount_minor -= active.fetch([payout_id, commit]).fetch(:amount)
         active.delete([payout_id, commit])

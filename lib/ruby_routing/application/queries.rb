@@ -180,11 +180,15 @@ module RubyRouting
         )
       end
 
-      def due_work(as_of: @coordinator.current_time)
-        @coordinator.due_recovery_work(as_of: as_of)
+      def due_work(as_of: @coordinator.current_time, limit: nil)
+        @coordinator.due_recovery_work(as_of: as_of, limit: limit)
       end
 
       alias due_recovery_work due_work
+
+      def current_time
+        @coordinator.current_time
+      end
 
       private
 

@@ -1,6 +1,6 @@
 # ExecPlan — v0.3.5 Pre-TZ Economic Effect Safety & Adapter Readiness
 
-Status: ACTIVE
+Status: VERSION_COMPLETE — fresh skeptical discovery and exact-head local CI are green; no official TZ has arrived
 
 ## Purpose / Big Picture
 
@@ -16,7 +16,7 @@ Governing source: `specifications/009-pre-tz-economic-effect-safety.md` plus com
 
 ## Starting evidence
 
-Exact baseline before this plan: `17d91fb3e30dc7c8a04c8df318668130090a0325`.
+Exact baseline before this plan: `1cd84a345845fb9f94104b9d4e833368ab149c17` (`origin/main`).
 
 Verified inherited facts:
 
@@ -28,7 +28,13 @@ Verified inherited facts:
 - after ownership release, normal decision flow may reroute;
 - the current token blocks duplicate `resume_operation` for the same operation but does not explicitly fence a fresh assignment for the payout after ownership was released.
 
-This produces the primary v0.3.5 hypothesis below. It is not yet a proven defect until a controlled interleaving reproduces it.
+This produced the primary v0.3.5 hypothesis. A controlled interleaving reproduced it before the production change: an independent safe-release callback could free durable ownership while A's `initiate` remained live, allowing a canonical continuation to open B.
+
+## Slice checkpoint — local exact worktree
+
+PTZ5-001/002 and the PTZ5-003 outcome matrix are now implemented and verified with deterministic queue barriers. The narrow fix extends the existing process-local invocation token with an explicit `money_moving` bit and fences only owner-free fresh decisions while a same-payout money-moving token remains live. Read-only resolution tokens are explicitly non-money-moving. Late success/ambiguous observations become explicit conflict evidence and keep automatic continuation deferred; definitely-not-sent completion can unblock fallback only after the owning invocation releases its token.
+
+Focused evidence: `test/concurrency/economic_effect_safety_test.rb` — 9 runs, 113 assertions, 0 failures/errors. The matrix now includes temporary safe release, terminal release, duplicate callback, authoritative sequence 2→1→3 while A is live, late success/definitely-not-sent/ambiguous/adapter exception, and a real blocking read-only resolution. Adjacent coordinator safety, observation ledger, projection/replay, due-worker, model, allocation, recovery-budget, recovery-schedule, cross-feature, outcome-analytics and restart suites are green. The latest exact-head local matrix is `655 runs` with zero failures/errors/skips; required Rake groups are property `4`, model `3`, concurrency `30` and fault `344` runs, all with zero failures/errors/skips. Assertion totals vary with reproducible test seeds.
 
 ## Protected baseline
 
@@ -65,7 +71,7 @@ Inspect exact HEAD implementations of:
 
 Build controlled blocking providers using queues/barriers, never sleeps.
 
-### A1 — initial assignment race
+### A1 — initial assignment race — VERIFIED
 
 1. commit provider A primary assignment;
 2. start A `initiate` and block inside provider after interaction token acquisition;
@@ -75,7 +81,7 @@ Build controlled blocking providers using queues/barriers, never sleeps.
 
 Pre-fix failure condition: B starts while A's original money-moving call is still live.
 
-### A2 — idempotent retry race
+### A2 — idempotent retry race — VERIFIED
 
 1. obtain UNKNOWN on provider A;
 2. start same-provider `retry_same/initiate` and block it;
@@ -83,7 +89,7 @@ Pre-fix failure condition: B starts while A's original money-moving call is stil
 4. concurrently attempt normal continuation;
 5. assert whether provider B starts before the retry finishes.
 
-### A3 — adjacent outcomes
+### A3 — adjacent outcomes — VERIFIED
 
 Repeat with:
 
@@ -98,7 +104,7 @@ Record exact provider calls and financial facts.
 
 ## Phase B — Minimal correctness design
 
-Do not preselect a class shape before the reproducer.
+The reproducer selected the smallest compatible extension; no separate guard class was required.
 
 Preferred smallest solution if the hypothesis reproduces:
 
@@ -138,6 +144,8 @@ Important distinction: status lookup is not itself money-moving. Do not block sa
 
 Do not invent generalized causal/vector-clock provider metadata unless the narrow money-moving fence fails.
 
+Current evidence: the deterministic economic-effect matrix exercises an authoritative-sequence provider with applied sequence 2, stale sequence 1 and release sequence 3 while the initial A `initiate` remains blocked. The stale observation is recorded as non-applying, does not regress `pending`/ownership, and does not open B. A duplicate safe-release callback is idempotent. Existing callback-before-dispatch/resolution tests cover invalidation before token consumption; the real blocking-resolution test confirms read-only calls are not over-fenced.
+
 ## Phase E — Adapter bounded-execution contract
 
 Review provider port, operation TTL/deadline and Orchestrator transport classification.
@@ -153,6 +161,8 @@ Required outcome:
 
 Implement a small adapter conformance test/helper only if it materially improves this contract without provider-brand assumptions.
 
+Current evidence: `test/scenario/orchestrator_simulator_test.rb` covers explicit ambiguous and definitely-not-sent result/error classifications plus an unclassified raw `Timeout::Error` (22 runs, 96 assertions). The raw timeout surfaces without synthetic transport facts or unsafe release, while the committed operation remains recoverable through its existing status-lookup contract. Provider-port comments make adapter-owned connect/read/request bounds explicit and keep them distinct from economic TTL/deadline; no asynchronous thread termination is used.
+
 ## Phase F — Restart/configuration adjacency
 
 Run deterministic/fresh-process scenarios for:
@@ -164,6 +174,8 @@ Run deterministic/fresh-process scenarios for:
 - stale due-work item.
 
 Expected: local interaction identity disappears on process death; durable recovery remains governed by operation phase/contract/ownership and existing status lookup/idempotent retry rules.
+
+Current evidence: durable crash campaign (6/24), restart/recovery (103/264), configuration crash consistency (1/28), coordinator races (13/55) and due-worker concurrency (7/97) all pass. They cover crash during dispatch/reconciliation, restart after safe release or settlement, pinned provider removal, stale committed decisions and stale due work. The new fence remains process-local and is intentionally absent after fresh Coordinator construction; no cross-process exactly-once claim is made.
 
 ## Phase G — Broad verification
 
@@ -180,6 +192,8 @@ After focused green:
 - demo smoke if application behavior changed.
 
 Run benchmarks only if hot-path code or performance claims changed materially.
+
+Current evidence: exact-case composition is green (`case_fidelity_campaign_test` 2/163, deterministic matrix 1/40, demo 2/12, bounded history evidence 2/15 and long-history replay 1/2010). The required Rake matrices are green: `property` 4/1,210, `model` 3/2,613, `concurrency` 30/1,163 and `fault` 344/4,203, all with zero failures/errors/skips. Fresh exact-candidate bounded measurements on CRuby 4.0.6: 10k lifecycle 40.3602 s / 247.8 ops/s / 140,002 facts; 2,000-payout degradation 2,247 attempts with 228 fallback recoveries; history profile 500 payouts 7,002 facts and 315.3 concurrent ops/s. The 12,500-sample read-path profile reports median/p95 analytics 0.000384/0.000539 s, typed analytics 0.000489/0.000519 s, explanation 0.000443/0.000618 s and due-work-empty 0.004463/0.005035 s; fact-snapshot p95 0.114104 s is recorded as variability. These are bounded evidence, not 100k or production-scale claims, and no new performance change is justified.
 
 ## Phase H — Independent skeptical closure
 
@@ -217,13 +231,80 @@ For P0 races assert at least:
 - final payout state;
 - restart/replay parity if durable semantics changed.
 
-## Rolling next actions
+## Fresh skeptical discovery finding — stale authoritative health evidence
 
-1. Reproduce A1 on current code before production changes.
-2. Reproduce/falsify A2 and adjacent late-success case.
-3. Choose the smallest money-moving fence design from evidence.
-4. Implement focused tests + fix and run adjacency.
-5. Continue through adapter/restart phases without routine confirmation.
+The candidate pass produced a deterministic counterexample outside the original
+economic-effect cases. With `authoritative_sequence=true`, an applied
+`sequence=2` success followed by a new stale `sequence=1` provider failure did
+not change payout lifecycle, but `Coordinator#apply_observation` still emitted
+health evidence and degraded the provider. That could suppress healthy future
+traffic even though the observation was explicitly rejected by the provider
+ordering contract.
+
+The focused fix gives `ObservationLedger::Decision` an explicit
+`health_evidence?` result: transport classification remains admissible,
+authoritative observations require a new sequence, and non-authoritative late
+observations retain their existing operational-health semantics. The durable
+observation records this derived decision and restore validates any emitted
+health signal against it. The follow-up pass then found that a late accepted
+sequence did not advance the durable ordering cursor, allowing an older late
+event to be treated as fresh. The minimal fix advances that cursor through
+live observation, restore and replay. Focused ledger, restorer,
+projection/replay and health suites are green. A second follow-up pass found
+and fixed exact duplicate replay after cursor advancement; the fresh skeptical
+discovery is now clean and the revision remains a `VERSION_CANDIDATE` until
+the final exact-HEAD closure evidence is recorded.
+
+## Fresh follow-up counterexample — late authoritative sequence did not advance the cursor
+
+The second skeptical pass constructed a released operation with applied
+sequence 2, then delivered late sequence 4 followed by late sequence 3. The
+sequence-4 event was correctly lifecycle-non-applying but eligible for health;
+because the cursor only advanced for lifecycle-applying events, sequence 3 was
+also classified as fresh and could degrade the provider. This violated the
+ordering contract at the health projection boundary.
+
+The fix keeps one shared authoritative cursor: every new sequenced observation
+advances it to the greatest observed sequence, whether or not lifecycle
+applies. Live decisions, durable restore and replay use the same rule. The
+regression asserts exact health facts, cursor value and restart parity. A
+second skeptical reproducer found that an exact duplicate replayed after a
+newer sequence was incorrectly judged against the current cursor; the ledger
+now preserves the original derived decision with the dedup identity so replay
+remains idempotent without weakening contradictory-payload validation.
+
+## Fresh follow-up counterexample — exact duplicate replay after cursor advance
+
+The skeptical pass then replayed an exact durable observation after a newer
+authoritative observation had advanced the cursor. Restore incorrectly
+recomputed the old observation against the current cursor and rejected its
+original `applied` decision as stale. The fix stores the original derived
+decision with the observation identity signature, checks exact identity before
+current ordering, and still rejects forged duplicate decision flags. The
+deterministic unit regression and the full local matrix are green.
+
+## Final closure evidence
+
+The independent skeptical pass on the actual production paths found no new
+material locally solvable P0/P1. The final exact-head local workflow is green:
+`bundle check`, `test` 655 runs, `property` 4 runs, `model` 3 runs,
+`concurrency` 30 runs and `fault` 344 runs, all with zero failures, errors or
+skips. The property/model/fault assertion totals are 1,210/2,613/4,203;
+concurrency and full-test assertion totals vary with their reproducible seeds.
+Focused SPEC-009 races, acceptance traceability, exact-case campaign,
+restart/crash, replay, history, analytics, API and demo evidence are green.
+
+Fresh bounded CRuby 4.0.6 product evidence measured 10k lifecycle at
+40.3602 s / 247.8 ops/s / 140,002 facts; 2,000-payout degradation at 2,247
+attempts with 228/228 fallback recoveries; 500-payout history at 7,002 facts
+and 315.3 concurrent ops/s; and a 12,500-sample read-path profile with
+analytics p95 0.000539 s, typed analytics p95 0.000519 s, explanation p95
+0.000618 s and due-work-empty p95 0.005035 s. Fact-snapshot p95 variability
+of 0.114104 s is recorded; no 100k production claim is made.
+
+The hosted GitHub Actions endpoint returned HTTP 404 and is not claimed green.
+The checked-in workflow was executed locally on the exact closure revision;
+the hosted visibility limitation is recorded rather than hidden.
 
 ## Explicit non-goals
 
@@ -231,4 +312,7 @@ No new allocation strategy, dashboard, PSP-brand adapter, database, queue, distr
 
 ## Stop policy
 
-Do not stop after a reproducer, fix, green focused test, commit or CI. Continue until SPEC-009 P0/P1 is verified/falsified, a fresh skeptical pass is clean, exact candidate CI is green and active documents agree — or authoritative TZ arrives and triggers immediate reconciliation mode.
+The v0.3.5 closure is complete after SPEC-009 P0/P1 was verified/falsified,
+the fresh skeptical pass was clean, exact-head local CI was green and all
+normative documents agreed. Authoritative TZ arrival still triggers immediate
+reconciliation mode.

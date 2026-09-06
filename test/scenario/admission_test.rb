@@ -53,8 +53,11 @@ class AdmissionTest < Minitest::Test
     policy = policy_for("separate")
 
     first = coordinator.prepare_and_commit_decision(intent: intent("separate-first"), policy: policy)
-    coordinator.mark_attempt_started(first)
-    coordinator.apply_observation(observation(first, "separate-failure", :safe_route_failure))
+    interaction_token = coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(
+      observation(first, "separate-failure", :safe_route_failure),
+      interaction_token: interaction_token
+    )
 
     second = coordinator.prepare_and_commit_decision(intent: intent("separate-second"), policy: policy)
 

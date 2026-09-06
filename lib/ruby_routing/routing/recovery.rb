@@ -33,6 +33,17 @@ module RubyRouting
     module Recovery
       module_function
 
+      # One action authority for an already-owned operation. Normal recovery
+      # classification and durable raw/restart recovery callers use this same
+      # capability-and-budget rule; provenance is attached by the caller.
+      def same_provider_action(capabilities:, resolution_interactions:, policy:)
+        return nil if resolution_interactions >= policy.max_resolution_interactions
+        return :resolve if capabilities&.status_lookup
+        return :retry_same if capabilities&.idempotent_retry
+
+        nil
+      end
+
       def classify(status:, ownership:, capabilities:, operation_phase: nil, attempts:, policy:,
                    resolution_interactions: 0)
         normalized_status = status.is_a?(Symbol) ? status : status.to_s
@@ -73,14 +84,18 @@ module RubyRouting
               reason_code: :resolution_budget_exhausted
             )
           end
-          if capabilities&.status_lookup
+          case same_provider_action(
+            capabilities: capabilities,
+            resolution_interactions: resolution_interactions,
+            policy: policy
+          )
+          when :resolve
             return RecoveryClassification.new(
               action: :resolve,
               reason: "unresolved ownership requires same-provider resolution",
               reason_code: :status_resolution
             )
-          end
-          if capabilities&.idempotent_retry
+          when :retry_same
             return RecoveryClassification.new(
               action: :retry_same,
               reason: "provider permits idempotent same-operation retry",

@@ -27,6 +27,13 @@ jobs:
           bundle exec rake concurrency
           bundle exec rake fault
 
+      - name: Verify authoritative case submission artifacts
+        run: |
+          bundle exec rake case
+          bundle exec rake finalize_submission
+          ruby scripts/validate_10.rb routing_decisions_test.json
+          bundle exec ruby -Ilib bin/ruby_routing_case_demo > case_demo.json
+
   product_evidence:
     name: Bounded product evidence
     runs-on: ubuntu-latest

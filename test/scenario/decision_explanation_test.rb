@@ -104,4 +104,119 @@ class DecisionExplanationTest < Minitest::Test
     assert_equal :success, explanation.result.status
     assert_equal 2, explanation.result.observations.length
   end
+
+  def test_explanation_describes_held_safe_release_without_leaking_causal_hold
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "held-explanation-policy",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1, "B" => 1 }
+    )
+    payout = RubyRouting::PayoutIntent.new(
+      id: "held-explanation-payout",
+      money: RubyRouting::Money.new(100, "RUB"),
+      recipient: { account_number: "recipient-secret" }
+    )
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: %w[A B].map { |provider_id| RubyRouting::ProviderOpportunity.new(provider_id: provider_id) }
+    )
+    commit = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
+    coordinator.mark_attempt_started(commit)
+    attempt = coordinator.payout_snapshot(payout.id).attempts.fetch(0)
+    coordinator.apply_observation(observation_for(
+      payout,
+      attempt,
+      "held-explanation-unknown",
+      RubyRouting::NormalizedOutcome.unknown(attribution: :provider)
+    ))
+    coordinator.apply_observation(observation_for(
+      payout,
+      attempt,
+      "held-explanation-release",
+      RubyRouting::NormalizedOutcome.safe_route_failure(attribution: :provider)
+    ))
+    service = RubyRouting::Application::Service.new(coordinator: coordinator, providers: {})
+
+    explanation = service.queries.explanation(payout.id)
+    assert_equal :unknown, explanation.result.status
+    assert_equal :awaiting_causal_completion, explanation.result.disposition
+    assert_equal true, explanation.result.latest_observation.fetch(:safe_to_release)
+    assert_equal false, explanation.result.latest_observation.fetch(:applied)
+    refute_includes JSON.generate(explanation.to_h), "causal_hold"
+    refute_includes JSON.generate(explanation.to_h), "recipient-secret"
+
+    app = RubyRouting::Application::HttpApp.new(service: service)
+    response = app.call(
+      "REQUEST_METHOD" => "GET",
+      "PATH_INFO" => "/v1/payouts/#{payout.id}/explanation",
+      "QUERY_STRING" => "",
+      "rack.input" => StringIO.new
+    )
+    body = JSON.parse(response.fetch(2).join)
+    assert_equal 200, response.fetch(0)
+    assert_equal "awaiting_causal_completion", body.fetch("explanation").fetch("result").fetch("disposition")
+    refute_includes response.fetch(2).join, "causal_hold"
+    refute_includes response.fetch(2).join, "recipient-secret"
+  end
+
+  def test_explanation_does_not_mislabel_a_late_safe_observation_for_an_old_operation
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "late-explanation-policy",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1, "B" => 1 }
+    )
+    payout = RubyRouting::PayoutIntent.new(
+      id: "late-explanation-payout",
+      money: RubyRouting::Money.new(100, "RUB")
+    )
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: %w[A B].map { |provider_id| RubyRouting::ProviderOpportunity.new(provider_id: provider_id) }
+    )
+    service = RubyRouting::Application::Service.new(
+      coordinator: coordinator,
+      providers: {
+        "A" => TestSupport::Simulator::ScriptedProvider.new(
+          provider_id: "A",
+          steps: [TestSupport::Simulator::Step.safe_failure]
+        ),
+        "B" => TestSupport::Simulator::ScriptedProvider.new(
+          provider_id: "B",
+          steps: [TestSupport::Simulator::Step.unknown]
+        )
+      }
+    )
+    service.commands.register_policy(policy)
+
+    result = service.submit(intent: payout)
+    assert_equal :unknown, result.status
+    old_attempt = result.payout.attempts.fetch(0)
+    coordinator.apply_observation(
+      observation_for(
+        payout,
+        old_attempt,
+        "late-explanation-release",
+        RubyRouting::NormalizedOutcome.safe_route_failure(attribution: :provider)
+      )
+    )
+
+    explanation = service.queries.explanation(payout.id)
+    assert_equal :unknown, explanation.result.status
+    assert_nil explanation.result.disposition
+    assert_equal old_attempt.operation_id, explanation.result.latest_observation.fetch(:operation_id)
+    assert_equal false, explanation.result.latest_observation.fetch(:applied)
+  end
+
+  private
+
+  def observation_for(payout, attempt, observation_id, outcome)
+    RubyRouting::ProviderObservation.new(
+      observation_id: observation_id,
+      payout_id: payout.id,
+      provider_id: attempt.provider_id,
+      operation_id: attempt.operation_id,
+      attempt_id: attempt.attempt_id,
+      outcome: outcome
+    )
+  end
 end

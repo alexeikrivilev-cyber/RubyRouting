@@ -1,0 +1,82 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "json"
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
+require "ruby_routing"
+
+root = File.expand_path("..", __dir__)
+dataset = RubyRouting::Case::Input.load(
+  providers_path: File.join(root, "data/providers.json"),
+  history_path: File.join(root, "data/operations_history.csv"),
+  queue_path: File.join(root, "data/operations_queue_10.json")
+)
+submission_profile = RubyRouting::Case::SubmissionProfile.load(
+  path: File.join(root, "data/submission_profile.json"), dataset: dataset
+)
+provider_ids = dataset.providers.map(&:payment_system)
+external_provider_ids = dataset.providers.reject(&:self_provider?).map(&:payment_system)
+terminal_provider_id = dataset.providers.find(&:self_provider?).payment_system
+target_values = [Rational(1, 5), Rational(1, 5), Rational(3, 5)]
+target_map = external_provider_ids.each_with_index.to_h { |provider_id, index| [provider_id, target_values.fetch(index, Rational(0, 1))] }
+targets = RubyRouting::Case::TrafficTargets.new(
+  provider_ids: provider_ids,
+  count_share: target_map,
+  volume_share: target_map
+)
+
+strategies = %i[count volume].each_with_object({}) do |strategy, result|
+  configuration = RubyRouting::Case::CaseConfiguration.new(
+    provider_ids: provider_ids,
+    targets: targets,
+    weights: { strategy => 1 },
+    terminal_provider_id: terminal_provider_id,
+    source: "authoritative-case-demo/#{strategy}"
+  )
+  run_router = RubyRouting::Case::Router.new(dataset, configuration: configuration)
+  decisions = run_router.run
+  result[strategy.to_s] = {
+    configuration: configuration.to_h,
+    selected_providers: decisions.to_h { |decision| [decision.operation_id, decision.selected_provider] },
+    distribution: run_router.traffic.distribution,
+    fallbacks: decisions.count { |decision| decision.attempts.any? { |attempt| attempt.status && attempt.status != :approved } }
+  }
+end
+
+# Keep the demo on the exact submission policy. The explicit expiry fixture is
+# only an observable case outcome, so the demo proves fallback without creating
+# a second policy or chooser.
+simulation_configuration = submission_profile.configuration
+expired_external = dataset.providers.reject(&:self_provider?).to_h do |provider|
+  [["op_101", provider.payment_system], :expired]
+end
+simulation = RubyRouting::Case::DeterministicSimulator.new(
+  seed: simulation_configuration.simulation_seed,
+  mode: simulation_configuration.simulation_mode,
+  outcomes: expired_external
+)
+simulation_router = RubyRouting::Case::Router.new(dataset, profile: submission_profile, simulator: simulation)
+simulation_decisions = simulation_router.run
+
+output = {
+  version: "0.4.1",
+  dataset: {
+    queue_operations: dataset.operations.length,
+    queue_volume: dataset.operations.sum(&:amount),
+    history_rows: dataset.history.length
+  },
+  same_input_fresh_runtime_strategies: strategies,
+  deterministic_conversion_simulation: {
+    configuration: simulation_configuration.to_h,
+    selected_providers: simulation_decisions.to_h { |decision| [decision.operation_id, decision.selected_provider] },
+    decisions: simulation_decisions.map(&:to_h),
+    report: RubyRouting::Case::ReportBuilder.new(
+      dataset, simulation_router.state, simulation_router.traffic,
+      simulation_router.configuration, simulation_decisions,
+      profile: submission_profile,
+      attempt_ledger: simulation_router.attempt_ledger,
+      settlement_ledger: simulation_router.settlement_ledger
+    ).call.to_h
+  }
+}
+puts JSON.pretty_generate(RubyRouting::Case::Serializer.json_value(output))

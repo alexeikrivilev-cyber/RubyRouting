@@ -22,10 +22,16 @@ module RubyRouting
       end
 
       def apply(fact)
-        return false unless fact.type == :provider_observed
-
-        restore!(fact)
-        true
+        case fact.type
+        when :provider_observed
+          restore!(fact)
+          true
+        when :provider_interaction_completed
+          restore_completion!(fact)
+          true
+        else
+          false
+        end
       end
 
       private
@@ -58,6 +64,49 @@ module RubyRouting
         end
         return unless payload[:applied]
 
+        apply_observation_payload!(payload, state: state, attempt: attempt, fact_sequence: fact.sequence)
+      end
+
+      def restore_completion!(fact)
+        payload = fact.payload
+        state = @payout_state.call(fact.payout_id)
+        operation_id = @operation_identity.call(payload, :operation_id)
+        attempt = state.operations.fetch(operation_id)
+        provider_id = @provider_identity.call(payload, :provider_id)
+        attempt_id = @operation_identity.call(payload, :attempt_id)
+        observation_id = @operation_identity.call(payload, :observation_id)
+        source_key = [fact.payout_id, observation_id].freeze
+        observation_payload = restored_observations.fetch(source_key) do
+          raise RubyRouting::State::DurableCorruptionError,
+            "causal completion has no preceding observation #{source_key.inspect}"
+        end
+        unless attempt.provider_id == provider_id && attempt.attempt_id == attempt_id &&
+               state.ownership&.provider_id == provider_id &&
+               state.ownership.operation_id == operation_id &&
+               state.ownership.attempt_id == attempt_id &&
+               observation_payload[:causal_hold] == true &&
+               observation_payload[:applied] == false
+          raise RubyRouting::State::DurableCorruptionError,
+            "causal completion does not match active held operation #{operation_id}"
+        end
+
+        observation_ledger.complete_causal_hold!(
+          seen_observations: state.seen_observations,
+          payout_id: fact.payout_id,
+          observation_payload: observation_payload
+        )
+        restored_observations[source_key] = observation_payload.merge(
+          applied: true,
+          causal_hold: false
+        ).freeze
+        apply_observation_payload!(observation_payload, state: state, attempt: attempt, fact_sequence: fact.sequence)
+      rescue KeyError, TypeError, NoMethodError => error
+        raise RubyRouting::State::DurableCorruptionError,
+          "malformed causal completion: #{error.message}"
+      end
+
+      def apply_observation_payload!(payload, state:, attempt:, fact_sequence:)
+        operation_id = @operation_identity.call(payload, :operation_id)
         outcome = RubyRouting::NormalizedOutcome.new(
           status: payload.fetch(:status),
           attribution: payload.fetch(:attribution),
@@ -66,11 +115,15 @@ module RubyRouting
           safe_to_release: payload[:safe_to_release]
         )
         attempt.outcome = outcome
+        # Non-authoritative providers retain the historical "last applied"
+        # cursor. Authoritative providers have already advanced their shared
+        # max-observed cursor in ObservationLedger#restore; assigning again is
+        # safe because an applied authoritative event must be strictly newer.
         attempt.last_observation_sequence = payload[:sequence] unless payload[:sequence].nil?
         state.last_outcome = outcome
         state.status = lifecycle_ledger.status_for(outcome)
         state.dispatch_pending.delete(operation_id)
-        state.applied_observation_fact_sequences[operation_id] = fact.sequence
+        state.applied_observation_fact_sequences[operation_id] = fact_sequence
         if state.respond_to?(:recovery_schedule=)
           state.recovery_schedule = restore_recovery_schedule!(
             payload[:recovery_schedule],

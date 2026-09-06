@@ -19,7 +19,7 @@ module Reference
       @status = :pending
     end
 
-    def observe(status, safe_to_release: nil)
+    def observe(status, safe_to_release: nil, owning_completion: false)
       normalized = status.to_sym
       case normalized
       when :pending
@@ -27,7 +27,7 @@ module Reference
       when :unknown
         @status = :unknown if owner
       when :safe_route_failure, :temporary_provider_failure
-        if owner && (safe_to_release.nil? || safe_to_release)
+        if owner && owning_completion && (safe_to_release.nil? || safe_to_release)
           @owner = nil
           @status = normalized
         end

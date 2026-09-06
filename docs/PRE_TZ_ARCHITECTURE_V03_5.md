@@ -1,6 +1,6 @@
 # Pre-TZ Architecture Delta — v0.3.5
 
-Status: ACTIVE
+Status: VERSION_COMPLETE — fresh skeptical discovery and exact-head local CI are green; no official TZ has arrived
 
 This delta governs SPEC-009 and inherits the verified v0.3.4/SPEC-008 architecture. Nothing changes by default; every new mechanism requires a reproduced case-relevant defect or measured need.
 
@@ -24,6 +24,8 @@ Therefore cross-provider routing requires two conditions:
 - there is no still-live money-moving invocation for the payout that can independently create an economic effect.
 
 The implementation may enforce this with an extension of the existing process-local interaction token/guard or an equivalent narrow mechanism.
+
+Current implementation: `State::Coordinator::ProviderInteractionToken` carries an explicit `money_moving` flag. `assign`/`retry_same` acquisition sets it, `resolve` acquisition clears it, and fresh decisions are deferred only when durable ownership is already absent but the same payout still has a live money-moving token. This preserves the prior dispatch-in-progress semantics for an operation that still owns the payout and avoids fencing read-only resolution.
 
 Preferred semantic distinction:
 
@@ -67,6 +69,22 @@ The system may conservatively enter reconciliation rather than guess provider ch
 Provider event ordering remains owned by `ObservationLedger` and provider contract semantics.
 
 `authoritative_sequence=true` is a provider capability for event ordering; it is not a generic distributed transaction proof. Non-authoritative providers remain conservative under contradictory late evidence.
+
+The ordering cursor is the greatest new authoritative sequence observed for an
+attempt, not only the greatest lifecycle-applying sequence. A late event may
+be non-applying after release while still becoming the ordering boundary for
+future health evidence. Its advancement is durable and replayable; transport
+classification remains separately admissible without a provider sequence.
+
+For providers without authoritative sequencing, the existing cursor remains
+the last lifecycle-applied sequence for compatibility. Restore must preserve
+that legacy projection while authoritative restore uses the shared greatest-
+observed rule.
+
+Observation deduplication records the original derived decision alongside the
+identity signature. Durable exact duplicates therefore remain idempotent even
+after a newer authoritative observation advances the shared cursor, while a
+duplicate with forged applied/conflict/health evidence still fails closed.
 
 Do not modify global observation ordering merely to solve the live-money-moving fence unless a deterministic counterexample requires it.
 

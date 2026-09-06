@@ -1,6 +1,6 @@
 # SPEC-009 — Pre-TZ Economic Effect Safety & Adapter Readiness
 
-Status: ACTIVE
+Status: VERSION_COMPLETE — fresh skeptical discovery and exact-head local CI are green; no official TZ has arrived
 
 ## Purpose
 
@@ -56,7 +56,7 @@ At minimum prove this for:
 
 A losing/racing caller may defer/wait/reconcile, but must not start provider B while provider A's live money-moving invocation can still succeed.
 
-Status: OPEN — deterministic reproducer required before implementation.
+Status: VERIFIED by deterministic live-initiate reproducer, narrow fence regression and exact provider/fact assertions.
 
 ### S9-002 — Late live-invocation completion is economically safe
 
@@ -76,7 +76,7 @@ Required behavior:
 - UNKNOWN remains pinned when ambiguity survives;
 - provider interaction tokens are released only by their owner and cannot remain stuck after normal/exception completion.
 
-Status: OPEN.
+Status: VERIFIED by deterministic late-outcome matrix and owner-only token cleanup assertions.
 
 ### S9-003 — Observation release authority is explicit and conservative
 
@@ -92,7 +92,7 @@ The implementation must make the distinction explicit between:
 
 Do not invent a broad provider-specific proof model before the TZ. Prefer the smallest conservative rule that closes S9-001 and remains compatible with adapters that have authoritative sequence semantics.
 
-Status: OPEN.
+Status: VERIFIED by explicit lifecycle/observation/invocation distinction and authoritative ordering evidence.
 
 ## P1 requirements
 
@@ -110,7 +110,26 @@ Required outcome:
 
 No brand-specific PSP client is required before the authoritative TZ unless supplied by the case.
 
-Status: OPEN.
+Status: VERIFIED by explicit adapter transport contract and raw-timeout preservation test.
+
+### PTZ5-106 — Ordered observation evidence must not regress health
+
+This follow-up requirement was discovered during the mandatory candidate
+skeptical pass. When a provider declares authoritative observation sequencing,
+an observation with a sequence at or below the already accepted sequence, or a
+non-transport observation without a sequence, may remain durable as
+non-applying evidence but must not update provider health or quality. A
+strictly newer sequence may update provider health even if lifecycle cannot
+apply it after operation release. Once such a late sequence is accepted, the
+ordering cursor must advance durably even though lifecycle does not, so a
+subsequent older late event cannot become fresh health evidence. Transport
+classification remains admissible without provider sequence.
+
+Acceptance requires deterministic regressions for stale and late-sequence
+ordering, exact health facts, live/replay/restart parity (including both
+authoritative max-observed and non-authoritative last-applied cursor semantics),
+idempotent duplicate replay after later observations, and durable fail-closed
+validation of contradictory derived evidence.
 
 ### S9-102 — Adjacent ordering/restart campaign
 
@@ -126,13 +145,13 @@ Challenge the new live-money-moving fence against:
 
 Fresh restart must not persist process-local interaction identity. It must continue to rely on durable operation phase/contract/ownership and existing status-lookup/idempotent-retry safety.
 
-Status: OPEN.
+Status: VERIFIED by restart/configuration/stale-work matrices and fresh-process recovery evidence.
 
 ### S9-103 — Case-level composition regression
 
 After S9 P0 changes, rerun one deterministic canonical product campaign covering count distribution, volume distribution, safe fallback, UNKNOWN resolution, multi-attempt history, target/actual analytics, provider/fallback success analytics and replay/restart parity.
 
-Status: OPEN.
+Status: VERIFIED by exact case composition, replay and application-path evidence.
 
 ### S9-104 — Evidence-gated maintainability and performance
 
@@ -145,7 +164,7 @@ A structural or performance change is allowed only when:
 
 The preferred pre-TZ outcome may be no production change.
 
-Status: OPEN as a gate, not a feature requirement.
+Status: VERIFIED as a no-change gate by fresh bounded measurements; no speculative optimization was added.
 
 ## Verification requirements
 

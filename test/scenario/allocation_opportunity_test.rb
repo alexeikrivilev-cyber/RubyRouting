@@ -323,7 +323,7 @@ class AllocationOpportunityTest < Minitest::Test
     )
     payout = intent("fresh-fallback")
     first = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(first)
+    first_token = coordinator.mark_attempt_started(first)
     coordinator.apply_observation(
       RubyRouting::ProviderObservation.new(
         observation_id: "fallback-safe-failure",
@@ -332,7 +332,8 @@ class AllocationOpportunityTest < Minitest::Test
         operation_id: first.proposal.operation_id,
         attempt_id: first.proposal.attempt_id,
         outcome: RubyRouting::NormalizedOutcome.safe_route_failure(attribution: :provider)
-      )
+      ),
+      interaction_token: first_token
     )
     coordinator.set_provider_availability("A", available: false)
     coordinator.set_provider_availability("B", available: false)
@@ -355,7 +356,7 @@ class AllocationOpportunityTest < Minitest::Test
     payout = intent("exclude-used-provider")
     first = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
     assert_equal "A", first.proposal.provider_id
-    coordinator.mark_attempt_started(first)
+    first_token = coordinator.mark_attempt_started(first)
     coordinator.apply_observation(
       RubyRouting::ProviderObservation.new(
         observation_id: "exclude-used-provider-failure",
@@ -364,7 +365,8 @@ class AllocationOpportunityTest < Minitest::Test
         operation_id: first.proposal.operation_id,
         attempt_id: first.proposal.attempt_id,
         outcome: RubyRouting::NormalizedOutcome.safe_route_failure(attribution: :provider)
-      )
+      ),
+      interaction_token: first_token
     )
 
     second = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)

@@ -18,8 +18,11 @@ class RecoveryBudgetTimeTest < Minitest::Test
     )
     payout = intent("switch-budget")
     first = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(first)
-    coordinator.apply_observation(observation(first, :safe_route_failure))
+    first_token = coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(
+      observation(first, :safe_route_failure),
+      interaction_token: first_token
+    )
 
     second = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
 
@@ -49,8 +52,11 @@ class RecoveryBudgetTimeTest < Minitest::Test
     )
     payout = intent("operation-budget")
     first = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(first)
-    coordinator.apply_observation(observation(first, :safe_route_failure))
+    first_token = coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(
+      observation(first, :safe_route_failure),
+      interaction_token: first_token
+    )
 
     second = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
 
@@ -85,8 +91,11 @@ class RecoveryBudgetTimeTest < Minitest::Test
     )
     payout = intent("ttl-payout")
     first = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(first)
-    coordinator.apply_observation(observation(first, :unknown))
+    first_token = coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(
+      observation(first, :unknown),
+      interaction_token: first_token
+    )
     clock.advance(10)
 
     blocked = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)

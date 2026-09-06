@@ -102,17 +102,26 @@ class ProjectionReplayTest < Minitest::Test
     payout = intent("analytics-fallback-retry")
 
     primary = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(primary)
-    coordinator.apply_observation(observation(primary, "fallback-retry-primary-failure", :safe_route_failure))
+    primary_token = coordinator.mark_attempt_started(primary)
+    coordinator.apply_observation(
+      observation(primary, "fallback-retry-primary-failure", :safe_route_failure),
+      interaction_token: primary_token
+    )
 
     fallback = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(fallback)
-    coordinator.apply_observation(observation(fallback, "fallback-retry-unknown", :unknown, :provider))
+    fallback_token = coordinator.mark_attempt_started(fallback)
+    coordinator.apply_observation(
+      observation(fallback, "fallback-retry-unknown", :unknown, :provider),
+      interaction_token: fallback_token
+    )
 
     retry_commit = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
     assert_equal :retry_same, retry_commit.proposal.action
-    coordinator.mark_attempt_started(retry_commit)
-    coordinator.apply_observation(observation(retry_commit, "fallback-retry-success", :success, :provider))
+    retry_token = coordinator.mark_attempt_started(retry_commit)
+    coordinator.apply_observation(
+      observation(retry_commit, "fallback-retry-success", :success, :provider),
+      interaction_token: retry_token
+    )
 
     live = RubyRouting::Projections::Analytics.from_facts(coordinator.facts)
     replay = RubyRouting::Projections::Replay.analytics(coordinator.facts)
@@ -130,8 +139,11 @@ class ProjectionReplayTest < Minitest::Test
     )
     payout = intent("analytics-duplicate-observation")
     commit = coordinator.prepare_and_commit_decision(intent: payout, policy: one_provider_policy)
-    coordinator.mark_attempt_started(commit)
-    coordinator.apply_observation(observation(commit, "duplicate-observation", :success))
+    interaction_token = coordinator.mark_attempt_started(commit)
+    coordinator.apply_observation(
+      observation(commit, "duplicate-observation", :success),
+      interaction_token: interaction_token
+    )
 
     observation_fact = coordinator.facts.find { |fact| fact.type == :provider_observed }
     duplicate = RubyRouting::Fact.new(
@@ -158,8 +170,11 @@ class ProjectionReplayTest < Minitest::Test
     )
     payout = intent("analytics-age")
     commit = coordinator.prepare_and_commit_decision(intent: payout, policy: one_provider_policy)
-    coordinator.mark_attempt_started(commit)
-    coordinator.apply_observation(observation(commit, "unknown-age", :unknown, :provider))
+    interaction_token = coordinator.mark_attempt_started(commit)
+    coordinator.apply_observation(
+      observation(commit, "unknown-age", :unknown, :provider),
+      interaction_token: interaction_token
+    )
 
     clock.advance(7)
     live = RubyRouting::Projections::Analytics.from_facts(coordinator.facts, as_of: clock.now)
@@ -213,12 +228,19 @@ class ProjectionReplayTest < Minitest::Test
     )
     payout = intent("resolution-replay")
     first = coordinator.prepare_and_commit_decision(intent: payout, policy: one_provider_policy)
-    coordinator.mark_attempt_started(first)
-    coordinator.apply_observation(observation(first, "unknown", :unknown, :provider))
+    first_token = coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(
+      observation(first, "unknown", :unknown, :provider),
+      interaction_token: first_token
+    )
     resolution = coordinator.prepare_and_commit_decision(intent: payout, policy: one_provider_policy)
     assert_equal :resolve, resolution.proposal.action
-    assert coordinator.mark_resolution_started(resolution)
-    coordinator.apply_observation(observation(resolution, "resolved", :success, :provider))
+    resolution_token = coordinator.mark_resolution_started(resolution)
+    assert resolution_token
+    coordinator.apply_observation(
+      observation(resolution, "resolved", :success, :provider),
+      interaction_token: resolution_token
+    )
 
     live = coordinator.payout_snapshot(payout.id)
     replayed = coordinator.lifecycle_projection.payout(payout.id)
@@ -307,6 +329,98 @@ class ProjectionReplayTest < Minitest::Test
     assert_equal 2, coordinator.facts.count { |fact| fact.payload[:applied] == false }
   end
 
+  def test_stale_authoritative_observation_cannot_change_health_projection
+    coordinator = RubyRouting::State::Coordinator.new(
+      health_policy: RubyRouting::Routing::HealthPolicy.new(
+        degrade_after: 1,
+        quarantine_after: 2
+      ),
+      opportunities: [RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        capabilities: RubyRouting::ProviderCapabilities.new(authoritative_sequence: true)
+      )]
+    )
+    payout = intent("stale-health")
+    commit = coordinator.prepare_and_commit_decision(intent: payout, policy: one_provider_policy)
+    token = coordinator.mark_attempt_started(commit)
+
+    coordinator.apply_observation(
+      observation_with_sequence(commit, "success-2", :success, 2),
+      interaction_token: token
+    )
+    stale = coordinator.apply_observation(
+      observation_with_sequence(commit, "failure-1", :safe_route_failure, 1)
+    )
+
+    assert_equal :success, stale.payout.status
+    assert_equal :healthy, coordinator.health_snapshot("A").state
+    assert_equal 0, coordinator.facts.count { |fact| fact.type == :health_signal && fact.payload[:signal] == :provider_failure }
+    assert_equal false, coordinator.facts.find { |fact| fact.payload[:observation_id] == "obs:failure-1" }.payload[:health_evidence]
+    assert_equal coordinator.health_snapshot("A").to_h,
+      coordinator.health_projection.snapshot("A").to_h
+    restored = RubyRouting::State::Coordinator.from_facts(
+      facts: coordinator.facts,
+      opportunities: [RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        capabilities: RubyRouting::ProviderCapabilities.new(authoritative_sequence: true)
+      )]
+    )
+    assert_equal coordinator.health_snapshot("A").to_h, restored.health_snapshot("A").to_h
+  end
+
+  def test_late_authoritative_sequence_cursor_prevents_older_health_evidence
+    coordinator = RubyRouting::State::Coordinator.new(
+      health_policy: RubyRouting::Routing::HealthPolicy.new(
+        degrade_after: 1,
+        quarantine_after: 2
+      ),
+      opportunities: [RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        capabilities: RubyRouting::ProviderCapabilities.new(authoritative_sequence: true)
+      )]
+    )
+    payout = intent("late-health-order")
+    commit = coordinator.prepare_and_commit_decision(intent: payout, policy: one_provider_policy)
+    token = coordinator.mark_attempt_started(commit)
+    coordinator.apply_observation(
+      RubyRouting::ProviderObservation.new(
+        observation_id: "obs:safe-release-2",
+        payout_id: payout.id,
+        provider_id: "A",
+        operation_id: commit.proposal.operation_id,
+        attempt_id: commit.proposal.attempt_id,
+        sequence: 2,
+        outcome: RubyRouting::NormalizedOutcome.safe_route_failure(attribution: :unknown)
+      ),
+      interaction_token: token
+    )
+
+    newer = coordinator.apply_observation(
+      observation_with_sequence(commit, "late-success-4", :success, 4)
+    )
+    older = coordinator.apply_observation(
+      observation_with_sequence(commit, "late-failure-3", :safe_route_failure, 3)
+    )
+
+    assert newer.conflict
+    refute older.conflict
+    assert_equal :healthy, coordinator.health_snapshot("A").state
+    assert_equal 0, coordinator.facts.count { |fact|
+      fact.type == :health_signal && fact.payload[:signal] == :provider_failure
+    }
+    assert_equal 4, coordinator.payout_snapshot(payout.id).attempts.first.last_observation_sequence
+    assert_equal false, coordinator.facts.find { |fact| fact.payload[:observation_id] == "obs:late-failure-3" }.payload[:health_evidence]
+    restored = RubyRouting::State::Coordinator.from_facts(
+      facts: coordinator.facts,
+      opportunities: [RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        capabilities: RubyRouting::ProviderCapabilities.new(authoritative_sequence: true)
+      )]
+    )
+    assert_equal coordinator.health_snapshot("A").to_h, restored.health_snapshot("A").to_h
+    assert_equal 4, restored.payout_snapshot(payout.id).attempts.first.last_observation_sequence
+  end
+
   def test_authoritative_provider_rejects_unsequenced_first_event_but_accepts_transport_classification
     coordinator = RubyRouting::State::Coordinator.new(
       opportunities: [RubyRouting::ProviderOpportunity.new(
@@ -330,7 +444,7 @@ class ProjectionReplayTest < Minitest::Test
       intent: transport_payout,
       policy: one_provider_policy
     )
-    coordinator.mark_attempt_started(transport_commit)
+    transport_token = coordinator.mark_attempt_started(transport_commit)
     transport = RubyRouting::ProviderObservation.new(
       observation_id: "obs:transport-first",
       payout_id: transport_payout.id,
@@ -340,7 +454,7 @@ class ProjectionReplayTest < Minitest::Test
       outcome: RubyRouting::NormalizedOutcome.unknown(attribution: :unknown),
       transport_kind: :ambiguous_after_possible_send
     )
-    transport_application = coordinator.apply_observation(transport)
+    transport_application = coordinator.apply_observation(transport, interaction_token: transport_token)
     assert_equal :unknown, transport_application.payout.status
     assert_equal "A", transport_application.payout.ownership.provider_id
   end
@@ -349,11 +463,17 @@ class ProjectionReplayTest < Minitest::Test
     coordinator = RubyRouting::State::Coordinator.new(opportunities: opportunities("A", "B"))
     payout = intent("late-operation-1")
     first = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(first)
-    coordinator.apply_observation(observation(first, "safe", :safe_route_failure))
+    first_token = coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(
+      observation(first, "safe", :safe_route_failure),
+      interaction_token: first_token
+    )
     second = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(second)
-    coordinator.apply_observation(observation(second, "success", :success))
+    second_token = coordinator.mark_attempt_started(second)
+    coordinator.apply_observation(
+      observation(second, "success", :success),
+      interaction_token: second_token
+    )
 
     late_success = observation(first, "late-success", :success)
     application = coordinator.apply_observation(late_success)
@@ -376,8 +496,11 @@ class ProjectionReplayTest < Minitest::Test
     )
     payout = intent("late-terminal-operation")
     commit = coordinator.prepare_and_commit_decision(intent: payout, policy: one_provider_policy)
-    coordinator.mark_attempt_started(commit)
-    coordinator.apply_observation(observation(commit, "terminal", :terminal_payout_failure, :recipient))
+    interaction_token = coordinator.mark_attempt_started(commit)
+    coordinator.apply_observation(
+      observation(commit, "terminal", :terminal_payout_failure, :recipient),
+      interaction_token: interaction_token
+    )
 
     application = coordinator.apply_observation(observation(commit, "late-success", :success, :provider))
 
@@ -392,8 +515,11 @@ class ProjectionReplayTest < Minitest::Test
     )
     payout = intent("recipient-attribution-1")
     commit = coordinator.prepare_and_commit_decision(intent: payout, policy: one_provider_policy)
-    coordinator.mark_attempt_started(commit)
-    coordinator.apply_observation(observation(commit, "recipient-failure", :terminal_payout_failure, :recipient))
+    interaction_token = coordinator.mark_attempt_started(commit)
+    coordinator.apply_observation(
+      observation(commit, "recipient-failure", :terminal_payout_failure, :recipient),
+      interaction_token: interaction_token
+    )
 
     analytics = RubyRouting::Projections::Analytics.from_facts(coordinator.facts)
 
@@ -407,8 +533,11 @@ class ProjectionReplayTest < Minitest::Test
     )
     payout = intent("reversal-1")
     commit = coordinator.prepare_and_commit_decision(intent: payout, policy: one_provider_policy)
-    coordinator.mark_attempt_started(commit)
-    coordinator.apply_observation(observation(commit, "settled", :success))
+    interaction_token = coordinator.mark_attempt_started(commit)
+    coordinator.apply_observation(
+      observation(commit, "settled", :success),
+      interaction_token: interaction_token
+    )
 
     reversed = coordinator.record_reversal(
       payout_id: payout.id,

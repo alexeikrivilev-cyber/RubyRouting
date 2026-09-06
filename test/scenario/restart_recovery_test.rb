@@ -49,6 +49,101 @@ class RestartRecoveryTest < Minitest::Test
     end
   end
 
+  def test_fresh_process_discovers_and_resumes_durable_raw_provider_failure
+    Dir.mktmpdir("ruby-routing-provider-failure-restart") do |directory|
+      path = File.join(directory, "facts.jsonl")
+      clock = TestSupport::ControlledClock.new
+      provider_opportunity = RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true)
+      )
+      payout = intent("provider-failure-restart-payout")
+      policy = RubyRouting::RoutingPolicy.new(
+        id: "provider-failure-restart",
+        epoch: "1",
+        measure: :count,
+        targets: { "A" => 1 },
+        recovery: RubyRouting::RecoveryPolicy.new(max_operations: 2)
+      )
+      first = RubyRouting::State::Coordinator.new(
+        clock: clock,
+        journal: RubyRouting::State::FileJournal.new(path),
+        opportunities: [provider_opportunity]
+      )
+      calls = []
+      failing_provider = Class.new do
+        define_method(:initiate) do |request|
+          calls << [:initiate, request.operation_id, request.attempt_id]
+          raise Timeout::Error, "raw adapter timeout before process death"
+        end
+
+        define_method(:resolve) do |_request|
+          raise "first process must not resolve after raw initiate failure"
+        end
+      end.new
+      service = RubyRouting::Application::Service.new(
+        coordinator: first,
+        providers: { "A" => failing_provider }
+      )
+
+      error = assert_raises(RubyRouting::ProviderExecutionError) do
+        service.submit(intent: payout, policy: policy)
+      end
+      assert_instance_of Timeout::Error, error.original_error
+      owner = first.payout_snapshot(payout.id).ownership
+      assert_equal [[:initiate, owner.operation_id, owner.attempt_id]], calls
+      assert_equal 1, first.facts.count { |fact| fact.type == :provider_execution_failed }
+      assert_equal [[:resolve, owner.operation_id, owner.attempt_id]],
+        service.queries.due_work(as_of: clock.now).map { |item| [item.action, item.operation_id, item.attempt_id] }
+
+      script = File.expand_path("../support/fresh_process_provider_failure_resume.rb", __dir__)
+      stdout, stderr, status = Open3.capture3(
+        RbConfig.ruby,
+        script,
+        path,
+        payout.id
+      )
+
+      assert status.success?, "fresh provider-failure resume failed: stdout=#{stdout.inspect} stderr=#{stderr.inspect}"
+      result = JSON.parse(stdout)
+      assert_equal [
+        {
+          "action" => "resolve",
+          "provider_id" => "A",
+          "operation_id" => owner.operation_id,
+          "attempt_id" => owner.attempt_id,
+          "reason_code" => "provider_execution_failure",
+          "due_at" => nil
+        }
+      ], result.fetch("due")
+      assert_equal "success", result.fetch("status")
+      assert_equal [["resolve", owner.operation_id, owner.attempt_id]], result.fetch("calls")
+      assert_equal [owner.operation_id], result.fetch("operation_ids")
+      assert_equal [owner.attempt_id], result.fetch("attempt_ids")
+      assert_equal "success", result.fetch("pass").fetch("items").first.fetch("status")
+      assert_equal "stop", result.fetch("pass").fetch("items").first.fetch("action")
+      assert_equal 1, result.fetch("fact_counts").fetch("provider_execution_failed")
+      assert_equal 2, result.fetch("fact_counts").fetch("attempt_started")
+
+      reopened = RubyRouting::State::Coordinator.new(
+        clock: clock,
+        journal: RubyRouting::State::FileJournal.new(path)
+      )
+      snapshot = reopened.payout_snapshot(payout.id)
+      assert_equal :success, snapshot.status
+      assert_equal owner.operation_id, snapshot.attempts.first.operation_id
+      assert_nil snapshot.ownership
+      replayed = RubyRouting::Projections::Replay.payout(reopened.facts, payout.id)
+      assert_equal snapshot.status, replayed.status
+      assert_equal snapshot.attempts.map(&:operation_id), replayed.attempts.map(&:operation_id)
+      assert_equal snapshot.attempts.map(&:attempt_id), replayed.attempts.map(&:attempt_id)
+      assert_equal snapshot.attempts.map(&:phase), replayed.attempts.map(&:phase)
+      assert_equal snapshot.provider_interaction_count, replayed.provider_interaction_count
+      assert_equal snapshot.resolution_interaction_count, replayed.resolution_interaction_count
+      assert_empty reopened.due_work(as_of: clock.now)
+    end
+  end
+
   def test_restart_restores_committed_owner_contract_reservations_and_dispatch
     Dir.mktmpdir("ruby-routing-restart") do |directory|
       path = File.join(directory, "facts.jsonl")
@@ -595,7 +690,7 @@ class RestartRecoveryTest < Minitest::Test
         ]
       )
       initial = first.prepare_and_commit_decision(intent: payout, policy: policy)
-      first.mark_attempt_started(initial)
+      interaction_token = first.mark_attempt_started(initial)
       first.apply_observation(
         RubyRouting::ProviderObservation.new(
           observation_id: "safe-release-restart-failure",
@@ -604,7 +699,8 @@ class RestartRecoveryTest < Minitest::Test
           operation_id: initial.proposal.operation_id,
           attempt_id: initial.proposal.attempt_id,
           outcome: RubyRouting::NormalizedOutcome.safe_route_failure(attribution: :provider)
-        )
+        ),
+        interaction_token: interaction_token
       )
       recovered = RubyRouting::State::Coordinator.new(
         journal: RubyRouting::State::FileJournal.new(path)
@@ -823,7 +919,7 @@ class RestartRecoveryTest < Minitest::Test
     payout = intent("restore-attempt-identity-reuse-payout")
     coordinator = RubyRouting::State::Coordinator.new(opportunities: providers)
     initial = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(initial)
+    initial_token = coordinator.mark_attempt_started(initial)
     coordinator.apply_observation(
       RubyRouting::ProviderObservation.new(
         observation_id: "restore-attempt-identity-reuse-failure",
@@ -832,7 +928,8 @@ class RestartRecoveryTest < Minitest::Test
         operation_id: initial.proposal.operation_id,
         attempt_id: initial.proposal.attempt_id,
         outcome: RubyRouting::NormalizedOutcome.safe_route_failure(attribution: :provider)
-      )
+      ),
+      interaction_token: initial_token
     )
     recovery = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
     refute_equal initial.proposal.operation_id, recovery.proposal.operation_id
@@ -1500,7 +1597,7 @@ class RestartRecoveryTest < Minitest::Test
     payout = intent("restore-observation-decision-payout")
     coordinator = RubyRouting::State::Coordinator.new(opportunities: providers)
     first = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(first)
+    first_token = coordinator.mark_attempt_started(first)
     coordinator.apply_observation(
       RubyRouting::ProviderObservation.new(
         observation_id: "restore-observation-decision-safe",
@@ -1509,10 +1606,11 @@ class RestartRecoveryTest < Minitest::Test
         operation_id: first.proposal.operation_id,
         attempt_id: first.proposal.attempt_id,
         outcome: RubyRouting::NormalizedOutcome.safe_route_failure(attribution: :provider)
-      )
+      ),
+      interaction_token: first_token
     )
     second = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(second)
+    second_token = coordinator.mark_attempt_started(second)
     coordinator.apply_observation(
       RubyRouting::ProviderObservation.new(
         observation_id: "restore-observation-decision-success",
@@ -1521,7 +1619,8 @@ class RestartRecoveryTest < Minitest::Test
         operation_id: second.proposal.operation_id,
         attempt_id: second.proposal.attempt_id,
         outcome: RubyRouting::NormalizedOutcome.success(attribution: :provider)
-      )
+      ),
+      interaction_token: second_token
     )
     coordinator.apply_observation(
       RubyRouting::ProviderObservation.new(
@@ -1738,8 +1837,8 @@ class RestartRecoveryTest < Minitest::Test
     final_payout = intent("restore-final-decision-payout")
     final_coordinator = RubyRouting::State::Coordinator.new(opportunities: [provider])
     initial = final_coordinator.prepare_and_commit_decision(intent: final_payout, policy: final_policy)
-    final_coordinator.mark_attempt_started(initial)
-    final_coordinator.apply_observation(observation_for(initial))
+    initial_token = final_coordinator.mark_attempt_started(initial)
+    final_coordinator.apply_observation(observation_for(initial), interaction_token: initial_token)
     final_commit = final_coordinator.prepare_and_commit_decision(intent: final_payout, policy: final_policy)
     assert_equal :already_final, final_commit.proposal.action
     assert_nil final_commit.proposal.operation_id
@@ -1983,7 +2082,7 @@ class RestartRecoveryTest < Minitest::Test
     policy = policy_for("restore-resolution-observation-phase")
     coordinator = RubyRouting::State::Coordinator.new(opportunities: [provider])
     initial = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(initial)
+    initial_token = coordinator.mark_attempt_started(initial)
     coordinator.apply_observation(
       RubyRouting::ProviderObservation.new(
         observation_id: "restore-resolution-observation-phase-initial",
@@ -1992,10 +2091,11 @@ class RestartRecoveryTest < Minitest::Test
         operation_id: initial.proposal.operation_id,
         attempt_id: initial.proposal.attempt_id,
         outcome: RubyRouting::NormalizedOutcome.unknown(attribution: :provider)
-      )
+      ),
+      interaction_token: initial_token
     )
     resolution = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_resolution_started(resolution)
+    resolution_token = coordinator.mark_resolution_started(resolution)
     coordinator.apply_observation(
       RubyRouting::ProviderObservation.new(
         observation_id: "restore-resolution-observation-phase-follow-up",
@@ -2004,7 +2104,8 @@ class RestartRecoveryTest < Minitest::Test
         operation_id: initial.proposal.operation_id,
         attempt_id: initial.proposal.attempt_id,
         outcome: RubyRouting::NormalizedOutcome.unknown(attribution: :provider)
-      )
+      ),
+      interaction_token: resolution_token
     )
     corrupted = coordinator.facts.reject do |fact|
       fact.type == :operation_phase_changed &&
@@ -2029,7 +2130,7 @@ class RestartRecoveryTest < Minitest::Test
       intent: payout,
       policy: policy_for("restore-ownership-release-reason")
     )
-    coordinator.mark_attempt_started(commit)
+    interaction_token = coordinator.mark_attempt_started(commit)
     coordinator.apply_observation(
       RubyRouting::ProviderObservation.new(
         observation_id: "restore-ownership-release-reason-observation",
@@ -2038,7 +2139,8 @@ class RestartRecoveryTest < Minitest::Test
         operation_id: commit.proposal.operation_id,
         attempt_id: commit.proposal.attempt_id,
         outcome: RubyRouting::NormalizedOutcome.safe_route_failure(attribution: :provider)
-      )
+      ),
+      interaction_token: interaction_token
     )
     corrupted = replace_fact_payload(
       coordinator.facts,
@@ -2214,7 +2316,7 @@ class RestartRecoveryTest < Minitest::Test
     payout = intent("restore-conflict-payout")
     coordinator = RubyRouting::State::Coordinator.new(opportunities: providers)
     initial = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(initial)
+    initial_token = coordinator.mark_attempt_started(initial)
     coordinator.apply_observation(
       RubyRouting::ProviderObservation.new(
         observation_id: "restore-conflict-failure",
@@ -2223,11 +2325,12 @@ class RestartRecoveryTest < Minitest::Test
         operation_id: initial.proposal.operation_id,
         attempt_id: initial.proposal.attempt_id,
         outcome: RubyRouting::NormalizedOutcome.safe_route_failure(attribution: :provider)
-      )
+      ),
+      interaction_token: initial_token
     )
     fallback = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(fallback)
-    coordinator.apply_observation(observation_for(fallback))
+    fallback_token = coordinator.mark_attempt_started(fallback)
+    coordinator.apply_observation(observation_for(fallback), interaction_token: fallback_token)
     coordinator.apply_observation(
       RubyRouting::ProviderObservation.new(
         observation_id: "restore-conflict-late-success",
@@ -2396,7 +2499,7 @@ class RestartRecoveryTest < Minitest::Test
     payout = intent("removed-provider-health-payout")
     coordinator = RubyRouting::State::Coordinator.new(opportunities: [provider])
     commit = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(commit)
+    interaction_token = coordinator.mark_attempt_started(commit)
     coordinator.replace_provider_opportunities([])
 
     coordinator.apply_observation(
@@ -2407,7 +2510,8 @@ class RestartRecoveryTest < Minitest::Test
         operation_id: commit.proposal.operation_id,
         attempt_id: commit.proposal.attempt_id,
         outcome: RubyRouting::NormalizedOutcome.safe_route_failure(attribution: :provider)
-      )
+      ),
+      interaction_token: interaction_token
     )
 
     restored = RubyRouting::State::Coordinator.from_facts(facts: coordinator.facts)
@@ -2963,7 +3067,7 @@ class RestartRecoveryTest < Minitest::Test
     payout = intent("duplicate-conflict-payout")
     coordinator = RubyRouting::State::Coordinator.new(opportunities: providers)
     initial = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(initial)
+    initial_token = coordinator.mark_attempt_started(initial)
     coordinator.apply_observation(
       RubyRouting::ProviderObservation.new(
         observation_id: "duplicate-conflict-failure",
@@ -2972,11 +3076,12 @@ class RestartRecoveryTest < Minitest::Test
         operation_id: initial.proposal.operation_id,
         attempt_id: initial.proposal.attempt_id,
         outcome: RubyRouting::NormalizedOutcome.safe_route_failure(attribution: :provider)
-      )
+      ),
+      interaction_token: initial_token
     )
     fallback = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(fallback)
-    coordinator.apply_observation(observation_for(fallback))
+    fallback_token = coordinator.mark_attempt_started(fallback)
+    coordinator.apply_observation(observation_for(fallback), interaction_token: fallback_token)
     coordinator.apply_observation(
       RubyRouting::ProviderObservation.new(
         observation_id: "duplicate-conflict-late-success",

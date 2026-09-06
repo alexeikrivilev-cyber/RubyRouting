@@ -360,7 +360,7 @@ class HealthRankingTest < Minitest::Test
     )
     payout = intent("transport-health-payout")
     commit = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(commit)
+    interaction_token = coordinator.mark_attempt_started(commit)
     coordinator.apply_observation(
       RubyRouting::ProviderObservation.new(
         observation_id: "transport-health-observation",
@@ -370,7 +370,8 @@ class HealthRankingTest < Minitest::Test
         attempt_id: commit.proposal.attempt_id,
         outcome: RubyRouting::NormalizedOutcome.safe_route_failure(attribution: :provider),
         transport_kind: :definitely_not_sent
-      )
+      ),
+      interaction_token: interaction_token
     )
 
     health_fact = coordinator.facts.find do |fact|

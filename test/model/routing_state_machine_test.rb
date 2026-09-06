@@ -42,33 +42,56 @@ class RoutingStateMachineTest < Minitest::Test
       payout = intent("cross-feature-#{history_index}")
       first = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
       assert first.proposal.assignment?, trace(seed, history_index, coordinator)
-      coordinator.mark_attempt_started(first)
+      first_token = coordinator.mark_attempt_started(first)
 
       case random.rand(4)
       when 0
-        coordinator.apply_observation(observation(first, "safe", :safe_route_failure, :provider))
+        coordinator.apply_observation(
+          observation(first, "safe", :safe_route_failure, :provider),
+          interaction_token: first_token
+        )
         coordinator.set_provider_availability("B", available: false)
         fallback = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
         assert_equal "C", fallback.proposal.provider_id, trace(seed, history_index, coordinator)
-        coordinator.mark_attempt_started(fallback)
-        settled = coordinator.apply_observation(observation(fallback, "success", :success, :provider))
+        fallback_token = coordinator.mark_attempt_started(fallback)
+        settled = coordinator.apply_observation(
+          observation(fallback, "success", :success, :provider),
+          interaction_token: fallback_token
+        )
         assert_equal :success, settled.payout.status, trace(seed, history_index, coordinator)
         conflict = coordinator.apply_observation(observation(first, "late-success", :success, :provider))
         assert conflict.conflict, trace(seed, history_index, coordinator)
       when 1
-        coordinator.apply_observation(observation(first, "unknown", :unknown, :provider))
+        coordinator.apply_observation(
+          observation(first, "unknown", :unknown, :provider),
+          interaction_token: first_token
+        )
         resolution = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
         assert_equal :resolve, resolution.proposal.action, trace(seed, history_index, coordinator)
-        settled = coordinator.apply_observation(observation(resolution, "resolved", :success, :provider))
+        resolution_token = coordinator.mark_resolution_started(resolution)
+        settled = coordinator.apply_observation(
+          observation(resolution, "resolved", :success, :provider),
+          interaction_token: resolution_token
+        )
         assert_equal :success, settled.payout.status, trace(seed, history_index, coordinator)
       when 2
-        terminal = coordinator.apply_observation(observation(first, "terminal", :terminal_payout_failure, :recipient))
+        terminal = coordinator.apply_observation(
+          observation(first, "terminal", :terminal_payout_failure, :recipient),
+          interaction_token: first_token
+        )
         assert_equal :terminal_payout_failure, terminal.payout.status, trace(seed, history_index, coordinator)
       when 3
-        coordinator.apply_observation(observation(first, "pending", :pending, :provider))
+        coordinator.apply_observation(
+          observation(first, "pending", :pending, :provider),
+          interaction_token: first_token
+        )
         resolution = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
         assert_equal :resolve, resolution.proposal.action, trace(seed, history_index, coordinator)
-        settled = coordinator.apply_observation(observation(resolution, "resolved", :success, :provider))
+        resolution_token = coordinator.mark_resolution_started(resolution)
+        settled = coordinator.apply_observation(
+          observation(resolution, "resolved", :success, :provider),
+          interaction_token: resolution_token
+        )
         assert_equal :success, settled.payout.status, trace(seed, history_index, coordinator)
       end
 

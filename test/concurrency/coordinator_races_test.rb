@@ -375,7 +375,7 @@ class CoordinatorRacesTest < Minitest::Test
     coordinator = RubyRouting::State::Coordinator.new(opportunities: opportunities)
     payout = intent("release-fallback-race")
     first = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(first)
+    interaction_token = coordinator.mark_attempt_started(first)
     safe_failure = observation(first)
     barrier = TestSupport::Synchronization::Barrier.new(2)
     fallback_result = nil
@@ -403,10 +403,21 @@ class CoordinatorRacesTest < Minitest::Test
     assert_equal({ "A" => 1 }, coordinator.allocation_snapshot(policy: policy).measures)
     assert_operator coordinator.capacity_snapshot("A").used_slots, :<=, 1
 
-    if fallback_result&.proposal&.assignment?
-      coordinator.mark_attempt_started(fallback_result)
-      coordinator.apply_observation(observation(fallback_result))
-    end
+    assert_equal :defer, fallback_result.proposal.action
+    assert_equal :wait, coordinator.apply_observation(safe_failure).next_action
+    assert_equal first.proposal.operation_id,
+      coordinator.payout_snapshot(payout.id).ownership.operation_id
+    coordinator.apply_observation(
+      RubyRouting::ProviderObservation.new(
+        observation_id: "race:owning-success:#{first.proposal.operation_id}",
+        payout_id: payout.id,
+        provider_id: first.proposal.provider_id,
+        operation_id: first.proposal.operation_id,
+        attempt_id: first.proposal.attempt_id,
+        outcome: RubyRouting::NormalizedOutcome.success(attribution: :provider)
+      ),
+      interaction_token: interaction_token
+    )
 
     assert_equal 0, coordinator.active_unresolved_owners
     assert_equal 0, coordinator.capacity_snapshot("A").used_slots

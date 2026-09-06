@@ -11,16 +11,20 @@ class OutcomeAnalyticsTest < Minitest::Test
     usd_policy = policy("usd-outcome", measure: :volume, currency: "USD", targets: { "A" => 1, "B" => 1 })
 
     primary = commit(coordinator, "fallback-outcome", 100, "RUB", count_policy)
-    coordinator.mark_attempt_started(primary)
+    primary_token = coordinator.mark_attempt_started(primary)
     coordinator.apply_observation(
-      observation(primary, "fallback-safe-failure", :safe_route_failure, :provider)
+      observation(primary, "fallback-safe-failure", :safe_route_failure, :provider),
+      interaction_token: primary_token
     )
     fallback = coordinator.prepare_and_commit_decision(
       intent: intent("fallback-outcome", 100, "RUB"),
       policy: count_policy
     )
-    coordinator.mark_attempt_started(fallback)
-    coordinator.apply_observation(observation(fallback, "fallback-success", :success, :provider))
+    fallback_token = coordinator.mark_attempt_started(fallback)
+    coordinator.apply_observation(
+      observation(fallback, "fallback-success", :success, :provider),
+      interaction_token: fallback_token
+    )
     coordinator.apply_observation(
       observation(primary, "late-primary-success", :success, :provider)
     )

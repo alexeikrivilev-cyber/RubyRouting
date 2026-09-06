@@ -1,0 +1,48 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "optparse"
+require "rbconfig"
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
+require "ruby_routing"
+
+root = File.expand_path("..", __dir__)
+options = {
+  providers: File.join(root, "data/providers.json"),
+  history: File.join(root, "data/operations_history.csv"),
+  queue: File.join(root, "data/operations_queue_10.json"),
+  profile: File.join(root, "data/submission_profile.json"),
+  decisions: File.join(root, "routing_decisions_test.json"),
+  report: File.join(root, "routing_report_test.json")
+}
+
+OptionParser.new do |parser|
+  parser.banner = "Usage: ruby bin/finalize_submission --queue PATH"
+  parser.on("--providers PATH", "provider snapshot JSON") { |value| options[:providers] = value }
+  parser.on("--history PATH", "history CSV") { |value| options[:history] = value }
+  parser.on("--queue PATH", "test or hidden operation queue JSON") { |value| options[:queue] = value }
+  parser.on("--profile PATH", "typed submission policy profile JSON") { |value| options[:profile] = value }
+end.parse!
+
+begin
+  run = RubyRouting::Case::Runner.new(
+    providers_path: options[:providers], history_path: options[:history], queue_path: options[:queue],
+    profile_path: options[:profile]
+  ).call
+  RubyRouting::Case::StrictValidator.new(run).validate!
+  RubyRouting::Case::Serializer.write_json(options[:decisions], run.decisions.map(&:to_h))
+  RubyRouting::Case::Serializer.write_json(options[:report], run.report.to_h)
+  RubyRouting::Case::SerializedArtifactValidator.new(
+    run, decisions_path: options[:decisions], report_path: options[:report]
+  ).validate!
+  puts "generated #{options[:decisions]} and #{options[:report]}"
+  public_queue = File.expand_path(File.join(root, "data/operations_queue_10.json"))
+  if File.expand_path(options[:queue]) == public_queue
+    validator = File.join(root, "scripts/validate_10.rb")
+    success = system(RbConfig.ruby, validator, options[:decisions])
+    raise RubyRouting::Case::OutputError, "public validator failed" unless success
+  end
+rescue RubyRouting::Case::InputError, RubyRouting::Case::OutputError, OptionParser::ParseError => error
+  warn "submission finalization failed: #{error.message}"
+  exit 1
+end

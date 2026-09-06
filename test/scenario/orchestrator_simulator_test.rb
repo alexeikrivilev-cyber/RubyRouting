@@ -463,6 +463,48 @@ class OrchestratorSimulatorTest < Minitest::Test
     assert_equal :resolving, coordinator.payout_snapshot(payout.id).current_operation_phase
   end
 
+  def test_raw_adapter_timeout_is_not_guessed_as_definitely_not_sent
+    provider = Class.new do
+      def initiate(_request)
+        raise Timeout::Error, "read deadline exceeded"
+      end
+
+      def resolve(request)
+        RubyRouting::ProviderObservation.new(
+          observation_id: "timeout-resolution",
+          payout_id: request.payout_id,
+          provider_id: request.provider_id,
+          operation_id: request.operation_id,
+          attempt_id: request.attempt_id,
+          outcome: RubyRouting::NormalizedOutcome.success(attribution: :provider)
+        )
+      end
+    end.new
+    capabilities = RubyRouting::ProviderCapabilities.new(status_lookup: true)
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A", capabilities: capabilities)]
+    )
+    app = orchestrator(coordinator, "A" => provider)
+    payout = intent("raw-adapter-timeout")
+
+    error = assert_raises(RubyRouting::ProviderExecutionError) do
+      app.submit(intent: payout, policy: one_provider_policy)
+    end
+    assert_instance_of Timeout::Error, error.original_error
+    assert_instance_of Timeout::Error, error.cause
+    snapshot = coordinator.payout_snapshot(payout.id)
+    assert_equal :dispatching, snapshot.current_operation_phase
+    assert_equal "A", snapshot.ownership.provider_id
+    assert_empty RubyRouting::Projections::Analytics.from_facts(coordinator.facts).transport_count_by_kind
+
+    recovered = app.resume(payout_id: payout.id, policy: one_provider_policy)
+
+    assert_equal :success, recovered.status
+    assert_equal ["timeout-resolution"], coordinator.facts
+      .select { |fact| fact.type == :provider_observed }
+      .map { |fact| fact.payload[:observation_id] }
+  end
+
   def test_malformed_provider_observation_surfaces_without_synthetic_unknown
     provider = Class.new do
       def initiate(request)
@@ -494,7 +536,17 @@ class OrchestratorSimulatorTest < Minitest::Test
     app = orchestrator(coordinator, "A" => provider)
     payout = intent("malformed-observation")
 
-    assert_raises(ArgumentError) { app.submit(intent: payout, policy: one_provider_policy) }
+    error = assert_raises(RubyRouting::ProviderContractError) do
+      app.submit(intent: payout, policy: one_provider_policy)
+    end
+    assert_instance_of ArgumentError, error.original_error
+    assert_equal "provider observation linkage does not match request", error.original_error.message
+    snapshot = coordinator.payout_snapshot(payout.id)
+    assert_equal :dispatching, snapshot.current_operation_phase
+    assert_equal "A", snapshot.ownership.provider_id
+    assert_equal 1, snapshot.provider_interaction_count
+    assert_equal 0, coordinator.facts.count { |fact| fact.type == :provider_interaction_completed }
+    assert_equal 0, coordinator.facts.count { |fact| fact.type == :provider_observed }
     second = app.resume(payout_id: payout.id, policy: one_provider_policy)
     analytics = RubyRouting::Projections::Analytics.from_facts(coordinator.facts)
 
@@ -502,7 +554,155 @@ class OrchestratorSimulatorTest < Minitest::Test
     assert_empty analytics.transport_count_by_kind
   end
 
-  def test_not_implemented_adapter_fault_surfaces_as_contract_error
+  def test_post_return_duration_processing_error_is_not_provider_contract_or_recovery
+    observation_class = Class.new(RubyRouting::ProviderObservation) do
+      def with_interaction_duration(_duration_seconds)
+        raise ArgumentError, "duration enrichment rejected the returned observation"
+      end
+    end
+    provider = Class.new do
+      define_method(:initiate) do |request|
+        observation_class.new(
+          observation_id: "duration-contract-observation",
+          payout_id: request.payout_id,
+          provider_id: request.provider_id,
+          operation_id: request.operation_id,
+          attempt_id: request.attempt_id,
+          outcome: RubyRouting::NormalizedOutcome.success(attribution: :provider)
+        )
+      end
+
+      def resolve(request)
+        RubyRouting::ProviderObservation.new(
+          observation_id: "duration-contract-resolution",
+          payout_id: request.payout_id,
+          provider_id: request.provider_id,
+          operation_id: request.operation_id,
+          attempt_id: request.attempt_id,
+          outcome: RubyRouting::NormalizedOutcome.success(attribution: :provider)
+        )
+      end
+    end.new
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true)
+      )]
+    )
+    app = orchestrator(coordinator, "A" => provider)
+    payout = intent("duration-contract")
+
+    error = assert_raises(RubyRouting::ApplicationProcessingError) do
+      app.submit(intent: payout, policy: one_provider_policy)
+    end
+    assert_instance_of ArgumentError, error.original_error
+    assert_equal "duration enrichment rejected the returned observation", error.original_error.message
+    snapshot = coordinator.payout_snapshot(payout.id)
+    assert_equal :pending, snapshot.status
+    assert_equal :dispatching, snapshot.current_operation_phase
+    refute coordinator.__send__(:provider_interaction_in_flight?, payout.id, snapshot.ownership.operation_id)
+    assert_empty coordinator.facts.select { |fact| fact.type == :provider_execution_failed }
+    assert_empty coordinator.facts.select { |fact| fact.type == :provider_observed }
+  end
+
+  def test_application_fault_after_valid_provider_return_is_not_provider_contract_error
+    provider = Class.new do
+      def initiate(request)
+        RubyRouting::ProviderObservation.new(
+          observation_id: "application-fault-after-return",
+          payout_id: request.payout_id,
+          provider_id: request.provider_id,
+          operation_id: request.operation_id,
+          attempt_id: request.attempt_id,
+          outcome: RubyRouting::NormalizedOutcome.success(attribution: :provider)
+        )
+      end
+
+      def resolve(request)
+        RubyRouting::ProviderObservation.new(
+          observation_id: "application-fault-after-return-resolution",
+          payout_id: request.payout_id,
+          provider_id: request.provider_id,
+          operation_id: request.operation_id,
+          attempt_id: request.attempt_id,
+          outcome: RubyRouting::NormalizedOutcome.success(attribution: :provider)
+        )
+      end
+    end.new
+    faulting_orchestrator = Class.new(RubyRouting::Application::Orchestrator) do
+      private
+
+      def classify_transport(result, request, interaction:, interaction_index:)
+        super
+        raise RuntimeError, "application classification programming fault"
+      end
+    end
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true)
+      )]
+    )
+    app = faulting_orchestrator.new(coordinator: coordinator, providers: { "A" => provider })
+    payout = intent("application-fault-after-return")
+
+    error = assert_raises(RubyRouting::ApplicationProcessingError) do
+      app.submit(intent: payout, policy: one_provider_policy)
+    end
+
+    assert_instance_of RubyRouting::ApplicationProcessingError, error
+    assert_instance_of RuntimeError, error.original_error
+    assert_equal "application classification programming fault", error.original_error.message
+    snapshot = coordinator.payout_snapshot(payout.id)
+    assert_equal :pending, snapshot.status
+    assert_equal :dispatching, snapshot.current_operation_phase
+    assert_equal "A", snapshot.ownership.provider_id
+    refute coordinator.__send__(
+      :provider_interaction_in_flight?,
+      payout.id,
+      snapshot.ownership.operation_id
+    )
+    assert_empty coordinator.facts.select { |fact| fact.type == :provider_execution_failed }
+    assert_empty coordinator.facts.select { |fact| fact.type == :provider_observed }
+  end
+
+  def test_fatal_apply_failure_does_not_strand_the_process_local_interaction_guard
+    provider = TestSupport::Simulator::ScriptedProvider.new(
+      provider_id: "A",
+      steps: [TestSupport::Simulator::Step.success]
+    )
+    fatal_coordinator = Class.new(RubyRouting::State::Coordinator) do
+      def apply_observation(*_arguments, **_keywords)
+        raise NotImplementedError, "fatal apply-path probe"
+      end
+    end.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true)
+      )]
+    )
+    app = orchestrator(fatal_coordinator, "A" => provider)
+    payout = intent("fatal-apply-path")
+
+    assert_raises(NotImplementedError) do
+      app.submit(intent: payout, policy: one_provider_policy)
+    end
+
+    snapshot = fatal_coordinator.payout_snapshot(payout.id)
+    assert_equal :pending, snapshot.status
+    assert_equal :dispatching, snapshot.current_operation_phase
+    refute fatal_coordinator.__send__(
+      :provider_interaction_in_flight?,
+      payout.id,
+      snapshot.ownership.operation_id
+    )
+    assert_empty fatal_coordinator.facts.select { |fact| fact.type == :provider_execution_failed }
+    assert_empty fatal_coordinator.facts.select { |fact| fact.type == :provider_observed }
+    assert_empty fatal_coordinator.due_work(as_of: Time.now.utc),
+      "a live fatal apply fault must not masquerade as restart recovery"
+  end
+
+  def test_not_implemented_adapter_fault_releases_guard_without_provider_failure_marker
     provider = Class.new do
       def initiate(_request)
         raise NotImplementedError, "adapter has no initiate implementation"
@@ -513,13 +713,25 @@ class OrchestratorSimulatorTest < Minitest::Test
       end
     end.new
     coordinator = RubyRouting::State::Coordinator.new(
-      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+      opportunities: [RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true)
+      )]
     )
 
     assert_raises(NotImplementedError) do
       orchestrator(coordinator, "A" => provider)
         .submit(intent: intent("not-implemented-adapter"), policy: one_provider_policy)
     end
+    snapshot = coordinator.payout_snapshot("not-implemented-adapter")
+    refute coordinator.__send__(
+      :provider_interaction_in_flight?,
+      snapshot.id,
+      snapshot.ownership.operation_id
+    )
+    assert_empty coordinator.facts.select { |fact| fact.type == :provider_execution_failed }
+    assert_empty coordinator.due_work(as_of: Time.now.utc),
+      "a live fatal adapter fault must not masquerade as restart recovery"
   end
 
   private

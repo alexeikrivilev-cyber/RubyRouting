@@ -64,41 +64,47 @@ class LongStateMachineTest < Minitest::Test
   def drive_history(coordinator, policy, payout, history_index)
     initial = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
     assert_equal :assign, initial.proposal.action, trace(history_index, initial.payout)
-    coordinator.mark_attempt_started(initial)
+    initial_token = coordinator.mark_attempt_started(initial)
 
     case history_index % 4
     when 0
       UNKNOWN_RESOLUTION_STEPS.times do |step|
-        apply(coordinator, initial, payout, :unknown, "unknown-#{step}")
+        apply(coordinator, initial, payout, :unknown, "unknown-#{step}", interaction_token: initial_token)
         resolution = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
         assert_equal :resolve, resolution.proposal.action, trace(history_index, resolution.payout)
-        coordinator.mark_resolution_started(resolution)
+        initial_token = coordinator.mark_resolution_started(resolution)
         initial = resolution
       end
-      apply(coordinator, initial, payout, :success, "resolved-success")
+      apply(coordinator, initial, payout, :success, "resolved-success", interaction_token: initial_token)
     when 1
-      failure = apply(coordinator, initial, payout, :safe_route_failure, "safe-release")
+      failure = apply(
+        coordinator, initial, payout, :safe_route_failure, "safe-release",
+        interaction_token: initial_token
+      )
       assert_equal :reroute, failure.next_action, trace(history_index, failure.payout)
       fallback = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
       assert_equal :assign, fallback.proposal.action, trace(history_index, fallback.payout)
       refute_equal initial.proposal.provider_id, fallback.proposal.provider_id, trace(history_index, fallback.payout)
-      coordinator.mark_attempt_started(fallback)
-      apply(coordinator, fallback, payout, :success, "fallback-success")
+      fallback_token = coordinator.mark_attempt_started(fallback)
+      apply(coordinator, fallback, payout, :success, "fallback-success", interaction_token: fallback_token)
     when 2
       PENDING_RESOLUTION_STEPS.times do |step|
-        apply(coordinator, initial, payout, :pending, "pending-#{step}")
+        apply(coordinator, initial, payout, :pending, "pending-#{step}", interaction_token: initial_token)
         resolution = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
         assert_equal :resolve, resolution.proposal.action, trace(history_index, resolution.payout)
-        coordinator.mark_resolution_started(resolution)
+        initial_token = coordinator.mark_resolution_started(resolution)
         initial = resolution
       end
-      apply(coordinator, initial, payout, :terminal_payout_failure, "terminal-recipient")
+      apply(
+        coordinator, initial, payout, :terminal_payout_failure, "terminal-recipient",
+        interaction_token: initial_token
+      )
     when 3
-      apply(coordinator, initial, payout, :success, "immediate-success")
+      apply(coordinator, initial, payout, :success, "immediate-success", interaction_token: initial_token)
     end
   end
 
-  def apply(coordinator, commit, payout, status, label)
+  def apply(coordinator, commit, payout, status, label, interaction_token: nil)
     coordinator.apply_observation(
       RubyRouting::ProviderObservation.new(
         observation_id: "long-state:#{payout.id}:#{label}",
@@ -110,7 +116,8 @@ class LongStateMachineTest < Minitest::Test
           status: status,
           attribution: status == :terminal_payout_failure ? :recipient : :unknown
         )
-      )
+      ),
+      interaction_token: interaction_token
     )
   end
 

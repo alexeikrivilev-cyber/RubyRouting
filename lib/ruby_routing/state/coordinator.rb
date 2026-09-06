@@ -3,7 +3,16 @@
 module RubyRouting
   module State
     class Coordinator
-      ProviderInteractionToken = Data.define(:payout_id, :operation_id, :generation)
+      ProviderInteractionToken = Data.define(
+        :payout_id,
+        :operation_id,
+        :generation,
+        # Durable interaction count, not process-local generation. It gives
+        # generated transport observations a restart-safe exchange ordinal.
+        :interaction_index,
+        :money_moving,
+        :economically_decisive
+      )
 
       def self.from_facts(facts:, opportunities: [], health_policy: nil, quality_policy: nil, clock: nil, journal: nil)
         new(
@@ -38,6 +47,14 @@ module RubyRouting
         # while this marker closes the live interval after token consumption
         # and before the provider observation is accepted.
         @provider_interaction_in_flight = {}
+        # A provider interaction can unwind in the live process after the
+        # durable attempt started but before its observation is accepted. That
+        # provenance must not be mistaken for a fresh-process restart merely
+        # because the guard ended. Values retain the local failure provenance;
+        # the map is intentionally not durable, so a new Coordinator remains
+        # the genuine restart boundary and may rediscover the exact pinned
+        # operation from facts.
+        @live_interaction_failures = {}
         @provider_interaction_generation = 0
         @policies = {}
         source_facts = facts || (journal.respond_to?(:facts) ? journal.facts : [])
@@ -237,6 +254,28 @@ module RubyRouting
           state.created_at ||= current_time
           state.created_monotonic_at ||= current_monotonic
           register_policy!(state, intent, policy)
+          if state.ownership.nil? && !%i[success terminal_payout_failure reversed].include?(state.status)
+            if money_moving_interaction_in_flight?(intent.id)
+              proposal = DecisionProposal.new(
+                action: :defer,
+                role: :recovery,
+                policy_epoch: policy.epoch,
+                reasons: ["a live money-moving provider interaction must finish before fresh assignment"],
+                reason_codes: [:live_money_moving_interaction]
+              )
+              return DecisionCommit.new(proposal: proposal, request: nil, payout: snapshot_for(state))
+            end
+            if economically_decisive_interaction_in_flight?(intent.id)
+              proposal = DecisionProposal.new(
+                action: :defer,
+                role: :recovery,
+                policy_epoch: policy.epoch,
+                reasons: ["a live economically-decisive provider interaction must finish before fresh assignment"],
+                reason_codes: [:live_economically_decisive_interaction]
+              )
+              return DecisionCommit.new(proposal: proposal, request: nil, payout: snapshot_for(state))
+            end
+          end
           expire_unresolved_operation!(state)
           schedule_due = if state.recovery_schedule
             state.recovery_schedule.due?(
@@ -406,7 +445,9 @@ module RubyRouting
             attempt: attempt,
             expected_pending: true
           )
+          clear_live_interaction_failure!(state, attempt)
           state.dispatch_pending.delete(operation_id)
+          state.provider_execution_failure = nil
 
           state.provider_interaction_count += 1
           state.resolution_interaction_count += 1 if decision_commit.proposal.action == :retry_same
@@ -420,7 +461,12 @@ module RubyRouting
             action: decision_commit.proposal.action,
             started_at: current_time
           )
-          mark_provider_interaction_in_flight!(payout_id, operation_id)
+          mark_provider_interaction_in_flight!(
+            payout_id,
+            operation_id,
+            money_moving: true,
+            interaction_index: state.provider_interaction_count
+          )
         end
       end
 
@@ -453,6 +499,12 @@ module RubyRouting
           )
 
           pending = state.dispatch_pending[attempt.operation_id]
+          if pending != true
+            return nil unless same_provider_recovery_action_for(state, attempt)
+            if (provider_failure_due_at = provider_execution_failure_due_at_for(state))
+              return nil if provider_failure_due_at > current_time
+            end
+          end
           proposal = restart_proposal_for(state, attempt, pending)
           return nil unless proposal
 
@@ -515,7 +567,9 @@ module RubyRouting
             attempt: attempt,
             expected_pending: :resolution
           )
+          clear_live_interaction_failure!(state, attempt)
           state.dispatch_pending.delete(operation_id)
+          state.provider_execution_failure = nil
 
           state.provider_interaction_count += 1
           state.resolution_interaction_count += 1
@@ -528,15 +582,78 @@ module RubyRouting
             action: decision_commit.proposal.action,
             started_at: current_time
           )
-          mark_provider_interaction_in_flight!(payout_id, operation_id)
+          mark_provider_interaction_in_flight!(
+            payout_id,
+            operation_id,
+            money_moving: false,
+            economically_decisive: true,
+            interaction_index: state.provider_interaction_count
+          )
         end
       end
 
-      # An adapter exception is not a durable provider observation. Release
-      # only the process-local guard so the pinned operation can recover by
-      # its existing status-lookup/idempotent-retry contract.
+      # A raw adapter exception is not a durable provider observation. Release
+      # the process-local guard and retain a durable, payload-free provenance
+      # marker so due-work can discover the same pinned operation after the
+      # caller receives the typed failure or the process restarts.
       def provider_interaction_failed(interaction_token:)
+        atomic_synchronize do
+          return nil unless provider_interaction_current?(interaction_token)
+
+          state = @payouts.fetch(interaction_token.payout_id) do
+            raise RubyRouting::State::DurableCorruptionError,
+              "provider failure references unknown payout"
+          end
+          attempt = state.operations.fetch(interaction_token.operation_id) do
+            raise RubyRouting::State::DurableCorruptionError,
+              "provider failure references unknown operation"
+          end
+          action = state.operation_actions.fetch(interaction_token.operation_id) do
+            raise RubyRouting::State::DurableCorruptionError,
+              "provider failure references operation without action"
+          end
+          expected_phase = action == :resolve ? :resolving : :dispatching
+          unless state.ownership&.operation_id == attempt.operation_id &&
+                 state.ownership.provider_id == attempt.provider_id &&
+                 state.ownership.attempt_id == attempt.attempt_id &&
+                 attempt.phase == expected_phase
+            raise RubyRouting::State::DurableCorruptionError,
+              "provider failure does not match current operation"
+          end
+
+          release_provider_interaction!(interaction_token)
+          failure = {
+            provider_id: attempt.provider_id,
+            operation_id: attempt.operation_id,
+            attempt_id: attempt.attempt_id,
+            action: action,
+            phase: attempt.phase,
+            interaction_index: interaction_token.interaction_index,
+            failed_at: current_time
+          }.freeze
+          state.provider_execution_failure = failure
+          append_fact(
+            :provider_execution_failed,
+            state.intent.id,
+            **failure
+          )
+        end
+        nil
+      end
+
+      # A live-process interaction failure must release the process-local
+      # guard without becoming restart-derived recovery work. The marker is
+      # deliberately process-local; a fresh Coordinator is the crash boundary.
+      def provider_interaction_ended(interaction_token:, failure_provenance: nil)
         synchronize do
+          if failure_provenance
+            unless %i[post_return fatal].include?(failure_provenance)
+              raise ArgumentError, "unsupported live interaction failure provenance"
+            end
+            if provider_interaction_current?(interaction_token)
+              @live_interaction_failures[interaction_identity_for(interaction_token)] = failure_provenance
+            end
+          end
           release_provider_interaction!(interaction_token)
         end
         nil
@@ -557,13 +674,39 @@ module RubyRouting
           unless attempt.provider_id == observation.provider_id && attempt.attempt_id == observation.attempt_id
             raise ArgumentError, "observation operation linkage does not match"
           end
+          owning_completion = provider_interaction_current?(interaction_token)
+          causal_hold = !owning_completion && causal_release_hold?(state, attempt, observation)
           observation_decision = @observation_ledger.observe(
             seen_observations: state.seen_observations,
             current_operation_id: state.ownership&.operation_id,
             attempt: attempt,
-            observation: observation
+            observation: observation,
+            causal_hold: causal_hold,
+            owning_completion: owning_completion
           )
+          clear_live_interaction_failure!(state, attempt)
           if observation_decision.duplicate?
+            if observation_decision.causal_completion?
+              append_fact(
+                :provider_interaction_completed,
+                state.intent.id,
+                observation_id: observation.observation_id,
+                operation_id: observation.operation_id,
+                attempt_id: observation.attempt_id,
+                provider_id: observation.provider_id
+              )
+              attempt.outcome = observation.outcome
+              attempt.last_observation_sequence = observation.sequence unless observation.sequence.nil?
+              state.last_outcome = observation.outcome
+              record_quality_from_observation(
+                observation,
+                context: state.intent.routing_context,
+                currency: state.intent.money.currency,
+                observed_at: observation.observed_at || current_time
+              )
+              apply_current_outcome(state, attempt, observation.outcome)
+              state.recovery_schedule = nil
+            end
             release_provider_interaction!(interaction_token)
             return ObservationApplication.new(
               payout: snapshot_for(state),
@@ -597,6 +740,8 @@ module RubyRouting
             interaction_duration_seconds: observation.interaction_duration_seconds,
             applied: applies,
             conflict: conflict,
+            health_evidence: observation_decision.health_evidence?,
+            causal_hold: observation_decision.causal_hold?,
             recovery_schedule: recovery_schedule&.to_h
           )
           if observation.transport_kind
@@ -612,9 +757,17 @@ module RubyRouting
             )
           end
           if conflict
-            record_conflict(state, attempt, observation)
+            record_conflict(
+              state,
+              attempt,
+              observation,
+              reason: observation_decision.causal_contradiction? ? :causal_release_contradiction : nil
+            )
           end
-          record_health_from_observation(observation, routing_context: state.intent.routing_context)
+          record_health_from_observation(
+            observation,
+            routing_context: state.intent.routing_context
+          ) if observation_decision.health_evidence?
           record_quality_from_observation(
             observation,
             context: state.intent.routing_context,
@@ -651,9 +804,12 @@ module RubyRouting
       # Returns only work that is safe to expose as currently actionable. The
       # caller supplies wall time so an external runner can poll
       # deterministically; no queue or background thread is part of the core.
-      def due_recovery_work(as_of: current_time)
+      def due_recovery_work(as_of: current_time, limit: nil)
         unless as_of.is_a?(Time)
           raise ArgumentError, "as_of must be a Time"
+        end
+        unless limit.nil? || (limit.is_a?(Integer) && !limit.is_a?(TrueClass) && limit >= 0)
+          raise ArgumentError, "limit must be a non-negative Integer or nil"
         end
 
         normalized_as_of = as_of.utc.freeze
@@ -672,6 +828,8 @@ module RubyRouting
                 reason_code: :operation_contract_expired,
                 status: :reconciliation_blocked
               )
+            elsif (work_item = provider_execution_failure_work_for(state, as_of: normalized_as_of))
+              work << work_item
             elsif state.recovery_schedule&.due?(as_of: normalized_as_of)
               schedule = state.recovery_schedule
               work << RubyRouting::RecoveryWorkItem.new(
@@ -684,7 +842,11 @@ module RubyRouting
                 reason_code: schedule.reason_code,
                 status: state.status
               )
-            elsif state.status == :reconciliation_blocked && state.ownership
+            elsif (work_item = restart_recovery_work_for(state, as_of: normalized_as_of))
+              work << work_item
+            elsif state.status == :reconciliation_blocked &&
+                  state.ownership &&
+                  reconciliation_blocked_visible_at?(state, normalized_as_of)
               work << RubyRouting::RecoveryWorkItem.new(
                 payout_id: state.intent.id,
                 action: :reconcile,
@@ -698,6 +860,7 @@ module RubyRouting
             end
           end
           work.sort_by!(&:payout_id)
+          work = work.first(limit) unless limit.nil?
           work.freeze
         end
       end
@@ -951,13 +1114,9 @@ module RubyRouting
         action = if pending == true
           attempt.phase == :committed ? :assign : :retry_same
         elsif pending == :resolution
-          :resolve
+          same_provider_recovery_action_for(state, attempt)
         elsif pending.nil? && %i[dispatching resolving].include?(attempt.phase)
-          if attempt.contract&.status_lookup
-            :resolve
-          elsif attempt.contract&.idempotent_retry
-            :retry_same
-          end
+          same_provider_recovery_action_for(state, attempt)
         end
         return nil unless action
 
@@ -977,12 +1136,43 @@ module RubyRouting
         @provider_interaction_in_flight.key?([payout_id, operation_id])
       end
 
-      def mark_provider_interaction_in_flight!(payout_id, operation_id)
+      def provider_interaction_current?(interaction_token)
+        return false unless interaction_token.is_a?(ProviderInteractionToken)
+
+        @provider_interaction_in_flight[[interaction_token.payout_id, interaction_token.operation_id]]&.equal?(interaction_token)
+      end
+
+      def money_moving_interaction_in_flight?(payout_id)
+        @provider_interaction_in_flight.any? do |(live_payout_id, _operation_id), token|
+          live_payout_id == payout_id && token.money_moving
+        end
+      end
+
+      def economically_decisive_interaction_in_flight?(payout_id)
+        @provider_interaction_in_flight.any? do |(live_payout_id, _operation_id), token|
+          live_payout_id == payout_id && token.economically_decisive
+        end
+      end
+
+      def causal_release_hold?(state, attempt, observation)
+        state.ownership&.operation_id == attempt.operation_id &&
+          (provider_interaction_in_flight?(state.intent.id, attempt.operation_id) ||
+           (observation.outcome.provider_failure? &&
+            %i[committed dispatching resolving pending unknown reconciliation_blocked].include?(attempt.phase))) &&
+          observation.outcome.safe_to_release? &&
+          !observation.outcome.terminal_payout_failure?
+      end
+
+      def mark_provider_interaction_in_flight!(payout_id, operation_id, money_moving:, economically_decisive: money_moving,
+                                               interaction_index: nil)
         @provider_interaction_generation += 1
         token = ProviderInteractionToken.new(
           payout_id: payout_id,
           operation_id: operation_id,
-          generation: @provider_interaction_generation
+          generation: @provider_interaction_generation,
+          interaction_index: interaction_index,
+          money_moving: money_moving,
+          economically_decisive: economically_decisive
         )
         @provider_interaction_in_flight[[payout_id, operation_id]] = token
         token
@@ -1956,8 +2146,79 @@ module RubyRouting
         )
       end
 
+      def provider_execution_failure_work_for(state, as_of:)
+        failure = state.provider_execution_failure
+        ownership = state.ownership
+        return nil unless failure && ownership
+        failed_at = failure[:failed_at]
+        return nil unless failed_at.is_a?(Time)
+        return nil if failed_at.utc > as_of
+        return nil if provider_interaction_in_flight?(state.intent.id, ownership.operation_id)
+        return nil unless failure[:operation_id] == ownership.operation_id &&
+          failure[:provider_id] == ownership.provider_id &&
+          failure[:attempt_id] == ownership.attempt_id
+
+        attempt = state.operations.fetch(ownership.operation_id)
+        action = same_provider_recovery_action_for(state, attempt)
+        return nil unless action
+        due_at = provider_execution_failure_due_at_for(state)
+        return nil if due_at && due_at > as_of
+
+        RubyRouting::RecoveryWorkItem.new(
+          payout_id: state.intent.id,
+          action: action,
+          provider_id: ownership.provider_id,
+          operation_id: ownership.operation_id,
+          attempt_id: ownership.attempt_id,
+          due_at: due_at,
+          reason_code: :provider_execution_failure,
+          status: state.status
+        )
+      end
+
+      def restart_recovery_work_for(state, as_of:)
+        ownership = state.ownership
+        return nil unless ownership
+        return nil if provider_interaction_in_flight?(state.intent.id, ownership.operation_id)
+        failure = state.provider_execution_failure
+        return nil if failure
+        if state.recovery_schedule && !state.recovery_schedule.due?(as_of: as_of)
+          return nil
+        end
+
+        attempt = state.operations.fetch(ownership.operation_id)
+        return nil if live_interaction_failure_for?(state, attempt)
+        return nil unless %i[dispatching resolving].include?(attempt.phase)
+
+        started_fact = @fact_store.query(
+          payout_id: state.intent.id,
+          type: :attempt_started
+        ).reverse.find do |fact|
+          fact.payload[:operation_id] == attempt.operation_id &&
+            fact.payload[:attempt_id] == attempt.attempt_id
+        end
+        started_at = started_fact&.payload&.[](:started_at)
+        return nil unless started_at.is_a?(Time) && started_at.utc <= as_of
+
+        proposal = restart_proposal_for(state, attempt, nil)
+        return nil unless proposal
+
+        RubyRouting::RecoveryWorkItem.new(
+          payout_id: state.intent.id,
+          action: proposal.action,
+          provider_id: attempt.provider_id,
+          operation_id: attempt.operation_id,
+          attempt_id: attempt.attempt_id,
+          due_at: nil,
+          reason_code: :restart_recovery,
+          status: state.status
+        )
+      end
+
       def operation_contract_expired_at?(state, as_of)
-        return true if state.status == :reconciliation_blocked
+        if state.status == :reconciliation_blocked
+          return reconciliation_blocked_visible_at?(state, as_of)
+        end
 
         attempt = state.operations.fetch(state.ownership.operation_id)
         return false unless attempt.committed_monotonic_at
@@ -1971,6 +2232,69 @@ module RubyRouting
         (operation_ttl && elapsed >= operation_ttl) ||
           (deadline && state.created_monotonic_at &&
            elapsed_seconds(as_of_monotonic, state.created_monotonic_at) >= deadline)
+      end
+
+      def reconciliation_blocked_at_for(state)
+        ownership = state.ownership
+        return nil unless ownership
+
+        @fact_store.query(
+          payout_id: state.intent.id,
+          type: :reconciliation_blocked
+        ).reverse_each do |fact|
+          payload = fact.payload
+          next unless payload[:operation_id] == ownership.operation_id &&
+                      payload[:attempt_id] == ownership.attempt_id &&
+                      payload[:provider_id] == ownership.provider_id
+
+          return payload[:blocked_at]
+        end
+        nil
+      end
+
+      def same_provider_recovery_action_for(state, attempt)
+        policy = @policies.fetch(state.policy_scope_key) do
+          raise RubyRouting::State::DurableCorruptionError,
+            "missing policy definition for recovery authority"
+        end
+        RubyRouting::Routing::Recovery.same_provider_action(
+          capabilities: attempt.contract,
+          resolution_interactions: state.resolution_interaction_count,
+          policy: policy.recovery
+        )
+      end
+
+      def provider_execution_failure_due_at_for(state)
+        failure = state.provider_execution_failure
+        return nil unless failure && failure[:failed_at].is_a?(Time)
+
+        policy = @policies.fetch(state.policy_scope_key) do
+          raise RubyRouting::State::DurableCorruptionError,
+            "missing policy definition for recovery timing"
+        end
+        delay = policy.recovery.delay_for(
+          interaction_index: state.resolution_interaction_count
+        )
+        return nil if delay.zero?
+
+        failure[:failed_at].utc + delay
+      end
+
+      def interaction_identity_for(interaction_token)
+        [interaction_token.payout_id, interaction_token.operation_id].freeze
+      end
+
+      def live_interaction_failure_for?(state, attempt)
+        @live_interaction_failures.key?([state.intent.id, attempt.operation_id])
+      end
+
+      def clear_live_interaction_failure!(state, attempt)
+        @live_interaction_failures.delete([state.intent.id, attempt.operation_id])
+      end
+
+      def reconciliation_blocked_visible_at?(state, as_of)
+        blocked_at = reconciliation_blocked_at_for(state)
+        blocked_at.is_a?(Time) && blocked_at.utc <= as_of
       end
 
       def expire_unresolved_operation!(state)
@@ -2190,6 +2514,7 @@ module RubyRouting
 
       def next_action_for(state)
         return :stop if %i[success terminal_payout_failure reversed].include?(state.status)
+        return :defer if state.conflicts.any?
         return :reroute if state.status == :safe_route_failure && state.ownership.nil?
         return :reroute if state.status == :temporary_provider_failure && state.ownership.nil?
         return :wait if state.ownership
@@ -2197,13 +2522,18 @@ module RubyRouting
         :defer
       end
 
-      def record_conflict(state, attempt, observation)
+      def record_conflict(state, attempt, observation, reason: nil)
+        reason ||= if observation.outcome.success?
+          :late_old_operation_success
+        else
+          :late_old_operation_ambiguity
+        end
         conflict = RubyRouting::EconomicConflict.new(
           payout_id: state.intent.id,
           provider_id: attempt.provider_id,
           operation_id: attempt.operation_id,
           attempt_id: attempt.attempt_id,
-          reason: :late_old_operation_success
+          reason: reason
         )
         state.conflicts << conflict
         append_fact(
@@ -2293,6 +2623,7 @@ module RubyRouting
                       :provider_interaction_count, :policy_scope_key, :policy_fingerprint,
                       :created_at, :resolution_interaction_count,
                       :created_monotonic_at, :latest_opportunity_evaluation,
+                      :provider_execution_failure,
                       :recovery_schedule
         attr_reader :intent, :attempts, :operations, :seen_observations,
                     :conflicts, :conflict_observation_ids, :reversals,
@@ -2330,6 +2661,7 @@ module RubyRouting
           @policy_fingerprint = nil
           @created_at = nil
           @created_monotonic_at = nil
+          @provider_execution_failure = nil
           @recovery_schedule = nil
         end
       end

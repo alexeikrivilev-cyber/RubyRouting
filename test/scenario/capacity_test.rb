@@ -26,8 +26,11 @@ class CapacityTest < Minitest::Test
     assert_equal [live.used_slots, live.used_count, live.used_amount_minor],
       [replayed.used_slots, replayed.used_count, replayed.used_amount_minor]
 
-    coordinator.mark_attempt_started(first)
-    coordinator.apply_observation(observation(first, "release", :safe_route_failure))
+    interaction_token = coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(
+      observation(first, "release", :safe_route_failure),
+      interaction_token: interaction_token
+    )
 
     retried = coordinator.prepare_and_commit_decision(intent: intent("capacity-2"), policy: policy)
     assert retried.proposal.assignment?

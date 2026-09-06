@@ -1,109 +1,82 @@
 # Testing Strategy
 
-RubyRouting testing is organized around financial invariants and adversarial state transitions, not line coverage.
+Current Version Goal: **v0.4.1 / SPEC-017 — VERSION_COMPLETE**.
 
-## Core test families
+Preserve all inherited production and v0.4.0 case suites. Add release-path tests that attack the gaps a component-level suite can miss.
 
-Use a layered matrix:
+## 1. SubmissionProfile tests
 
-- deterministic unit and acceptance regressions;
-- independent pure-Ruby allocation/recovery/admission oracles;
-- property and metamorphic tests;
-- model/state-machine histories;
-- controlled concurrency/interleaving tests;
-- provider contract/normalization tests;
-- deterministic fault injection and fresh-process crash tests;
-- end-to-end payout/fallback/reconciliation scenarios;
-- replay/restart equivalence;
-- bounded performance/stress evidence with exact workload metadata.
+Prove:
 
-No flaky retry masking. Randomized failures must emit/reuse reproducible seeds/traces.
+- finalization and supported CLI load the same canonical profile;
+- count targets derive from official external `traffic_percentage`;
+- volume target source is explicit/provenanced;
+- enabled factor weights are exact and non-accidental;
+- changing profile weights changes a controlled decision without code changes;
+- canonical finalization-equivalent selection trace contains the intended factors;
+- simulation seed/mode and terminal provider are explicit.
 
-## Financial invariants always worth asserting
+A demo-only factor test does not close release activation.
 
-- active unresolved economic owners per payout <= 1;
-- UNKNOWN never causes cross-provider fallback;
-- same-provider retry/resolution reuses the pinned economic operation according to contract;
-- primary allocation is not advanced by recovery attempts;
-- capacity/throughput/health reservations are conserved and released exactly once where specified;
-- settlement is unique unless a later distinct effect is represented as conflict/reversal evidence;
-- exact duplicate observations are idempotent;
-- replay/restart reproduces the same economic state;
-- count/volume/currency analytics remain dimension-safe.
+## 2. Accounting tests
 
-## Concurrency tests
+Fallback scenario must assert separately:
 
-P0 concurrency evidence must use controlled synchronization: barriers, queues, latches or equivalent. Do not rely on `sleep` to make a race likely.
+- primary assignment provider/count/volume;
+- actual attempted provider sequence;
+- final approved/settlement provider/count/volume;
+- daily approved mutation;
+- next operation's count/volume objective uses the documented assignment ledger.
 
-Assert exact structural evidence:
+Rejected/expired assignment may not vanish from routing-distribution accounting merely because settlement failed.
 
-- provider call count;
-- `attempt_started` count;
-- operation/attempt identities;
-- ownership acquisitions/releases;
-- `allocation_committed` count;
-- settlement count;
-- recovery interaction counters;
-- provider B/fallback calls where forbidden.
+## 3. Attempt/output tests
 
-Final payout status alone is insufficient because duplicate provider calls can occur while ownership remains single.
+Internal model distinguishes hard exclusion from attempted rejection/expiry. External projection tests assert documented top-level `selected_provider` and `selected|skipped` semantics.
 
-## v0.3.4 live provider-interaction ownership matrix
+Generate minimal decisions JSON, parse it back, and validate actual JSON types/keys. Rich factor traces should be tested in report/internal evidence rather than required external decisions.
+Malformed serialized identity types must return explicit strict-validation errors without crashing the validator.
 
-The reopened S8-002/PTZ4-004 session must cover:
+## 4. Independent amount-preference tests
 
-1. N workers racing one due status-resolution item with no competing callback;
-2. N workers racing one due idempotent retry item with no competing callback;
-3. worker A blocked in live `resolve`, exact duplicate old observation applied, worker B resumes before A completes;
-4. worker A blocked in live same-provider retry, duplicate/stale/non-applying observation applied, worker B resumes;
-5. stale callback cannot clear a newer invocation token/generation;
-6. adapter exception releases only its own invocation ownership and permits later safe recovery;
-7. accepted observation/completion does not leave a stuck guard;
-8. callback-before-start invalidates only the durable start token it legitimately supersedes;
-9. fresh restart discards process-local invocation identity and rebuilds recovery from durable operation state;
-10. UNKNOWN ownership remains pinned and no cross-provider fallback occurs during any race.
+Provider remains hard eligible outside preferred band, but preferred-band score changes ranking. Malformed/overlapping configuration behavior must be deterministic and documented.
 
-If the implementation introduces invocation generation values, add explicit ABA/stale-generation tests.
+## 5. Serialized report tests
 
-## Recovery and observation adversarial matrix
+After write/read:
 
-Cover:
+- assignment distribution recomputes;
+- settlement distribution recomputes;
+- outcomes/fallbacks recompute;
+- target deviations use assignment authority;
+- ratio/share representation is deliberate and judge-readable;
+- configuration/profile provenance is present;
+- recommendations reference real causal evidence.
 
-- success, safe route failure, temporary provider failure, terminal payout failure, pending, UNKNOWN;
-- definitely-not-sent vs ambiguous-after-possible-send transport;
-- duplicate observation id with exact same payload;
-- duplicate observation id with conflicting payload;
-- authoritative sequence ordering and out-of-order callbacks;
-- late success from released old operation;
-- provider disable/removal while unresolved;
-- TTL/deadline expiry and reconciliation blocking;
-- restart before dispatch, during dispatching/resolving, after observation, after release and after settlement.
+## 6. Finalization intelligence tests
 
-## Exact case campaign
+Run the exact finalization-equivalent configuration on controlled datasets and assert:
 
-Maintain one deterministic canonical Service/Coordinator/provider campaign demonstrating:
+- not priority-only;
+- not forced always-approved;
+- count+volume can jointly affect selection;
+- conversion/load can affect a conflict;
+- reject/expired can cause fallback;
+- public four goldens remain valid.
 
-`count policy + volume policy + safe fallback + UNKNOWN resolution + full attempts/history + target/actual analytics + provider/fallback outcome analytics + restart/replay parity`.
+## 7. Hidden-like robustness
 
-This is product-composition evidence, not a replacement for adversarial mechanism tests.
+Use bounded larger campaigns with additional provider identities and hundreds/thousands of operations. Assert deterministic runtime/output and remove avoidable repeated linear lookup in validators. Do not add a database/index service.
 
-## Performance evidence
+Cover equal timestamps, RPM windows, daily headroom exhaustion, deep fallback, terminal non-approval, custom queue path and extra provider identity.
+RPM/daily boundary regressions should use canonical `SubmissionProfile` ingress, with any isolation weights or limits explicit in the temporary profile.
 
-Performance changes require recorded exact revision, CRuby version, workload size and before/after result. Prefer median/p95 for repeated reads. Derived caches/indexes must have full replay/restart parity.
+## 8. Verification order
 
-Do not claim 100k/production scale unless that exact workload was actually executed and recorded.
+For each material slice:
 
-## Verification order for a correctness fix
+`reproducer → focused test → adjacent accounting/fallback/profile tests → public queue → fresh serialization/reparse strict validation → public validator → relevant inherited suites`.
 
-1. deterministic reproducer red/falsification test;
-2. focused unit/concurrency regression;
-3. adjacent recovery/restart/fault tests;
-4. `bundle exec rake concurrency`;
-5. `bundle exec rake fault`;
-6. `bundle exec rake test`;
-7. `bundle exec rake property`;
-8. `bundle exec rake model`;
-9. acceptance traceability;
-10. exact-HEAD CI.
+Before candidate/final closure:
 
-Run performance suites only when the changed path or claim warrants them.
+`bundle check; rake test; property; model; concurrency; fault; rake case; public validator; post-serialization strict validation; hidden-like campaign; clean finalization; blind skeptical pass; exact pushed-HEAD CI`.

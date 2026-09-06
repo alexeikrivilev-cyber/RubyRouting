@@ -76,6 +76,68 @@ class DueRecoveryWorkersTest < Minitest::Test
     end
   end
 
+  def test_concurrent_recovery_executors_start_one_restart_resolution
+    Dir.mktmpdir("ruby-routing-due-executor-workers") do |directory|
+      path = File.join(directory, "facts.jsonl")
+      clock = TestSupport::ControlledClock.new
+      payout = intent("due-executor-workers")
+      policy = two_provider_policy("due-executor-workers-policy")
+      initial = RubyRouting::State::Coordinator.new(
+        clock: clock,
+        journal: RubyRouting::State::FileJournal.new(path),
+        opportunities: opportunities(status_lookup: true)
+      )
+      committed = initial.prepare_and_commit_decision(intent: payout, policy: policy)
+      initial.mark_attempt_started(committed)
+
+      recovered = RubyRouting::State::Coordinator.new(
+        clock: clock,
+        journal: RubyRouting::State::FileJournal.new(path)
+      )
+      provider_a = BlockingRecoveryProvider.new(clock)
+      provider_b = NeverCalledProvider.new
+      service = RubyRouting::Application::Service.new(
+        coordinator: recovered,
+        providers: { "A" => provider_a, "B" => provider_b }
+      )
+      barrier = TestSupport::Synchronization::Barrier.new(4)
+      completions = Queue.new
+      workers = 4.times.map do
+        Thread.new do
+          barrier.wait
+          pass = nil
+          error = nil
+          begin
+            pass = service.recovery_executor.run(limit: 1, as_of: clock.now)
+          rescue StandardError => exception
+            error = exception
+          ensure
+            completions << [pass, error]
+          end
+        end
+      end
+
+      assert_equal :resolve, Timeout.timeout(3) { provider_a.entered.pop }
+      completed = Timeout.timeout(3) { Array.new(3) { completions.pop } }
+      assert completed.all? { |pass, error| error.nil? && pass.success? }, completed.inspect
+      assert_equal [[:resolve, committed.proposal.operation_id]], provider_a.calls
+
+      provider_a.release(1)
+      final_pass, final_error = Timeout.timeout(3) { completions.pop }
+      raise final_error if final_error
+      assert final_pass.success?
+      workers.each(&:value)
+      assert_equal :success, service.queries.payout(payout.id).status
+      assert_nil service.queries.payout(payout.id).ownership
+      assert_empty provider_b.calls
+      assert_equal 1, recovered.facts.count { |fact| fact.type == :allocation_committed }
+      assert_equal 2, recovered.facts.count { |fact| fact.type == :attempt_started }
+    ensure
+      provider_a&.release(4)
+      workers&.each { |worker| worker.join(3) }
+    end
+  end
+
   def test_unclassified_adapter_failure_releases_only_the_live_guard
     Dir.mktmpdir("ruby-routing-due-workers-failure") do |directory|
       path = File.join(directory, "facts.jsonl")
@@ -301,8 +363,11 @@ class DueRecoveryWorkersTest < Minitest::Test
     )
     coordinator = RubyRouting::State::Coordinator.new(clock: clock, opportunities: [provider])
     initial = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(initial)
-    coordinator.apply_observation(observation(initial, "live-guard-aba-unknown", :unknown))
+    initial_token = coordinator.mark_attempt_started(initial)
+    coordinator.apply_observation(
+      observation(initial, "live-guard-aba-unknown", :unknown),
+      interaction_token: initial_token
+    )
 
     first_resolution = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
     first_token = coordinator.mark_resolution_started(first_resolution)

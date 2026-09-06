@@ -27,8 +27,11 @@ class CrossFeatureHardeningTest < Minitest::Test
     third = coordinator.prepare_and_commit_decision(intent: intent("pressure-3"), policy: policy)
     assert_equal "C", third.proposal.provider_id
 
-    coordinator.mark_attempt_started(first)
-    coordinator.apply_observation(observation(first, "safe", :safe_route_failure))
+    first_token = coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(
+      observation(first, "safe", :safe_route_failure),
+      interaction_token: first_token
+    )
     assert_equal :quarantined, coordinator.health_snapshot("A").state
 
     coordinator.set_provider_availability("C", available: false)
@@ -133,11 +136,17 @@ class CrossFeatureHardeningTest < Minitest::Test
     payout = intent("late-capacity")
 
     first = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(first)
-    coordinator.apply_observation(observation(first, "safe", :safe_route_failure))
+    first_token = coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(
+      observation(first, "safe", :safe_route_failure),
+      interaction_token: first_token
+    )
     second = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(second)
-    coordinator.apply_observation(observation(second, "success", :success))
+    second_token = coordinator.mark_attempt_started(second)
+    coordinator.apply_observation(
+      observation(second, "success", :success),
+      interaction_token: second_token
+    )
 
     conflict = coordinator.apply_observation(observation(first, "late-success", :success))
     analytics = RubyRouting::Projections::Analytics.from_facts(coordinator.facts)
@@ -157,8 +166,11 @@ class CrossFeatureHardeningTest < Minitest::Test
     policy = policy_for("reversal-analytics", targets: { "A" => 1 })
     payout = intent("reversal-analytics")
     first = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
-    coordinator.mark_attempt_started(first)
-    coordinator.apply_observation(observation(first, "success", :success))
+    first_token = coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(
+      observation(first, "success", :success),
+      interaction_token: first_token
+    )
 
     coordinator.record_reversal(
       payout_id: " #{payout.id} ",
@@ -307,14 +319,20 @@ class CrossFeatureHardeningTest < Minitest::Test
     payout_intent = intent("remediation-1")
 
     first = coordinator.prepare_and_commit_decision(intent: payout_intent, policy: policy)
-    coordinator.mark_attempt_started(first)
+    first_token = coordinator.mark_attempt_started(first)
     # A safe-fails and ownership is released
-    coordinator.apply_observation(observation(first, "safe-fail", :safe_route_failure))
+    coordinator.apply_observation(
+      observation(first, "safe-fail", :safe_route_failure),
+      interaction_token: first_token
+    )
 
     # B fallback is assigned and succeeds
     second = coordinator.prepare_and_commit_decision(intent: payout_intent, policy: policy)
-    coordinator.mark_attempt_started(second)
-    coordinator.apply_observation(observation(second, "success", :success))
+    second_token = coordinator.mark_attempt_started(second)
+    coordinator.apply_observation(
+      observation(second, "success", :success),
+      interaction_token: second_token
+    )
 
     assert_equal :success, coordinator.payout_snapshot("remediation-1").status
     assert_equal "B", coordinator.payout_snapshot("remediation-1").settlement_provider_id

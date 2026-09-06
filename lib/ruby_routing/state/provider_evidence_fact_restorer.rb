@@ -191,7 +191,8 @@ module RubyRouting
           unless observation[:provider_id] == provider_id &&
                  expected_signal == signal &&
                  expected_attribution == attribution &&
-                 release_exposure == false
+                 release_exposure == false &&
+                 (!observation.key?(:health_evidence) || observation[:health_evidence] == true)
             raise RubyRouting::State::DurableCorruptionError,
               "health signal does not match source observation #{source_key.inspect}"
           end

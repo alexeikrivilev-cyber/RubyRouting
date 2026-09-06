@@ -1,78 +1,24 @@
 # Execution Plan Protocol
 
-The current plan is `docs/exec-plans/active/pre-tz-adversarial-edge-hardening.md` for **v0.3.4 — Pre-TZ Adversarial Case Fidelity & Edge Hardening**.
+Current active plan: none. `docs/exec-plans/completed/submission-policy-activation-contract-closure.md` is the **v0.4.1 / SPEC-017 — VERSION_COMPLETE** closure plan.
 
-`docs/ROADMAP.md` defines the Version Goal. `docs/COMPLETION_POLICY.md` defines completion. An ExecPlan cannot redefine either.
+v0.4.0 / SPEC-016 is completed baseline evidence.
 
-## Goal hierarchy
+## Planning rule
 
-`Project Goal -> Version Goal -> Phase Goal -> Slice Goal`
+Plan behavior/invariant before class shape. Reproduce current code/output first. Keep one routing authority and one active plan. Prefer end-to-end release-path slices over new abstractions.
 
-Current Version Goal: **v0.3.4 — ACTIVE**.
+## v0.4.1 priority
 
-v0.3.3/SPEC-007 is a completed protected baseline, not an active plan.
+1. canonical finalization policy activation;
+2. assignment/attempt/settlement accounting;
+3. fallback/output projection contract;
+4. independent amount preference;
+5. serialized artifact validation/minimal DTO;
+6. analytics/recommendation correctness;
+7. hidden-like robustness;
+8. blind candidate closure.
 
-## Purpose of an ExecPlan
+Every slice states TZ/rubric relevance, current matrix status, exact entrypoint affected, focused reproducer, artifact effect, validator effect and adjacent case/production boundary risk.
 
-An ExecPlan is a living, self-contained implementation map that another stateless agent can continue from repository state alone.
-
-It must describe observable outcomes, hypotheses, falsification, dependencies, risks and verification. It is not a task dump and not a requirement that every hypothesis change production code.
-
-## Required plan sections
-
-- Purpose / Big Picture
-- Current Version Goal
-- Governing sources
-- Current repository evidence/findings
-- Protected baseline
-- Phase/Dependency plan
-- Rolling Next Actions
-- Verification matrix
-- Independent skeptical closure phase
-- Stop policy
-
-## Planning rules
-
-1. Keep 2–5 immediate next actions concrete.
-2. Start v0.3.4 slices with a counterexample or measurement when the item is hypothesis-driven.
-3. Keep phase outcomes authoritative, not guessed class/file shapes.
-4. Reopen phases when new evidence finds a gap.
-5. Do not preserve dead/experimental code as “future work” when removal improves current coherence.
-6. Record material architectural discoveries immediately.
-7. Treat the official TZ as an authority switch, not an excuse to stop generic work.
-8. Treat backlog items as known hypotheses/work, not a closed universe of possible defects.
-9. Do not refactor a verified v0.3.3 mechanism merely to make v0.3.4 appear active.
-
-## Current plan requirements
-
-The active plan must account for:
-
-- financial safety and canonical routing flow;
-- provider/fallback outcome analytics with explicit denominator semantics;
-- duplicate recovery-consumer races;
-- abrupt configuration-publication restart behavior;
-- payout-local history completeness;
-- measured analytics/explanation and due-work cost;
-- exact replay parity for any new derived cache/index;
-- count-versus-volume case composition;
-- deep deterministic/property/model/concurrency/fault/restart verification;
-- exact-case campaign and exact-HEAD CI.
-
-## Plan completion versus version completion
-
-When known mandatory work looks finished, set `VERSION_CANDIDATE` and run `docs/COMPLETION_POLICY.md`.
-
-The closure stage must search for unplanned counterexamples from actual code rather than merely confirm the plan checklist. Any material locally solvable finding adds/reopens work and returns the version to ACTIVE.
-
-Only a fresh skeptical pass with no material finding plus exact-HEAD verification permits `VERSION_COMPLETE`.
-
-## Long-session continuation
-
-After every verified slice:
-
-1. record evidence and whether the hypothesis was falsified or required a fix;
-2. scan adjacent layers for newly exposed case-relevant gaps;
-3. choose the next highest-value required slice;
-4. continue without routine confirmation.
-
-Stop only under `docs/SESSION_POLICY.md`.
+Known scope green → candidate only → blind audit → fresh exact verification → exact-head CI → completion. v0.4.1 has passed this sequence.

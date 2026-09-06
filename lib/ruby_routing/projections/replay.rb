@@ -545,7 +545,10 @@ module RubyRouting
           @resolution_interaction_count = 0
           @conflicts = []
           @reversals = []
+          @observations = {}
           @created_at = nil
+          @provider_execution_failure = nil
+          @operation_actions = {}
           @recovery_schedule = nil
         end
 
@@ -581,6 +584,8 @@ module RubyRouting
               Replay.send(:normalize_identity, payload[:operation_id], "operation id")
               Replay.send(:normalize_identity, payload.fetch(:attempt_id), "attempt id")
               Replay.send(:normalize_identity, payload.fetch(:provider_id), "provider id")
+              normalized_operation_id = Replay.send(:normalize_identity, payload[:operation_id], "operation id")
+              @operation_actions[normalized_operation_id] = action if %i[assign retry_same resolve].include?(action)
             end
             if %i[assign retry_same].include?(action) && payload[:operation_id]
               @recovery_schedule = nil
@@ -625,6 +630,20 @@ module RubyRouting
               "decision action"
             )
             @resolution_interaction_count += 1 if %i[resolve retry_same].include?(action)
+            @provider_execution_failure = nil
+          when :provider_execution_failed
+            evidence = RubyRouting::State::ProviderExecutionFailureEvidence.from_payload(payload)
+            unless evidence.matches_current_operation?(
+              ownership: @ownership,
+              attempt: @operations[evidence.operation_id],
+              operation_action: @operation_actions[evidence.operation_id],
+              interaction_count: @provider_interaction_count,
+              existing: @provider_execution_failure
+            )
+              raise ArgumentError,
+                "provider failure evidence does not match current operation #{evidence.operation_id}"
+            end
+            @provider_execution_failure = evidence.to_h
           when :operation_phase_changed
             operation_id = Replay.send(:normalize_identity, payload[:operation_id], "operation id")
             Replay.send(:normalize_identity, payload.fetch(:provider_id), "provider id")
@@ -637,6 +656,8 @@ module RubyRouting
             ) if attempt
           when :provider_observed
             apply_observation(payload)
+          when :provider_interaction_completed
+            apply_interaction_completion(payload)
           when :ownership_released
             Replay.send(:normalize_identity, payload.fetch(:provider_id), "provider id")
             Replay.send(:normalize_identity, payload.fetch(:operation_id), "operation id")
@@ -745,7 +766,7 @@ module RubyRouting
         end
 
         def apply_observation(payload)
-          Replay.send(:normalize_identity, payload.fetch(:observation_id), "observation id")
+          observation_id = Replay.send(:normalize_identity, payload.fetch(:observation_id), "observation id")
           Replay.send(:normalize_identity, payload.fetch(:provider_id), "provider id")
           Replay.send(:normalize_identity, payload.fetch(:attempt_id), "attempt id")
           operation_id = Replay.send(:normalize_identity, payload[:operation_id], "operation id")
@@ -753,8 +774,6 @@ module RubyRouting
           if schedule && !payload[:applied]
             raise ArgumentError, "unapplied observation cannot carry recovery schedule"
           end
-          return unless payload[:applied]
-
           attempt = @operations[operation_id]
           if schedule && attempt.nil?
             raise ArgumentError, "recovery schedule references an unknown operation"
@@ -768,6 +787,10 @@ module RubyRouting
             message: payload[:message],
             safe_to_release: payload.fetch(:safe_to_release)
           )
+          @observations[observation_id] = payload
+          RubyRouting::State::ObservationLedger.advance_sequence!(attempt, payload[:sequence])
+          return unless payload[:applied]
+
           attempt.outcome = outcome
           attempt.last_observation_sequence = payload[:sequence] unless payload[:sequence].nil?
           @last_outcome = outcome
@@ -777,6 +800,31 @@ module RubyRouting
             outcome.status,
             safe_to_release: outcome.safe_to_release?
           )
+        end
+
+        def apply_interaction_completion(payload)
+          observation_id = Replay.send(:normalize_identity, payload.fetch(:observation_id), "observation id")
+          operation_id = Replay.send(:normalize_identity, payload.fetch(:operation_id), "operation id")
+          attempt_id = Replay.send(:normalize_identity, payload.fetch(:attempt_id), "attempt id")
+          provider_id = Replay.send(:normalize_identity, payload.fetch(:provider_id), "provider id")
+          source = @observations.fetch(observation_id) do
+            raise ArgumentError, "causal completion has no preceding observation"
+          end
+          source_operation_id = Replay.send(:normalize_identity, source[:operation_id], "operation id")
+          source_attempt_id = Replay.send(:normalize_identity, source[:attempt_id], "attempt id")
+          source_provider_id = Replay.send(:normalize_identity, source[:provider_id], "provider id")
+          unless source[:causal_hold] == true && source[:applied] == false &&
+                 source_operation_id == operation_id &&
+                 source_attempt_id == attempt_id &&
+                 source_provider_id == provider_id &&
+                 @ownership &&
+                 @ownership.operation_id == operation_id &&
+                 @ownership.attempt_id == attempt_id &&
+                 @ownership.provider_id == provider_id
+            raise ArgumentError, "causal completion does not match held observation"
+          end
+
+          apply_observation(source.merge(applied: true, causal_hold: false))
         end
 
         def validate_recovery_schedule!(schedule, attempt, outcome)

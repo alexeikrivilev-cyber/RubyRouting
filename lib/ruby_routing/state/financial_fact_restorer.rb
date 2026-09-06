@@ -43,16 +43,21 @@ module RubyRouting
         reason = @enum_value.call(
           payload,
           :reason,
-          [:late_old_operation_success],
+          %i[late_old_operation_success late_old_operation_ambiguity causal_release_contradiction],
           "economic conflict reason"
         )
+        valid_phase = if reason == :causal_release_contradiction
+          attempt.phase == :settled && attempt.outcome&.success?
+        else
+          %i[released terminated].include?(attempt.phase)
+        end
         unless attempt.provider_id == @provider_identity.call(payload, :provider_id) &&
                attempt.attempt_id == @operation_identity.call(payload, :attempt_id) &&
-               %i[released terminated].include?(attempt.phase) &&
+               valid_phase &&
                !observation_id.empty? && state.seen_observations.key?(observation_id) &&
-               reason == :late_old_operation_success
+               %i[late_old_operation_success late_old_operation_ambiguity causal_release_contradiction].include?(reason)
           raise RubyRouting::State::DurableCorruptionError,
-            "economic conflict does not match released operation #{operation_id}"
+            "economic conflict does not match operation #{operation_id}"
         end
         if state.conflict_observation_ids.include?(observation_id)
           raise RubyRouting::State::DurableCorruptionError,

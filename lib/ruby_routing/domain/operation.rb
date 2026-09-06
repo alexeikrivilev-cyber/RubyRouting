@@ -136,6 +136,61 @@ module RubyRouting
     end
   end
 
+  # The provider boundary may surface an adapter/transport implementation
+  # failure after the operation has already been durably started. The
+  # orchestrator has released that interaction's live guard before raising
+  # this typed error, so an operator runner may report it per item while the
+  # persisted operation remains resumable. Failures outside that boundary
+  # deliberately retain their original class and must not be downgraded.
+  class ProviderExecutionError < RuntimeError
+    attr_reader :original_error
+
+    def initialize(original_error)
+      unless original_error.is_a?(StandardError)
+        raise ArgumentError, "original provider error must be a StandardError"
+      end
+
+      @original_error = original_error
+      super(original_error.message)
+    end
+  end
+
+  # The adapter returned, but application-side classification or linkage
+  # validation rejected that result. Keep this provenance distinct from both
+  # client input and a raw adapter invocation failure: the operation already
+  # crossed the provider boundary, so an HTTP adapter must not report it as a
+  # request rejection and a recovery executor must not treat it as resumable
+  # provider execution.
+  class ProviderContractError < RuntimeError
+    attr_reader :original_error
+
+    def initialize(original_error)
+      unless original_error.is_a?(StandardError)
+        raise ArgumentError, "original provider contract error must be a StandardError"
+      end
+
+      @original_error = original_error
+      super("provider response violated the application contract")
+    end
+  end
+
+  # Application-owned processing failed after a provider invocation returned.
+  # This is intentionally distinct from both provider execution and provider
+  # contract errors: the interaction is not resumable merely because the
+  # application itself failed while interpreting a valid return.
+  class ApplicationProcessingError < RuntimeError
+    attr_reader :original_error
+
+    def initialize(original_error)
+      unless original_error.is_a?(StandardError)
+        raise ArgumentError, "original application processing error must be a StandardError"
+      end
+
+      @original_error = original_error
+      super("internal provider processing failed")
+    end
+  end
+
   # Generic, immutable payout destination. The core deliberately does not
   # impose a PSP-specific recipient schema; adapters map this data to their
   # provider contract at the I/O boundary.

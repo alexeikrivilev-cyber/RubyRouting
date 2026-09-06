@@ -34,6 +34,7 @@ module RubyRouting
       def commit_assignment(state, intent, policy, proposal, eligibility, allocation_snapshot,
                             configuration_revision: nil)
         state.recovery_schedule = nil
+        state.provider_execution_failure = nil
         next_number = state.attempts.length + 1
         attempt_id = "#{intent.id}:attempt:#{next_number}".freeze
         operation_id = "#{intent.id}:operation:#{next_number}".freeze
@@ -217,6 +218,7 @@ module RubyRouting
 
       def commit_resolution(state, intent, policy, proposal, configuration_revision: nil)
         state.recovery_schedule = nil
+        state.provider_execution_failure = nil
         attempt = state.operations.fetch(proposal.operation_id)
         append_fact(
           :decision_committed,

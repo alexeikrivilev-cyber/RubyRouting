@@ -75,6 +75,14 @@ module RubyRouting
         synchronize_provider_catalog!(coordinator, @configuration_store.current.provider_opportunities) if configuration_store
       end
 
+      # Runtime adapter identity is intentionally separate from the immutable
+      # ProviderOpportunity/configuration domain values. Application/operator
+      # projections may use this to show whether a configured opportunity is
+      # executable in the current process.
+      def provider_adapter_ids
+        @providers.keys.freeze
+      end
+
       def policy_registry
         @policy_registry_view
       end
@@ -264,7 +272,13 @@ module RubyRouting
         end
         interaction_token = @coordinator.mark_attempt_started(commit)
         return nil unless interaction_token
-        invoke_provider_with_guard(provider, :initiate, commit, interaction_token)
+        invoke_provider_with_guard(
+          provider,
+          :initiate,
+          commit,
+          interaction_token,
+          interaction: commit.proposal.action
+        )
       end
 
       def resolve(commit)
@@ -273,75 +287,187 @@ module RubyRouting
         end
         interaction_token = @coordinator.mark_resolution_started(commit)
         return nil unless interaction_token
-        invoke_provider_with_guard(provider, :resolve, commit, interaction_token)
+        invoke_provider_with_guard(
+          provider,
+          :resolve,
+          commit,
+          interaction_token,
+          interaction: :resolve
+        )
       end
 
-      def invoke_provider_with_guard(provider, method_name, commit, interaction_token)
-        ProviderInvocation.new(
-          observation: invoke_provider(provider, method_name, commit),
+      def invoke_provider_with_guard(provider, method_name, commit, interaction_token, interaction:)
+        invocation_returned = false
+        failure_classified = false
+        invocation = ProviderInvocation.new(
+          observation: invoke_provider(
+            provider,
+            method_name,
+            commit,
+            interaction: interaction,
+            interaction_token: interaction_token
+          ),
           interaction_token: interaction_token
         )
-      rescue StandardError
+        invocation_returned = true
+        invocation
+      rescue RubyRouting::ProviderContractError
+        failure_classified = true
+        @coordinator.provider_interaction_ended(
+          interaction_token: interaction_token,
+          failure_provenance: :post_return
+        )
+        raise
+      rescue RubyRouting::ProviderExecutionError
+        failure_classified = true
         @coordinator.provider_interaction_failed(interaction_token: interaction_token)
         raise
+      rescue StandardError => error
+        failure_classified = true
+        @coordinator.provider_interaction_ended(
+          interaction_token: interaction_token,
+          failure_provenance: :post_return
+        )
+        raise RubyRouting::ApplicationProcessingError.new(error)
+      ensure
+        # Fatal adapter/programming faults (for example ScriptError-derived
+        # NotImplementedError) are intentionally not made resumable provider
+        # failures, but they must not strand the process-local live guard.
+        # StandardError/provider paths are already released by one of the
+        # branches; this idempotent cleanup covers every other unwinding path
+        # and records fatal live-process provenance without calling it a raw
+        # provider execution failure.
+        unless invocation_returned
+          @coordinator.provider_interaction_ended(
+            interaction_token: interaction_token,
+            failure_provenance: failure_classified ? nil : :fatal
+          )
+        end
       end
 
       def apply_provider_invocation(invocation)
-        @coordinator.apply_observation(
+        observation_applied = false
+        application = @coordinator.apply_observation(
           invocation.observation,
           interaction_token: invocation.interaction_token
         )
-      rescue StandardError
-        @coordinator.provider_interaction_failed(
-          interaction_token: invocation.interaction_token
+        observation_applied = true
+        application
+      ensure
+        # Observation application may unwind with a fatal ScriptError-derived
+        # exception too. Cleanup is unconditional and idempotent; it does not
+        # catch or reclassify the fatal error.
+        @coordinator.provider_interaction_ended(
+          interaction_token: invocation.interaction_token,
+          failure_provenance: observation_applied ? nil : :post_return
         )
-        raise
       end
 
-      def invoke_provider(provider, method_name, commit)
+      def invoke_provider(provider, method_name, commit, interaction:, interaction_token:)
         started_monotonic_at = @coordinator.current_monotonic
-        observation = begin
-          classify_transport(provider.public_send(method_name, commit.request), commit.request)
+        provider_result = begin
+          provider.public_send(method_name, commit.request)
         rescue RubyRouting::ProviderTransportError => error
-          observation_from_transport(commit.request, error)
+          observation_from_transport(
+            commit.request,
+            error,
+            interaction: interaction,
+            interaction_index: interaction_token.interaction_index
+          )
+        rescue RubyRouting::ProviderExecutionError
+          raise
+        rescue StandardError => error
+          raise RubyRouting::ProviderExecutionError.new(error)
         end
+        # The adapter has returned. Interpretation and linkage validation now
+        # run under application authority. Contract violations are raised
+        # explicitly by the validation code; application programming faults
+        # must retain their own provenance rather than being blamed on the
+        # provider by a broad rescue around this phase.
+        observation = classify_transport(
+          provider_result,
+          commit.request,
+          interaction: interaction,
+          interaction_index: interaction_token.interaction_index
+        )
         finished_monotonic_at = @coordinator.current_monotonic
         observation.with_interaction_duration(finished_monotonic_at - started_monotonic_at)
       end
 
-      def classify_transport(result, request)
-        return validate_observation!(result, request) if result.is_a?(RubyRouting::ProviderObservation)
-        return observation_from_transport(request, result) if result.is_a?(RubyRouting::ProviderTransportResult)
+      def classify_transport(result, request, interaction:, interaction_index:)
+        return validate_observation!(result, request, interaction: interaction) if result.is_a?(RubyRouting::ProviderObservation)
+        return observation_from_transport(
+          request,
+          result,
+          interaction: interaction,
+          interaction_index: interaction_index
+        ) if result.is_a?(RubyRouting::ProviderTransportResult)
 
-        raise ArgumentError, "provider adapter must return ProviderObservation or ProviderTransportResult"
+        raise provider_contract_violation(
+          "provider adapter must return ProviderObservation or ProviderTransportResult"
+        )
       end
 
-      def validate_observation!(observation, request)
+      def validate_observation!(observation, request, interaction:)
         unless observation.is_a?(RubyRouting::ProviderObservation)
-          raise ArgumentError, "provider adapter must return ProviderObservation"
+          raise provider_contract_violation("provider adapter must return ProviderObservation")
         end
         unless observation.payout_id == request.payout_id &&
                observation.provider_id == request.provider_id &&
                observation.operation_id == request.operation_id &&
                observation.attempt_id == request.attempt_id
-          raise ArgumentError, "provider observation linkage does not match request"
+          raise provider_contract_violation("provider observation linkage does not match request")
         end
 
-        observation
+        return observation unless interaction == :resolve &&
+                                observation.transport_kind == :definitely_not_sent &&
+                                observation.outcome.safe_to_release?
+
+        # A directly returned observation has already crossed the adapter
+        # boundary, but its transport classification still describes this
+        # interaction. A definitely-not-sent status lookup does not prove that
+        # the original payout initiate was not sent, so normalize a releasable
+        # direct observation to conservative UNKNOWN just like the typed
+        # transport-result path below.
+        RubyRouting::ProviderObservation.new(
+          observation_id: observation.observation_id,
+          payout_id: observation.payout_id,
+          provider_id: observation.provider_id,
+          operation_id: observation.operation_id,
+          attempt_id: observation.attempt_id,
+          outcome: RubyRouting::NormalizedOutcome.unknown(
+            attribution: :unknown,
+            provider_reference: observation.outcome.provider_reference,
+            message: observation.outcome.message ||
+              "status lookup was definitely not sent; original payout remains unresolved"
+          ),
+          provider_reference: observation.provider_reference,
+          sequence: observation.sequence,
+          observed_at: observation.observed_at,
+          transport_kind: observation.transport_kind,
+          interaction_duration_seconds: observation.interaction_duration_seconds
+        )
       end
 
-      def observation_from_transport(request, transport)
+      def observation_from_transport(request, transport, interaction:, interaction_index:)
         kind = transport.kind
-        status = kind == :definitely_not_sent ? :safe_route_failure : :unknown
+        # A transport classification describes this exchange, not necessarily
+        # the economic operation represented by the request. A definitely-not-
+        # sent initiate/retry proves that the money-moving exchange was not
+        # sent. The same classification on a status lookup proves only that
+        # the lookup was not sent; the original payout operation remains
+        # unresolved and must retain ownership.
+        original_operation_not_sent = kind == :definitely_not_sent && interaction != :resolve
+        status = original_operation_not_sent ? :safe_route_failure : :unknown
         outcome = RubyRouting::NormalizedOutcome.new(
           status: status,
-          attribution: kind == :definitely_not_sent ? :provider : :unknown,
+          attribution: original_operation_not_sent ? :provider : :unknown,
           provider_reference: transport.provider_reference,
           message: transport.message || "transport classified as #{kind}",
-          safe_to_release: kind == :definitely_not_sent
+          safe_to_release: original_operation_not_sent
         )
         RubyRouting::ProviderObservation.new(
-          observation_id: "transport:#{request.operation_id}:#{kind}",
+          observation_id: "transport:#{request.operation_id}:#{interaction}:#{interaction_index}:#{kind}",
           payout_id: request.payout_id,
           provider_id: request.provider_id,
           operation_id: request.operation_id,
@@ -350,6 +476,10 @@ module RubyRouting
           provider_reference: transport.provider_reference,
           transport_kind: kind
         )
+      end
+
+      def provider_contract_violation(message)
+        RubyRouting::ProviderContractError.new(ArgumentError.new(message))
       end
     end
   end

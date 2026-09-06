@@ -36,10 +36,12 @@ module RubyRouting
         capacity_released: %i[provider_id operation_id amount],
         ownership_acquired: %i[provider_id operation_id attempt_id acquired_at],
         attempt_started: %i[attempt_id operation_id provider_id action started_at],
+        provider_execution_failed: %i[provider_id operation_id attempt_id action phase interaction_index failed_at],
         provider_observed: %i[
           observation_id operation_id attempt_id provider_id status attribution safe_to_release sequence
           observed_at transport_kind interaction_duration_seconds applied conflict recovery_schedule
         ],
+        provider_interaction_completed: %i[observation_id operation_id attempt_id provider_id],
         ownership_released: %i[provider_id operation_id attempt_id reason],
         settlement_recorded: %i[provider_id operation_id outcome measure settled_at],
         operation_phase_changed: %i[operation_id attempt_id provider_id from to changed_at],

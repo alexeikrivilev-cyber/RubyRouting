@@ -10,8 +10,11 @@ class CoordinatorSafetyTest < Minitest::Test
     first = coordinator.prepare_and_commit_decision(intent: intent, policy: policy)
 
     assert_equal "A", first.proposal.provider_id
-    coordinator.mark_attempt_started(first)
-    application = coordinator.apply_observation(observation(first, :unknown))
+    interaction_token = coordinator.mark_attempt_started(first)
+    application = coordinator.apply_observation(
+      observation(first, :unknown),
+      interaction_token: interaction_token
+    )
 
     assert_equal :unknown, application.payout.status
     assert_equal "A", application.payout.ownership.provider_id
@@ -30,9 +33,12 @@ class CoordinatorSafetyTest < Minitest::Test
     intent = intent("fallback-1")
     policy = count_policy
     first = coordinator.prepare_and_commit_decision(intent: intent, policy: policy)
-    coordinator.mark_attempt_started(first)
+    interaction_token = coordinator.mark_attempt_started(first)
 
-    failed = coordinator.apply_observation(observation(first, :safe_route_failure, attribution: :provider))
+    failed = coordinator.apply_observation(
+      observation(first, :safe_route_failure, attribution: :provider),
+      interaction_token: interaction_token
+    )
     assert_nil failed.payout.ownership
     assert_equal :reroute, failed.next_action
 
@@ -54,8 +60,11 @@ class CoordinatorSafetyTest < Minitest::Test
     intent = intent("primary-ledger-1")
     policy = count_policy
     first = coordinator.prepare_and_commit_decision(intent: intent, policy: policy)
-    coordinator.mark_attempt_started(first)
-    coordinator.apply_observation(observation(first, :safe_route_failure, attribution: :provider))
+    interaction_token = coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(
+      observation(first, :safe_route_failure, attribution: :provider),
+      interaction_token: interaction_token
+    )
 
     second = coordinator.prepare_and_commit_decision(intent: intent, policy: policy)
 
@@ -72,7 +81,7 @@ class CoordinatorSafetyTest < Minitest::Test
     coordinator = coordinator_with(%w[A B])
     intent = intent("temporary-failure-1")
     first = coordinator.prepare_and_commit_decision(intent: intent, policy: count_policy)
-    coordinator.mark_attempt_started(first)
+    interaction_token = coordinator.mark_attempt_started(first)
 
     application = coordinator.apply_observation(
       observation(
@@ -80,7 +89,8 @@ class CoordinatorSafetyTest < Minitest::Test
         :temporary_provider_failure,
         attribution: :provider,
         safe_to_release: true
-      )
+      ),
+      interaction_token: interaction_token
     )
 
     assert_equal :temporary_provider_failure, application.payout.status
@@ -92,9 +102,12 @@ class CoordinatorSafetyTest < Minitest::Test
     coordinator = coordinator_with(%w[A B])
     intent = intent("terminal-1")
     first = coordinator.prepare_and_commit_decision(intent: intent, policy: count_policy)
-    coordinator.mark_attempt_started(first)
+    interaction_token = coordinator.mark_attempt_started(first)
 
-    terminal = coordinator.apply_observation(observation(first, :terminal_payout_failure, attribution: :recipient))
+    terminal = coordinator.apply_observation(
+      observation(first, :terminal_payout_failure, attribution: :recipient),
+      interaction_token: interaction_token
+    )
     assert_equal :terminal_payout_failure, terminal.payout.status
     assert_equal :stop, terminal.next_action
     assert_nil terminal.payout.ownership
@@ -108,10 +121,10 @@ class CoordinatorSafetyTest < Minitest::Test
     coordinator = coordinator_with(["A"])
     intent = intent("duplicate-observation-1")
     commit = coordinator.prepare_and_commit_decision(intent: intent, policy: count_policy)
-    coordinator.mark_attempt_started(commit)
+    interaction_token = coordinator.mark_attempt_started(commit)
     success = observation(commit, :success)
 
-    first = coordinator.apply_observation(success)
+    first = coordinator.apply_observation(success, interaction_token: interaction_token)
     duplicate = coordinator.apply_observation(success)
 
     refute duplicate.duplicate == false
@@ -125,9 +138,9 @@ class CoordinatorSafetyTest < Minitest::Test
     coordinator = coordinator_with(["A"])
     intent = intent("observation-integrity-1")
     commit = coordinator.prepare_and_commit_decision(intent: intent, policy: count_policy)
-    coordinator.mark_attempt_started(commit)
+    interaction_token = coordinator.mark_attempt_started(commit)
     first = observation(commit, :success)
-    coordinator.apply_observation(first)
+    coordinator.apply_observation(first, interaction_token: interaction_token)
 
     conflicting = RubyRouting::ProviderObservation.new(
       observation_id: first.observation_id,
@@ -146,8 +159,11 @@ class CoordinatorSafetyTest < Minitest::Test
     coordinator = coordinator_with(["A"])
     intent = intent("stale-dispatch-1")
     commit = coordinator.prepare_and_commit_decision(intent: intent, policy: count_policy)
-    coordinator.mark_attempt_started(commit)
-    coordinator.apply_observation(observation(commit, :safe_route_failure, attribution: :provider))
+    interaction_token = coordinator.mark_attempt_started(commit)
+    coordinator.apply_observation(
+      observation(commit, :safe_route_failure, attribution: :provider),
+      interaction_token: interaction_token
+    )
 
     refute coordinator.mark_attempt_started(commit)
     assert_equal :released, coordinator.payout_snapshot(intent.id).attempts.first.phase
@@ -201,8 +217,11 @@ class CoordinatorSafetyTest < Minitest::Test
     )
     payout = intent("stale-resolution")
     first = coordinator.prepare_and_commit_decision(intent: payout, policy: count_policy)
-    coordinator.mark_attempt_started(first)
-    coordinator.apply_observation(observation(first, :unknown, attribution: :provider))
+    interaction_token = coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(
+      observation(first, :unknown, attribution: :provider),
+      interaction_token: interaction_token
+    )
 
     resolution = coordinator.prepare_and_commit_decision(intent: payout, policy: count_policy)
     assert_equal :resolve, resolution.proposal.action
@@ -273,8 +292,11 @@ class CoordinatorSafetyTest < Minitest::Test
     )
     payout = intent("forged-resolution-identity")
     first = coordinator.prepare_and_commit_decision(intent: payout, policy: count_policy)
-    coordinator.mark_attempt_started(first)
-    coordinator.apply_observation(observation(first, :unknown, attribution: :provider))
+    interaction_token = coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(
+      observation(first, :unknown, attribution: :provider),
+      interaction_token: interaction_token
+    )
     resolution = coordinator.prepare_and_commit_decision(intent: payout, policy: count_policy)
     forged_proposal = RubyRouting::DecisionProposal.new(
       action: :resolve,

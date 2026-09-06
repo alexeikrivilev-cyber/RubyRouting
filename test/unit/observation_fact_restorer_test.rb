@@ -68,7 +68,8 @@ class ObservationFactRestorerTest < Minitest::Test
         conflict: false,
         sequence: nil,
         observed_at: nil,
-        transport_kind: nil
+        transport_kind: nil,
+        health_evidence: true
       },
       1
     )
@@ -89,6 +90,17 @@ class ObservationFactRestorerTest < Minitest::Test
     assert_equal 1, @state.seen_observations.size
     assert_equal :success, @state.status
     assert_empty @pending_conflicts
+  end
+
+  def test_restores_last_applied_sequence_for_non_authoritative_provider
+    @attempt.contract = RubyRouting::ProviderOperationContract.new(
+      provider_id: "provider",
+      idempotency_key: "payout:operation"
+    )
+    @fact.payload[:sequence] = 3
+
+    assert_equal true, @restorer.apply(@fact)
+    assert_equal 3, @attempt.last_observation_sequence
   end
 
   def test_returns_false_for_non_observation_facts

@@ -141,7 +141,9 @@ module RubyRouting
       capacity_released
       ownership_acquired
       attempt_started
+      provider_execution_failed
       provider_observed
+      provider_interaction_completed
       ownership_released
       settlement_recorded
       payout_state_changed

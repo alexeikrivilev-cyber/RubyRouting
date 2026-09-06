@@ -227,6 +227,118 @@ class ReplayTest < Minitest::Test
     assert_raises(ArgumentError) { RubyRouting::Projections::Replay.lifecycle(facts) }
   end
 
+  def test_lifecycle_replay_rejects_causal_completion_after_ownership_release
+    facts = [
+      fact(1, :intent_registered, payload: {
+        money: RubyRouting::Money.new(1, "RUB"), recipient: {}, context: {}, created_at: Time.at(1)
+      }),
+      fact(2, :decision_committed, payload: {
+        action: :assign, provider_id: "A", operation_id: "op", attempt_id: "att", role: :primary,
+        contract: {
+          provider_id: "A", idempotent_retry: false, status_lookup: true,
+          idempotency_key: "p:op", version: "1"
+        }
+      }),
+      fact(3, :ownership_acquired, payload: {
+        provider_id: "A", operation_id: "op", attempt_id: "att"
+      }),
+      fact(4, :attempt_started, payload: {
+        provider_id: "A", operation_id: "op", attempt_id: "att", action: :assign
+      }),
+      fact(5, :operation_phase_changed, payload: {
+        provider_id: "A", operation_id: "op", attempt_id: "att", from: :committed, to: :dispatching
+      }),
+      fact(6, :provider_observed, payload: {
+        observation_id: "obs", provider_id: "A", operation_id: "op", attempt_id: "att",
+        applied: false, conflict: false, status: :safe_route_failure, attribution: :provider,
+        safe_to_release: true, causal_hold: true
+      }),
+      fact(7, :ownership_released, payload: {
+        provider_id: "A", operation_id: "op", attempt_id: "att"
+      }),
+      fact(8, :provider_interaction_completed, payload: {
+        observation_id: "obs", provider_id: "A", operation_id: "op", attempt_id: "att"
+      })
+    ]
+
+    assert_raises(ArgumentError) { RubyRouting::Projections::Replay.lifecycle(facts) }
+  end
+
+  def test_lifecycle_replay_rejects_provider_failure_evidence_that_does_not_match_current_operation
+    facts = [
+      fact(1, :intent_registered, payload: {
+        money: RubyRouting::Money.new(1, "RUB"), recipient: {}, context: {}, created_at: Time.at(1)
+      }),
+      fact(2, :decision_committed, payload: {
+        action: :assign, provider_id: "A", operation_id: "op", attempt_id: "att", role: :primary,
+        contract: {
+          provider_id: "A", idempotent_retry: false, status_lookup: true,
+          idempotency_key: "p:op", version: "1"
+        }
+      }),
+      fact(3, :ownership_acquired, payload: {
+        provider_id: "A", operation_id: "op", attempt_id: "att"
+      }),
+      fact(4, :attempt_started, payload: {
+        provider_id: "A", operation_id: "op", attempt_id: "att", action: :assign
+      }),
+      fact(5, :operation_phase_changed, payload: {
+        provider_id: "A", operation_id: "op", attempt_id: "att", from: :committed, to: :dispatching
+      }),
+      fact(6, :provider_execution_failed, payload: {
+        provider_id: "B", operation_id: "op", attempt_id: "att", action: :assign,
+        phase: :dispatching, interaction_index: 99, failed_at: Time.at(6)
+      })
+    ]
+
+    assert_raises(ArgumentError) { RubyRouting::Projections::Replay.lifecycle(facts) }
+
+    valid_failure = facts.last.payload.merge(provider_id: "A", interaction_index: 1)
+    valid_facts = facts[0...-1] + [fact(6, :provider_execution_failed, payload: valid_failure)]
+    duplicate_facts = valid_facts + [fact(7, :provider_execution_failed, payload: valid_failure)]
+    assert_raises(ArgumentError) { RubyRouting::Projections::Replay.lifecycle(duplicate_facts) }
+  end
+
+  def test_lifecycle_replay_canonicalizes_padded_causal_completion_identity
+    facts = [
+      fact(1, :intent_registered, payload: {
+        money: RubyRouting::Money.new(1, "RUB"), recipient: {}, context: {}, created_at: Time.at(1)
+      }),
+      fact(2, :decision_committed, payload: {
+        action: :assign, provider_id: " A ", operation_id: " op ", attempt_id: " att ", role: :primary,
+        contract: {
+          provider_id: " A ", idempotent_retry: false, status_lookup: true,
+          idempotency_key: "p:op", version: "1"
+        }
+      }),
+      fact(3, :ownership_acquired, payload: {
+        provider_id: " A ", operation_id: " op ", attempt_id: " att"
+      }),
+      fact(4, :attempt_started, payload: {
+        provider_id: " A ", operation_id: " op ", attempt_id: " att", action: :assign
+      }),
+      fact(5, :operation_phase_changed, payload: {
+        provider_id: " A ", operation_id: " op ", attempt_id: " att", from: :committed, to: :dispatching
+      }),
+      fact(6, :provider_observed, payload: {
+        observation_id: "obs", provider_id: " A ", operation_id: " op ", attempt_id: " att",
+        applied: false, conflict: false, status: :safe_route_failure, attribution: :provider,
+        safe_to_release: true, causal_hold: true
+      }),
+      fact(7, :provider_interaction_completed, payload: {
+        observation_id: "obs", provider_id: " A ", operation_id: " op ", attempt_id: " att"
+      }),
+      fact(8, :ownership_released, payload: {
+        provider_id: " A ", operation_id: " op ", attempt_id: " att"
+      })
+    ]
+
+    payout = RubyRouting::Projections::Replay.lifecycle(facts).payout("p")
+
+    assert_equal :safe_route_failure, payout.status
+    assert_nil payout.ownership
+  end
+
   def test_analytics_rejects_non_symbol_like_provider_identity_payloads
     facts = [
       fact(1, :opportunity_evaluated, payload: {

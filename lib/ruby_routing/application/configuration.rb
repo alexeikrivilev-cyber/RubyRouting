@@ -128,6 +128,14 @@ module RubyRouting
     class RoutingConfiguration
       attr_reader :policies, :provider_opportunities
 
+      # Decode only the bounded canonical configuration vocabulary. This is a
+      # transport boundary, not a second domain model: every nested value is
+      # converted to an existing typed object before the compiler or Commands
+      # can observe it.
+      def self.decode(value)
+        Decoder.new(value).call
+      end
+
       def self.same_provider_opportunity_set?(left, right)
         normalize = lambda do |opportunities|
           RubyRouting::Collection.to_array(opportunities, "provider opportunities")
@@ -195,6 +203,389 @@ module RubyRouting
         end
 
         values.sort_by(&:provider_id).freeze
+      end
+
+      class Decoder
+        CONFIGURATION_KEYS = %i[policies provider_opportunities].freeze
+        POLICY_KEYS = %i[
+          id epoch measure targets currency scope accounting_point window tolerance
+          minimum_measures maximum_measures minimum_shares maximum_shares selector
+          recovery recovery_objective ranking hard_constraints soft_constraints
+        ].freeze
+        SELECTOR_KEYS = %i[
+          currency payment_method rail destination_kind labels priority
+          minimum_amount_minor maximum_amount_minor
+        ].freeze
+        RECOVERY_KEYS = %i[
+          max_operations max_switches max_resolution_interactions ttl_seconds deadline_seconds
+          initial_delay_seconds backoff_seconds max_delay_seconds
+        ].freeze
+        RANKING_KEYS = %i[priority_by_provider cost_minor_by_provider latency_ms_by_provider].freeze
+        CONSTRAINT_KEYS = %i[
+          allowed_provider_ids excluded_provider_ids required_context_labels
+          minimum_amount_minor maximum_amount_minor
+        ].freeze
+        OPPORTUNITY_KEYS = %i[
+          provider_id functional_eligible available capacity_available capabilities exclusion_reason
+          supported_currencies minimum_amount_minor maximum_amount_minor required_context_labels
+          route_capabilities enabled capacity health_available throughput throughput_available
+        ].freeze
+        CAPABILITY_KEYS = %i[
+          idempotent_retry status_lookup ttl_seconds deadline_seconds version authoritative_sequence
+        ].freeze
+        CAPACITY_KEYS = %i[max_slots max_count max_amount_minor currency].freeze
+        THROUGHPUT_KEYS = %i[max_operations window_seconds].freeze
+        ROUTE_CAPABILITY_KEYS = %i[
+          supported_payment_methods supported_rails supported_destination_kinds
+        ].freeze
+        OBJECTIVE_KEYS = %i[mode].freeze
+
+        def initialize(value)
+          @value = value
+        end
+
+        def call
+          values = object(@value, CONFIGURATION_KEYS, CONFIGURATION_KEYS, "routing configuration")
+          RubyRouting::Application::RoutingConfiguration.new(
+            policies: array(values.fetch(:policies), "configuration policies").map { |policy| decode_policy(policy) },
+            provider_opportunities: array(
+              values.fetch(:provider_opportunities),
+              "configuration provider opportunities"
+            ).map { |opportunity| decode_opportunity(opportunity) }
+          )
+        end
+
+        private
+
+        def decode_policy(value)
+          values = object(value, POLICY_KEYS - [:recovery_objective], POLICY_KEYS, "routing policy")
+          RoutingPolicy.new(
+            id: required_string(values, :id, "policy id"),
+            epoch: required_string(values, :epoch, "policy epoch"),
+            measure: enum(values.fetch(:measure), RoutingPolicy::MEASURES, "policy measure"),
+            targets: positive_integer_map(values.fetch(:targets), "policy targets"),
+            currency: nullable_string(values[:currency], "policy currency"),
+            scope: required_string(values, :scope, "policy scope"),
+            accounting_point: enum(
+              values.fetch(:accounting_point),
+              RoutingPolicy::ACCOUNTING_POINTS,
+              "policy accounting point"
+            ),
+            window: enum(values.fetch(:window), RoutingPolicy::WINDOWS, "policy window"),
+            tolerance: rational_or_nil(values[:tolerance], "policy tolerance"),
+            minimum_measures: non_negative_integer_map(values.fetch(:minimum_measures), "minimum measures"),
+            maximum_measures: non_negative_integer_map(values.fetch(:maximum_measures), "maximum measures"),
+            minimum_shares: rational_map(values.fetch(:minimum_shares), "minimum shares"),
+            maximum_shares: rational_map(values.fetch(:maximum_shares), "maximum shares"),
+            selector: decode_selector(values.fetch(:selector)),
+            recovery: decode_recovery(values.fetch(:recovery)),
+            recovery_objective: decode_objective(values[:recovery_objective]),
+            ranking: decode_ranking(values.fetch(:ranking)),
+            hard_constraints: decode_constraints(values.fetch(:hard_constraints), "hard constraints"),
+            soft_constraints: decode_constraints(values.fetch(:soft_constraints), "soft constraints")
+          )
+        end
+
+        def decode_selector(value)
+          values = object(value, SELECTOR_KEYS - %i[minimum_amount_minor maximum_amount_minor], SELECTOR_KEYS, "policy selector")
+          PolicySelector.new(**{
+            currency: nullable_string(values[:currency], "selector currency"),
+            payment_method: nullable_string(values[:payment_method], "selector payment method"),
+            rail: nullable_string(values[:rail], "selector rail"),
+            destination_kind: nullable_string(values[:destination_kind], "selector destination kind"),
+            labels: string_array(values.fetch(:labels), "selector labels"),
+            priority: non_negative_integer(values.fetch(:priority), "selector priority"),
+            minimum_amount_minor: nullable_non_negative_integer(
+              values[:minimum_amount_minor],
+              "selector minimum amount"
+            ),
+            maximum_amount_minor: nullable_non_negative_integer(
+              values[:maximum_amount_minor],
+              "selector maximum amount"
+            )
+          }.compact)
+        end
+
+        def decode_recovery(value)
+          values = object(value, RECOVERY_KEYS - %i[initial_delay_seconds backoff_seconds max_delay_seconds], RECOVERY_KEYS, "recovery policy")
+          RecoveryPolicy.new(**{
+            max_operations: positive_integer(values.fetch(:max_operations), "recovery max operations"),
+            max_switches: non_negative_integer(values.fetch(:max_switches), "recovery max switches"),
+            max_resolution_interactions: non_negative_integer(
+              values.fetch(:max_resolution_interactions),
+              "recovery max resolution interactions"
+            ),
+            ttl_seconds: nullable_positive_integer(values[:ttl_seconds], "recovery ttl"),
+            deadline_seconds: nullable_positive_integer(values[:deadline_seconds], "recovery deadline"),
+            initial_delay_seconds: non_negative_integer(
+              values.fetch(:initial_delay_seconds, 0),
+              "recovery initial delay"
+            ),
+            backoff_seconds: non_negative_integer(
+              values.fetch(:backoff_seconds, 0),
+              "recovery backoff"
+            ),
+            max_delay_seconds: nullable_positive_integer(values[:max_delay_seconds], "recovery max delay")
+          })
+        end
+
+        def decode_objective(value)
+          return nil if value.nil?
+
+          values = object(value, OBJECTIVE_KEYS, OBJECTIVE_KEYS, "recovery objective")
+          RecoveryObjective.new(
+            mode: enum(values.fetch(:mode), RecoveryObjective::MODES, "recovery objective mode")
+          )
+        end
+
+        def decode_ranking(value)
+          values = object(value, RANKING_KEYS, RANKING_KEYS, "ranking policy")
+          RankingPolicy.new(
+            priority_by_provider: non_negative_integer_map(
+              values.fetch(:priority_by_provider),
+              "provider priority metrics"
+            ),
+            cost_minor_by_provider: non_negative_integer_map(
+              values.fetch(:cost_minor_by_provider),
+              "provider cost metrics"
+            ),
+            latency_ms_by_provider: non_negative_integer_map(
+              values.fetch(:latency_ms_by_provider),
+              "provider latency metrics"
+            )
+          )
+        end
+
+        def decode_constraints(value, label)
+          values = object(value, CONSTRAINT_KEYS, CONSTRAINT_KEYS, label)
+          RoutingConstraints.new(
+            allowed_provider_ids: nullable_string_array(values[:allowed_provider_ids], "#{label} allowed providers"),
+            excluded_provider_ids: string_array(values.fetch(:excluded_provider_ids), "#{label} excluded providers"),
+            required_context_labels: string_array(
+              values.fetch(:required_context_labels),
+              "#{label} required labels"
+            ),
+            minimum_amount_minor: nullable_non_negative_integer(
+              values[:minimum_amount_minor],
+              "#{label} minimum amount"
+            ),
+            maximum_amount_minor: nullable_non_negative_integer(
+              values[:maximum_amount_minor],
+              "#{label} maximum amount"
+            )
+          )
+        end
+
+        def decode_opportunity(value)
+          values = object(value, OPPORTUNITY_KEYS, OPPORTUNITY_KEYS, "provider opportunity")
+          ProviderOpportunity.new(
+            provider_id: required_string(values, :provider_id, "provider id"),
+            functional_eligible: boolean(values.fetch(:functional_eligible), "functional eligibility"),
+            available: boolean(values.fetch(:available), "provider availability"),
+            capacity_available: boolean(values.fetch(:capacity_available), "provider capacity availability"),
+            capabilities: decode_capabilities(values.fetch(:capabilities)),
+            exclusion_reason: nullable_string(values[:exclusion_reason], "provider exclusion reason"),
+            supported_currencies: nullable_string_array(values[:supported_currencies], "supported currencies"),
+            minimum_amount_minor: nullable_non_negative_integer(
+              values[:minimum_amount_minor],
+              "provider minimum amount"
+            ),
+            maximum_amount_minor: nullable_non_negative_integer(
+              values[:maximum_amount_minor],
+              "provider maximum amount"
+            ),
+            required_context_labels: string_array(
+              values.fetch(:required_context_labels),
+              "provider required labels"
+            ),
+            route_capabilities: decode_route_capabilities(values.fetch(:route_capabilities)),
+            enabled: boolean(values.fetch(:enabled), "provider enabled flag"),
+            capacity: decode_capacity(values[:capacity]),
+            health_available: boolean(values.fetch(:health_available), "provider health availability"),
+            throughput: decode_throughput(values[:throughput]),
+            throughput_available: boolean(values.fetch(:throughput_available), "provider throughput availability")
+          )
+        end
+
+        def decode_capabilities(value)
+          values = object(value, CAPABILITY_KEYS, CAPABILITY_KEYS, "provider capabilities")
+          ProviderCapabilities.new(
+            idempotent_retry: boolean(values.fetch(:idempotent_retry), "idempotent retry"),
+            status_lookup: boolean(values.fetch(:status_lookup), "status lookup"),
+            ttl_seconds: nullable_positive_integer(values[:ttl_seconds], "provider ttl"),
+            deadline_seconds: nullable_positive_integer(values[:deadline_seconds], "provider deadline"),
+            version: required_string(values, :version, "provider capability version"),
+            authoritative_sequence: boolean(values.fetch(:authoritative_sequence), "authoritative sequence")
+          )
+        end
+
+        def decode_capacity(value)
+          return nil if value.nil?
+
+          values = object(value, CAPACITY_KEYS, CAPACITY_KEYS, "capacity budget")
+          CapacityBudget.new(
+            max_slots: nullable_non_negative_integer(values[:max_slots], "capacity max slots"),
+            max_count: nullable_non_negative_integer(values[:max_count], "capacity max count"),
+            max_amount_minor: nullable_non_negative_integer(values[:max_amount_minor], "capacity max amount"),
+            currency: nullable_string(values[:currency], "capacity currency")
+          )
+        end
+
+        def decode_throughput(value)
+          return nil if value.nil?
+
+          values = object(value, THROUGHPUT_KEYS, THROUGHPUT_KEYS, "throughput budget")
+          ThroughputBudget.new(
+            max_operations: positive_integer(values.fetch(:max_operations), "throughput max operations"),
+            window_seconds: positive_integer(values.fetch(:window_seconds), "throughput window")
+          )
+        end
+
+        def decode_route_capabilities(value)
+          values = object(value, ROUTE_CAPABILITY_KEYS, ROUTE_CAPABILITY_KEYS, "route capabilities")
+          ProviderRouteCapabilities.new(
+            supported_payment_methods: nullable_string_array(
+              values[:supported_payment_methods],
+              "supported payment methods"
+            ),
+            supported_rails: nullable_string_array(values[:supported_rails], "supported rails"),
+            supported_destination_kinds: nullable_string_array(
+              values[:supported_destination_kinds],
+              "supported destination kinds"
+            )
+          )
+        end
+
+        def object(value, required_keys, allowed_keys, label)
+          unless value.is_a?(Hash)
+            raise ArgumentError, "#{label} must be a Hash"
+          end
+
+          values = RubyRouting::HashKeys.symbolize(value, allowed_keys, label)
+          missing = required_keys.reject { |key| values.key?(key) }
+          raise ArgumentError, "#{label} is missing #{missing.join(", ")}" unless missing.empty?
+
+          values
+        end
+
+        def array(value, label)
+          raise ArgumentError, "#{label} must be an Array" unless value.is_a?(Array)
+
+          value
+        end
+
+        def string_array(value, label)
+          array(value, label).map { |item| required_string_value(item, label) }
+        end
+
+        def nullable_string_array(value, label)
+          return nil if value.nil?
+
+          string_array(value, label)
+        end
+
+        def positive_integer_map(value, label)
+          integer_map(value, label) { |item| positive_integer(item, label) }
+        end
+
+        def non_negative_integer_map(value, label)
+          integer_map(value, label) { |item| non_negative_integer(item, label) }
+        end
+
+        def rational_map(value, label)
+          unless value.is_a?(Hash)
+            raise ArgumentError, "#{label} must be a Hash"
+          end
+
+          value.each_with_object({}) do |(key, item), result|
+            provider_id = required_string_value(key, "#{label} provider id")
+            raise ArgumentError, "#{label} contains duplicate provider id" if result.key?(provider_id)
+
+            result[provider_id] = rational(item, label)
+          end
+        end
+
+        def integer_map(value, label)
+          unless value.is_a?(Hash)
+            raise ArgumentError, "#{label} must be a Hash"
+          end
+
+          value.each_with_object({}) do |(key, item), result|
+            provider_id = required_string_value(key, "#{label} provider id")
+            raise ArgumentError, "#{label} contains duplicate provider id" if result.key?(provider_id)
+
+            result[provider_id] = yield(item)
+          end
+        end
+
+        def rational_or_nil(value, label)
+          value.nil? ? nil : rational(value, label)
+        end
+
+        def rational(value, label)
+          return value if value.is_a?(Rational) && value >= 0
+
+          unless value.is_a?(String) && /\A(?:0|[1-9]\d*)\/(?:[1-9]\d*)\z/.match?(value)
+            raise ArgumentError, "#{label} must be an exact Rational or canonical numerator/denominator String"
+          end
+
+          numerator, denominator = value.split("/", 2).map { |part| Integer(part, 10) }
+          Rational(numerator, denominator)
+        rescue ArgumentError, TypeError, ZeroDivisionError
+          raise ArgumentError, "#{label} must be an exact Rational or canonical numerator/denominator String"
+        end
+
+        def required_string(values, key, label)
+          required_string_value(values.fetch(key), label)
+        end
+
+        def required_string_value(value, label)
+          unless value.is_a?(String) && !value.empty? && value == value.strip
+            raise ArgumentError, "#{label} must be a canonical non-empty String"
+          end
+
+          value
+        end
+
+        def nullable_string(value, label)
+          return nil if value.nil?
+
+          required_string_value(value, label)
+        end
+
+        def boolean(value, label)
+          return value if value == true || value == false
+
+          raise ArgumentError, "#{label} must be boolean"
+        end
+
+        def enum(value, allowed, label)
+          RubyRouting::Enum.normalize(value, allowed, label)
+        end
+
+        def positive_integer(value, label)
+          unless value.is_a?(Integer) && value.positive?
+            raise ArgumentError, "#{label} must be a positive Integer"
+          end
+
+          value
+        end
+
+        def non_negative_integer(value, label)
+          unless value.is_a?(Integer) && value >= 0
+            raise ArgumentError, "#{label} must be a non-negative Integer"
+          end
+
+          value
+        end
+
+        def nullable_positive_integer(value, label)
+          value.nil? ? nil : positive_integer(value, label)
+        end
+
+        def nullable_non_negative_integer(value, label)
+          value.nil? ? nil : non_negative_integer(value, label)
+        end
       end
     end
 

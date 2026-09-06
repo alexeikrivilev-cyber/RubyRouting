@@ -30,6 +30,9 @@ module RubyRouting
         when :attempt_started
           restore_attempt_started!(fact)
           true
+        when :provider_execution_failed
+          restore_provider_execution_failed!(fact)
+          true
         when :reconciliation_blocked
           restore_reconciliation_blocked!(fact)
           true
@@ -138,8 +141,40 @@ module RubyRouting
             "attempt start does not match pending operation #{operation_id}"
         end
         state.dispatch_pending.delete(operation_id)
+        state.provider_execution_failure = nil if state.respond_to?(:provider_execution_failure=)
         state.provider_interaction_count += 1
         state.resolution_interaction_count += 1 if %i[resolve retry_same].include?(action)
+      end
+
+      def restore_provider_execution_failed!(fact)
+        payload = fact.payload
+        state = @payout_state.call(fact.payout_id)
+        evidence = RubyRouting::State::ProviderExecutionFailureEvidence.from_payload(
+          payload,
+          provider_identity: @provider_identity,
+          operation_identity: @operation_identity,
+          enum: @enum_value
+        )
+        operation_id = evidence.operation_id
+        attempt = state.operations.fetch(operation_id) do
+          raise RubyRouting::State::DurableCorruptionError,
+            "provider failure references unknown operation #{operation_id}"
+        end
+        unless evidence.matches_current_operation?(
+          ownership: state.ownership,
+          attempt: attempt,
+          operation_action: state.operation_actions[operation_id],
+          interaction_count: state.provider_interaction_count,
+          existing: state.provider_execution_failure
+        )
+          raise RubyRouting::State::DurableCorruptionError,
+            "provider failure evidence does not match operation #{operation_id}"
+        end
+
+        state.provider_execution_failure = evidence.to_h
+      rescue KeyError, TypeError, NoMethodError => error
+        raise RubyRouting::State::DurableCorruptionError,
+          "malformed provider failure evidence: #{error.message}"
       end
 
       def restore_reconciliation_blocked!(fact)

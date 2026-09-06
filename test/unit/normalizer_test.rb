@@ -109,7 +109,7 @@ class NormalizerTest < Minitest::Test
     end
   end
 
-  def test_definitely_not_sent_transport_observation_cannot_claim_unresolved_outcome
+  def test_definitely_not_sent_transport_observation_cannot_claim_unresolved_safe_release
     %i[pending unknown].each do |status|
       assert_raises(ArgumentError, "status=#{status}") do
         RubyRouting::ProviderObservation.new(
@@ -126,6 +126,22 @@ class NormalizerTest < Minitest::Test
         )
       end
     end
+  end
+
+  def test_definitely_not_sent_status_lookup_may_be_unresolved_but_not_releasable
+    observation = RubyRouting::ProviderObservation.new(
+      observation_id: "lookup-not-sent",
+      payout_id: "payout-transport",
+      provider_id: "A",
+      operation_id: "operation-transport-lookup",
+      attempt_id: "attempt-transport-lookup",
+      outcome: RubyRouting::NormalizedOutcome.unknown(attribution: :unknown, safe_to_release: false),
+      transport_kind: :definitely_not_sent
+    )
+
+    assert_equal :unknown, observation.outcome.status
+    refute observation.outcome.safe_to_release?
+    assert_equal :definitely_not_sent, observation.transport_kind
   end
 
   def test_invalid_transport_kind_is_reported_as_a_provider_input_error

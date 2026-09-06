@@ -64,6 +64,175 @@ class HttpAppTest < Minitest::Test
       parse(analytics_query).fetch("rows")
   end
 
+  def test_http_does_not_report_post_provider_contract_failure_as_invalid_request
+    policy = one_provider_policy("http-post-provider-contract")
+    provider = Class.new do
+      attr_reader :calls
+
+      def initialize
+        @calls = []
+      end
+
+      def initiate(request)
+        @calls << [request.operation_id, request.attempt_id]
+        RubyRouting::ProviderObservation.new(
+          observation_id: "http-malformed-observation",
+          payout_id: request.payout_id,
+          provider_id: request.provider_id,
+          operation_id: "wrong-operation",
+          attempt_id: request.attempt_id,
+          outcome: RubyRouting::NormalizedOutcome.unknown(attribution: :provider)
+        )
+      end
+
+      def resolve(_request)
+        raise "resolve should not be called"
+      end
+    end.new
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+    service = RubyRouting::Application::Service.new(
+      coordinator: coordinator,
+      providers: { "A" => provider }
+    )
+    service.commands.register_policy(policy)
+    app = RubyRouting::Application::HttpApp.new(service: service)
+
+    response = call(
+      app,
+      method: "POST",
+      path: "/v1/payouts",
+      body: { "id" => "http-post-provider-contract-payout", "amount_minor" => 100, "currency" => "RUB" }
+    )
+
+    snapshot = service.queries.payout("http-post-provider-contract-payout")
+    owner = snapshot.ownership
+    facts = service.queries.audit_facts(payout_id: snapshot.id)
+
+    assert_equal 502, response.fetch(0)
+    assert_equal({ "error" => "provider_contract_error" }, parse(response))
+    refute_includes response.join, "wrong-operation"
+    assert_equal 1, provider.calls.length
+    assert_equal [owner.operation_id, owner.attempt_id], provider.calls.fetch(0)
+    assert_equal :pending, snapshot.status
+    assert_equal :dispatching, snapshot.current_operation_phase
+    assert_equal "A", owner.provider_id
+    assert_equal 1, snapshot.provider_interaction_count
+    refute coordinator.__send__(:provider_interaction_in_flight?, snapshot.id, owner.operation_id)
+    assert_equal 0, facts.count { |fact| fact.type == :provider_interaction_completed }
+    assert_equal 0, facts.count { |fact| fact.type == :provider_observed }
+    assert_equal 0, facts.count { |fact| fact.type == :provider_execution_failed }
+  end
+
+  def test_http_reports_post_return_application_fault_as_internal_error
+    observation_class = Class.new(RubyRouting::ProviderObservation) do
+      def with_interaction_duration(_duration_seconds)
+        raise RuntimeError, "application-only processing detail"
+      end
+    end
+    provider = Class.new do
+      define_method(:initiate) do |request|
+        observation_class.new(
+          observation_id: "http-application-fault",
+          payout_id: request.payout_id,
+          provider_id: request.provider_id,
+          operation_id: request.operation_id,
+          attempt_id: request.attempt_id,
+          outcome: RubyRouting::NormalizedOutcome.success(attribution: :provider)
+        )
+      end
+
+      def resolve(_request)
+        raise "resolve must not be called"
+      end
+    end.new
+    policy = one_provider_policy("http-application-fault")
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+    service = RubyRouting::Application::Service.new(
+      coordinator: coordinator,
+      providers: { "A" => provider }
+    )
+    service.commands.register_policy(policy)
+    app = RubyRouting::Application::HttpApp.new(service: service)
+
+    response = call(
+      app,
+      method: "POST",
+      path: "/v1/payouts",
+      body: { "id" => "http-application-fault-payout", "amount_minor" => 100, "currency" => "RUB" }
+    )
+
+    snapshot = service.queries.payout("http-application-fault-payout")
+    assert_equal 500, response.fetch(0)
+    assert_equal({ "error" => "internal_error" }, parse(response))
+    assert_equal :pending, snapshot.status
+    assert_equal :dispatching, snapshot.current_operation_phase
+    assert_equal "A", snapshot.ownership.provider_id
+    refute coordinator.__send__(
+      :provider_interaction_in_flight?,
+      snapshot.id,
+      snapshot.ownership.operation_id
+    )
+    assert_empty coordinator.facts.select { |fact| fact.type == :provider_execution_failed }
+    assert_empty coordinator.facts.select { |fact| fact.type == :provider_observed }
+    refute_includes response.join, "application-only processing detail"
+  end
+
+  def test_http_raw_provider_failure_is_generic_non_leaking_and_keeps_canonical_due_work
+    clock = TestSupport::ControlledClock.new
+    calls = []
+    provider = Class.new do
+      define_method(:initiate) do |request|
+        calls << [:initiate, request.operation_id, request.attempt_id]
+        raise Timeout::Error, "provider-secret raw failure"
+      end
+
+      define_method(:resolve) do |request|
+        calls << [:resolve, request.operation_id, request.attempt_id]
+        raise "resolve must be invoked only by an explicit canonical continuation"
+      end
+    end.new
+    coordinator = RubyRouting::State::Coordinator.new(
+      clock: clock,
+      opportunities: [RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true)
+      )]
+    )
+    service = RubyRouting::Application::Service.new(
+      coordinator: coordinator,
+      providers: { "A" => provider }
+    )
+    policy = one_provider_policy("http-raw-provider-failure")
+    service.commands.register_policy(policy)
+    app = RubyRouting::Application::HttpApp.new(service: service)
+
+    response = call(
+      app,
+      method: "POST",
+      path: "/v1/payouts",
+      body: { "id" => "http-raw-provider-failure-payout", "amount_minor" => 100, "currency" => "RUB" }
+    )
+
+    snapshot = service.queries.payout("http-raw-provider-failure-payout")
+    due = service.queries.due_work(as_of: clock.now, limit: 1)
+    assert_equal 500, response.fetch(0)
+    assert_equal({ "error" => "internal_error" }, parse(response))
+    refute_includes response.join, "provider-secret"
+    assert_equal :pending, snapshot.status
+    assert_equal :dispatching, snapshot.current_operation_phase
+    assert_equal 1, snapshot.provider_interaction_count
+    assert_equal [[:initiate, snapshot.ownership.operation_id, snapshot.ownership.attempt_id]], calls
+    assert_equal 1, due.length
+    assert_equal :resolve, due.first.action
+    assert_equal :provider_execution_failure, due.first.reason_code
+    assert_equal snapshot.ownership.operation_id, due.first.operation_id
+    assert_equal snapshot.ownership.attempt_id, due.first.attempt_id
+  end
+
   def test_http_exposes_configuration_diagnostics_and_due_recovery_work
     clock = TestSupport::ControlledClock.new
     provider = Class.new do
@@ -123,6 +292,365 @@ class HttpAppTest < Minitest::Test
         "status" => "unknown"
       }
     ], due_body.fetch("due_work")
+  end
+
+  def test_http_put_configuration_uses_the_canonical_decoder_and_application_publication
+    service = RubyRouting::Application::Service.new(
+      coordinator: RubyRouting::State::Coordinator.new(
+        opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+      ),
+      providers: {}
+    )
+    service.commands.register_policy(one_provider_policy("http-put-configuration"))
+    app = RubyRouting::Application::HttpApp.new(service: service)
+    before = parse(call(app, method: "GET", path: "/v1/configuration"))
+    configuration = before.fetch("configuration")
+
+    response = call(app, method: "PUT", path: "/v1/configuration", body: configuration)
+
+    assert_equal 200, response.fetch(0)
+    body = parse(response)
+    assert_equal before.fetch("revision") + 1, body.fetch("revision")
+    assert_equal "valid", body.fetch("status")
+    assert_equal configuration, body.fetch("configuration")
+    assert_empty body.fetch("diagnostics")
+    assert_equal body.fetch("revision"), service.queries.configuration_revision
+    assert_equal configuration, JSON.parse(JSON.generate(service.queries.configuration.to_h))
+  end
+
+  def test_http_due_work_is_bounded_by_default_and_explicit_limit
+    clock = TestSupport::ControlledClock.new
+    provider = Class.new do
+      def initiate(request)
+        RubyRouting::ProviderObservation.new(
+          observation_id: "due-initiation-#{request.payout_id}",
+          payout_id: request.payout_id,
+          provider_id: request.provider_id,
+          operation_id: request.operation_id,
+          attempt_id: request.attempt_id,
+          outcome: RubyRouting::NormalizedOutcome.unknown(attribution: :unknown)
+        )
+      end
+
+      def resolve(request)
+        RubyRouting::ProviderObservation.new(
+          observation_id: "due-resolution-#{request.payout_id}",
+          payout_id: request.payout_id,
+          provider_id: request.provider_id,
+          operation_id: request.operation_id,
+          attempt_id: request.attempt_id,
+          outcome: RubyRouting::NormalizedOutcome.unknown(attribution: :unknown)
+        )
+      end
+    end.new
+    opportunity = RubyRouting::ProviderOpportunity.new(
+      provider_id: "A",
+      capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true)
+    )
+    coordinator = RubyRouting::State::Coordinator.new(clock: clock, opportunities: [opportunity])
+    service = RubyRouting::Application::Service.new(
+      coordinator: coordinator,
+      providers: { "A" => provider }
+    )
+    service.commands.register_policy(one_provider_policy("http-due-bounded"))
+    257.times do |index|
+      service.submit(
+        intent: RubyRouting::PayoutIntent.new(
+          id: format("due-payout-%03d", index),
+          money: RubyRouting::Money.new(100, "RUB")
+        )
+      )
+    end
+    app = RubyRouting::Application::HttpApp.new(service: service)
+
+    default_response = call(app, method: "GET", path: "/v1/recovery/due-work")
+    explicit_response = call(
+      app,
+      method: "GET",
+      path: "/v1/recovery/due-work",
+      query: "as_of=#{URI.encode_www_form_component(clock.now.iso8601(9))}&limit=1"
+    )
+
+    assert_equal 200, default_response.fetch(0)
+    default_body = parse(default_response)
+    assert_equal RubyRouting::Application::HttpApp::MAX_RECOVERY_BATCH_SIZE,
+      default_body.fetch("due_work").length
+    assert_equal "due-payout-000", default_body.fetch("due_work").first.fetch("payout_id")
+
+    assert_equal 200, explicit_response.fetch(0)
+    explicit_body = parse(explicit_response)
+    assert_equal 1, explicit_body.fetch("due_work").length
+    assert_equal "due-payout-000", explicit_body.fetch("due_work").first.fetch("payout_id")
+    assert_equal clock.now.iso8601(9), explicit_body.fetch("as_of")
+  end
+
+  def test_http_due_work_rejects_invalid_bounds_before_querying
+    service = RubyRouting::Application::Service.new(
+      coordinator: RubyRouting::State::Coordinator.new,
+      providers: {}
+    )
+    app = RubyRouting::Application::HttpApp.new(service: service)
+
+    queries = [
+      "limit=0",
+      "limit=-1",
+      "limit=#{RubyRouting::Application::HttpApp::MAX_RECOVERY_BATCH_SIZE + 1}",
+      "limit=not-a-number",
+      "limit=1&limit=2",
+      "limit=1&unknown=value"
+    ]
+
+    queries.each do |query|
+      response = call(app, method: "GET", path: "/v1/recovery/due-work", query: query)
+
+      assert_equal 400, response.fetch(0), query
+      assert_equal({ "error" => "invalid_request" }, parse(response), query)
+    end
+  end
+
+  def test_http_provider_projection_exposes_configured_but_uncallable_adapters
+    provider = TestSupport::Simulator::ScriptedProvider.new(
+      provider_id: "A",
+      steps: []
+    )
+    configuration = RubyRouting::Application::RoutingConfiguration.new(
+      provider_opportunities: %w[A B].map do |provider_id|
+        RubyRouting::ProviderOpportunity.new(provider_id: provider_id)
+      end
+    )
+    service = RubyRouting::Application::Service.new(
+      coordinator: RubyRouting::State::Coordinator.new,
+      providers: { "A" => provider }
+    )
+    service.apply_configuration(configuration)
+    app = RubyRouting::Application::HttpApp.new(service: service)
+
+    response = call(app, method: "GET", path: "/v1/providers")
+
+    assert_equal 200, response.fetch(0)
+    rows = parse(response).fetch("providers")
+    availability = rows.to_h { |row| [row.fetch("provider_id"), row.fetch("adapter_available")] }
+    assert_equal({ "A" => true, "B" => false }, availability)
+    refute service.queries.configuration.provider_opportunities.any? { |opportunity| opportunity.to_h.key?(:adapter_available) }
+  end
+
+  def test_http_put_configuration_rejects_malformed_input_without_mutating_the_active_generation
+    service = RubyRouting::Application::Service.new(
+      coordinator: RubyRouting::State::Coordinator.new,
+      providers: {}
+    )
+    app = RubyRouting::Application::HttpApp.new(service: service)
+    before_revision = service.queries.configuration_revision
+    before_configuration = service.queries.configuration.to_h
+    malformed = [
+      { "policies" => [], "provider_opportunities" => [], "unexpected" => true },
+      { "policies" => [], "provider_opportunities" => [], "tolerance" => 0.5 }
+    ]
+
+    malformed.each do |body|
+      response = call(app, method: "PUT", path: "/v1/configuration", body: body)
+
+      assert_equal 400, response.fetch(0), body
+      assert_equal({ "error" => "invalid_request" }, parse(response), body)
+      assert_equal before_revision, service.queries.configuration_revision, body
+      assert_equal before_configuration, service.queries.configuration.to_h, body
+      assert_empty service.queries.providers, body
+    end
+  end
+
+  def test_http_configuration_surface_round_trips_exact_rational_values
+    configuration = RubyRouting::Application::RoutingConfiguration.new(
+      policies: [RubyRouting::RoutingPolicy.new(
+        id: "http-rational-configuration",
+        epoch: "1",
+        measure: :volume,
+        targets: { "A" => 1 },
+        currency: "USD",
+        tolerance: Rational(1, 3),
+        minimum_shares: { "A" => Rational(1, 4) }
+      )],
+      provider_opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+    service = RubyRouting::Application::Service.new(
+      coordinator: RubyRouting::State::Coordinator.new,
+      providers: {}
+    )
+    service.apply_configuration(configuration)
+    app = RubyRouting::Application::HttpApp.new(service: service)
+
+    before = parse(call(app, method: "GET", path: "/v1/configuration"))
+    response = call(app, method: "PUT", path: "/v1/configuration", body: before.fetch("configuration"))
+
+    assert_equal 200, response.fetch(0)
+    assert_equal before.fetch("configuration"), parse(response).fetch("configuration")
+    assert_equal Rational(1, 3), service.queries.configuration.policies.first.tolerance
+    assert_equal Rational(1, 4), service.queries.configuration.policies.first.minimum_shares.fetch("A")
+  end
+
+  def test_http_put_configuration_returns_bounded_compiler_diagnostics_without_partial_publication
+    service = RubyRouting::Application::Service.new(
+      coordinator: RubyRouting::State::Coordinator.new,
+      providers: {}
+    )
+    app = RubyRouting::Application::HttpApp.new(service: service)
+    invalid = RubyRouting::Application::RoutingConfiguration.new(
+      policies: [RubyRouting::RoutingPolicy.new(
+        id: "http-invalid-configuration",
+        epoch: "1",
+        measure: :count,
+        targets: { "A" => 1 },
+        hard_constraints: { excluded_provider_ids: ["A"] }
+      )],
+      provider_opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+
+    response = call(app, method: "PUT", path: "/v1/configuration", body: invalid.to_h)
+
+    assert_equal 422, response.fetch(0)
+    body = parse(response)
+    assert_equal "invalid_configuration", body.fetch("error")
+    assert_equal "invalid", body.fetch("status")
+    assert_equal ["policy_static_infeasible"], body.fetch("diagnostics").map { |diagnostic| diagnostic.fetch("code") }
+    assert_equal 0, service.queries.configuration_revision
+    assert_empty service.queries.providers
+    assert_empty service.queries.policies
+  end
+
+  def test_http_recovery_run_delegates_to_the_bounded_executor_and_resolves_the_pinned_provider
+    clock = TestSupport::ControlledClock.new
+    provider = Class.new do
+      attr_reader :calls
+
+      def initialize(clock)
+        @clock = clock
+        @calls = []
+      end
+
+      def initiate(request)
+        @calls << [:initiate, request.operation_id]
+        RubyRouting::ProviderTransportResult.ambiguous_after_possible_send
+      end
+
+      def resolve(request)
+        @calls << [:resolve, request.operation_id]
+        RubyRouting::ProviderObservation.new(
+          observation_id: "http-recovery-success",
+          payout_id: request.payout_id,
+          provider_id: request.provider_id,
+          operation_id: request.operation_id,
+          attempt_id: request.attempt_id,
+          outcome: RubyRouting::NormalizedOutcome.success(attribution: :provider),
+          observed_at: @clock.now
+        )
+      end
+    end.new(clock)
+    service = RubyRouting::Application::Service.new(
+      coordinator: RubyRouting::State::Coordinator.new(
+        clock: clock,
+        opportunities: [RubyRouting::ProviderOpportunity.new(
+          provider_id: "A",
+          capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true)
+        )]
+      ),
+      providers: { "A" => provider }
+    )
+    service.commands.register_policy(one_provider_policy("http-recovery-run"))
+    payout = RubyRouting::PayoutIntent.new(
+      id: "http-recovery-run-payout",
+      money: RubyRouting::Money.new(100, "RUB")
+    )
+    initial = service.submit(intent: payout)
+    app = RubyRouting::Application::HttpApp.new(service: service)
+
+    response = call(app, method: "POST", path: "/v1/recovery/run", body: { "limit" => 1 })
+
+    assert_equal :unknown, initial.status
+    assert_equal 200, response.fetch(0)
+    body = parse(response)
+    assert_equal 1, body.fetch("limit")
+    assert_equal 1, body.fetch("items").length
+    item = body.fetch("items").fetch(0)
+    assert_equal "success", item.fetch("status")
+    assert_equal "stop", item.fetch("action")
+    assert_nil item.fetch("error")
+    assert_equal "resolve", item.fetch("work_item").fetch("action")
+    assert_equal [[:initiate, initial.payout.attempts.fetch(0).operation_id],
+                  [:resolve, initial.payout.attempts.fetch(0).operation_id]], provider.calls
+    assert_equal :success, service.queries.payout(payout.id).status
+    assert_nil service.queries.payout(payout.id).ownership
+  end
+
+  def test_http_recovery_run_rejects_unbounded_or_malformed_controls_without_execution
+    service = RubyRouting::Application::Service.new(
+      coordinator: RubyRouting::State::Coordinator.new,
+      providers: {}
+    )
+    app = RubyRouting::Application::HttpApp.new(service: service)
+    requests = [
+      [nil, "empty body"],
+      [{}, "missing limit"],
+      [{ "limit" => -1 }, "negative limit"],
+      [{ "limit" => 1.5 }, "float limit"],
+      [{ "limit" => true }, "boolean limit"],
+      [{ "limit" => 257 }, "limit above endpoint bound"],
+      [{ "limit" => 0, "unexpected" => true }, "unknown field"]
+    ]
+
+    requests.each do |body, label|
+      response = call(app, method: "POST", path: "/v1/recovery/run", body: body)
+
+      assert_equal 400, response.fetch(0), label
+      assert_equal({ "error" => "invalid_request" }, parse(response), label)
+      assert_empty service.queries.audit_facts, label
+    end
+
+    response = call(
+      app,
+      method: "POST",
+      path: "/v1/recovery/run",
+      query: "as_of=2026-09-01T00%3A00%3A00Z",
+      body: { "limit" => 1 }
+    )
+    assert_equal 400, response.fetch(0)
+    assert_equal({ "error" => "invalid_request" }, parse(response))
+  end
+
+  def test_http_recovery_run_does_not_expose_raw_provider_exception_messages
+    clock = TestSupport::ControlledClock.new
+    provider = Class.new do
+      def initiate(_request)
+        RubyRouting::ProviderTransportResult.ambiguous_after_possible_send
+      end
+
+      def resolve(_request)
+        raise RuntimeError, "recipient-secret from provider response"
+      end
+    end.new
+    service = RubyRouting::Application::Service.new(
+      coordinator: RubyRouting::State::Coordinator.new(
+        clock: clock,
+        opportunities: [RubyRouting::ProviderOpportunity.new(
+          provider_id: "A",
+          capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true)
+        )]
+      ),
+      providers: { "A" => provider }
+    )
+    service.commands.register_policy(one_provider_policy("http-recovery-error-privacy"))
+    service.submit(
+      intent: RubyRouting::PayoutIntent.new(
+        id: "http-recovery-error-privacy-payout",
+        money: RubyRouting::Money.new(100, "RUB")
+      )
+    )
+    app = RubyRouting::Application::HttpApp.new(service: service)
+
+    response = call(app, method: "POST", path: "/v1/recovery/run", body: { "limit" => 1 })
+
+    assert_equal 200, response.fetch(0)
+    body = parse(response)
+    assert_equal "RubyRouting::ProviderExecutionError", body.fetch("items").fetch(0).fetch("error").fetch("class")
+    refute_includes JSON.generate(body), "recipient-secret"
   end
 
   def test_http_quality_query_replays_evidence_as_of_injected_time
@@ -878,12 +1406,101 @@ class HttpAppTest < Minitest::Test
     assert_includes intent_fact.fetch("redacted_fields"), "recipient"
     assert_equal "A", evaluation_fact.fetch("payload").fetch("feasible_provider_ids").first
     assert_equal false, observation_fact.fetch("payload").fetch("conflict")
-    assert_equal ["message", "outcome_provider_reference", "provider_reference"],
+    assert_equal ["causal_hold", "health_evidence", "message", "outcome_provider_reference", "provider_reference"],
       observation_fact.fetch("redacted_fields").sort
     refute_includes JSON.generate(body), "recipient-secret"
     refute_includes JSON.generate(body), "context-secret"
     refute_includes JSON.generate(body), "provider-secret"
     refute_includes JSON.generate(body), "outcome-secret"
+  end
+
+  def test_http_payout_surfaces_allowlist_outcomes_but_preserve_internal_provider_evidence
+    policy = one_provider_policy("public-payout-policy")
+    provider = Class.new do
+      attr_reader :calls
+
+      def initialize
+        @calls = []
+      end
+
+      def initiate(request)
+        @calls << :initiate
+        RubyRouting::ProviderObservation.new(
+          observation_id: "public-payout-unknown",
+          payout_id: request.payout_id,
+          provider_id: request.provider_id,
+          operation_id: request.operation_id,
+          attempt_id: request.attempt_id,
+          provider_reference: "initiate-reference-SECRET",
+          outcome: RubyRouting::NormalizedOutcome.unknown(
+            attribution: :provider,
+            provider_reference: "unknown-reference-SECRET",
+            message: "unknown-diagnostic-SECRET"
+          )
+        )
+      end
+
+      def resolve(request)
+        @calls << :resolve
+        RubyRouting::ProviderObservation.new(
+          observation_id: "public-payout-success",
+          payout_id: request.payout_id,
+          provider_id: request.provider_id,
+          operation_id: request.operation_id,
+          attempt_id: request.attempt_id,
+          provider_reference: "resolve-reference-SECRET",
+          outcome: RubyRouting::NormalizedOutcome.success(
+            attribution: :provider,
+            provider_reference: "success-reference-SECRET",
+            message: "success-diagnostic-SECRET"
+          )
+        )
+      end
+    end.new
+    opportunity = RubyRouting::ProviderOpportunity.new(
+      provider_id: "A",
+      capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true)
+    )
+    service = RubyRouting::Application::Service.new(
+      coordinator: RubyRouting::State::Coordinator.new(opportunities: [opportunity]),
+      providers: { "A" => provider }
+    )
+    service.commands.register_policy(policy)
+    app = RubyRouting::Application::HttpApp.new(service: service)
+    body = {
+      "id" => "public-payout-boundary",
+      "amount_minor" => 100,
+      "currency" => "RUB"
+    }
+
+    submitted = call(app, method: "POST", path: "/v1/payouts", body: body)
+    fetched = call(app, method: "GET", path: "/v1/payouts/public-payout-boundary")
+    resumed = call(app, method: "POST", path: "/v1/payouts/public-payout-boundary/resume")
+
+    public_responses = [submitted, fetched, resumed]
+    public_responses.each do |response|
+      assert_equal 200, response.fetch(0) if response.equal?(fetched) || response.equal?(resumed)
+      refute_includes response.join, "SECRET"
+      parsed = parse(response)
+      payload = parsed.fetch("payout")
+      payload.fetch("attempts").each do |attempt|
+        next unless attempt.fetch("outcome")
+
+        assert_equal %w[attribution safe_to_release status], attempt.fetch("outcome").keys.sort
+      end
+    end
+
+    assert_equal 201, submitted.fetch(0)
+    assert_equal %i[initiate resolve], provider.calls
+    internal_attempts = service.queries.payout("public-payout-boundary").attempts
+    assert_equal "success-diagnostic-SECRET", internal_attempts.fetch(0).outcome.message
+    assert_equal "success-reference-SECRET", internal_attempts.fetch(0).outcome.provider_reference
+    internal_observations = service.queries.audit_facts(payout_id: "public-payout-boundary")
+      .select { |fact| fact.type == :provider_observed }
+    assert_equal ["unknown-diagnostic-SECRET", "success-diagnostic-SECRET"],
+      internal_observations.map { |fact| fact.payload.fetch(:message) }
+    assert_equal ["unknown-reference-SECRET", "success-reference-SECRET"],
+      internal_observations.map { |fact| fact.payload.fetch(:outcome_provider_reference) }
   end
 
   private

@@ -1,0 +1,43 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "optparse"
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
+require "ruby_routing"
+
+options = {
+  providers: File.expand_path("../data/providers.json", __dir__),
+  history: File.expand_path("../data/operations_history.csv", __dir__),
+  queue: File.expand_path("../data/operations_queue_10.json", __dir__),
+  profile: File.expand_path("../data/submission_profile.json", __dir__),
+  decisions: "routing_decisions.json",
+  report: "routing_report.json"
+}
+
+begin
+  OptionParser.new do |parser|
+    parser.banner = "Usage: ruby bin/ruby_routing_case [options]"
+    parser.on("--providers PATH", "provider snapshot JSON") { |value| options[:providers] = value }
+    parser.on("--history PATH", "history CSV") { |value| options[:history] = value }
+    parser.on("--queue PATH", "operation queue JSON") { |value| options[:queue] = value }
+    parser.on("--profile PATH", "typed submission policy profile JSON") { |value| options[:profile] = value }
+    parser.on("--decisions PATH", "generated decisions JSON") { |value| options[:decisions] = value }
+    parser.on("--report PATH", "generated report JSON") { |value| options[:report] = value }
+  end.parse!
+
+  run = RubyRouting::Case::Runner.new(
+    providers_path: options[:providers],
+    history_path: options[:history],
+    queue_path: options[:queue], profile_path: options[:profile]
+  ).call
+  RubyRouting::Case::StrictValidator.new(run).validate!
+  RubyRouting::Case::Serializer.write_json(options[:decisions], run.decisions.map(&:to_h))
+  RubyRouting::Case::Serializer.write_json(options[:report], run.report.to_h)
+  RubyRouting::Case::SerializedArtifactValidator.new(
+    run, decisions_path: options[:decisions], report_path: options[:report]
+  ).validate!
+  puts "generated #{options[:decisions]} and #{options[:report]} for #{run.decisions.length} operations"
+rescue RubyRouting::Case::InputError, RubyRouting::Case::OutputError, OptionParser::ParseError => error
+  warn "case run failed: #{error.message}"
+  exit 1
+end

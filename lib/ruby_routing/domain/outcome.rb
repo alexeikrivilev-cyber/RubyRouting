@@ -162,7 +162,8 @@ module RubyRouting
 
       valid = case transport_kind
       when :definitely_not_sent
-        DEFINITELY_NOT_SENT_STATUSES.include?(outcome.status) && outcome.safe_to_release?
+        (DEFINITELY_NOT_SENT_STATUSES.include?(outcome.status) && outcome.safe_to_release?) ||
+          (outcome.status == :unknown && !outcome.safe_to_release?)
       when :ambiguous_after_possible_send
         %i[pending unknown].include?(outcome.status) && !outcome.safe_to_release?
       else
