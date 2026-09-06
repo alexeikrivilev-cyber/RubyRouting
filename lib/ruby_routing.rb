@@ -62,6 +62,24 @@ module RubyRouting
     end
   end
 
+  module Identity
+    module_function
+
+    # Routing and durable-state identities are scalar protocol values. Keep
+    # this invariant centralized so malformed structured input cannot be
+    # coerced into a colliding provider, operation or fact identity.
+    def normalize(value, label)
+      unless value.is_a?(String) || value.is_a?(Symbol)
+        raise ArgumentError, "#{label} must be a non-empty String or Symbol"
+      end
+
+      normalized = value.to_s.strip
+      raise ArgumentError, "#{label} must be non-empty" if normalized.empty?
+
+      normalized.freeze
+    end
+  end
+
   module HashKeys
     module_function
 
@@ -103,6 +121,7 @@ require_relative "ruby_routing/domain/payout_intent"
 require_relative "ruby_routing/domain/policy_selector"
 require_relative "ruby_routing/domain/policy"
 require_relative "ruby_routing/domain/policy_resolution"
+require_relative "ruby_routing/domain/configuration"
 require_relative "ruby_routing/domain/recovery_schedule"
 require_relative "ruby_routing/domain/policy_registry"
 require_relative "ruby_routing/domain/provider_opportunity"

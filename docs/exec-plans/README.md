@@ -2,24 +2,23 @@
 
 Substantial work uses living ExecPlans governed by `docs/PLANS.md`, version sequencing from `docs/ROADMAP.md` and completion rules from `docs/COMPLETION_POLICY.md`.
 
-## Current pre-TZ plan / closure record
+## Current pre-TZ plan
 
-- `active/pre-tz-semantic-control-plane.md` — the `VERSION_COMPLETE` record for **v0.3.2 Semantic Control Plane & Recovery Readiness**: close the remaining generic payout-routing gaps, verify the canonical product path deeply, and preserve measured evidence for official-TZ reconciliation.
-
-`active/product-convergence.md` remains historical continuity for the completed
-v0.3 checkpoint; it is not the current execution authority.
+- `active/pre-tz-adversarial-edge-hardening.md` — **v0.3.4 Pre-TZ Adversarial Case Fidelity & Edge Hardening**, ACTIVE.
 
 ## Completed historical plans
 
 - `completed/pre-tz-foundation.md` — v0.1 deterministic foundation.
-- `completed/pre-tz-comprehensive-core.md` — archived v0.2 comprehensive-core plan/checkpoint. Its historical completion claims do not define current product completion.
+- `completed/pre-tz-comprehensive-core.md` — v0.2 comprehensive-core checkpoint.
+- `completed/pre-tz-skeptical-hardening.md` — v0.3.3 skeptical hardening closure.
+- other completed checkpoints remain available through Git history and references.
 
 ## Plan lifecycle
 
-A current plan remains available through implementation and closure discovery;
-after a successful closure it remains the exact evidence record until the
-official TZ creates the next authoritative plan.
+Only the current execution authority belongs under `active/`.
 
-When phases appear green, enter `VERSION_CANDIDATE` and execute `docs/COMPLETION_POLICY.md`. Any material locally solvable finding reopens implementation.
+A current plan remains living through implementation and skeptical closure discovery. When known phases appear green, enter `VERSION_CANDIDATE` and execute `docs/COMPLETION_POLICY.md`; any material locally solvable finding reopens implementation.
 
-Finishing a file, phase, commit, issue list or green suite is never sufficient by itself.
+A v0.3.4 evidence-first hypothesis may close without production code change if adversarial evidence proves the inherited behavior already satisfies it.
+
+Finishing a file, phase, commit, issue list, green suite or benchmark is never sufficient by itself.

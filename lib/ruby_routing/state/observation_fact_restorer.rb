@@ -8,7 +8,8 @@ module RubyRouting
     class ObservationFactRestorer
       def initialize(observation_ledger:, lifecycle_ledger:, payout_state:,
                      restored_observations:, pending_economic_conflicts:,
-                     operation_identity:, provider_identity:, policy_for_state: nil)
+                     operation_identity:, provider_identity:, policy_for_state: nil,
+                     monotonic_reference: nil)
         @observation_ledger = observation_ledger
         @lifecycle_ledger = lifecycle_ledger
         @payout_state = payout_state
@@ -17,6 +18,7 @@ module RubyRouting
         @operation_identity = operation_identity
         @provider_identity = provider_identity
         @policy_for_state = policy_for_state || ->(_state) { RubyRouting::RecoveryPolicy.new }
+        @monotonic_reference = monotonic_reference
       end
 
       def apply(fact)
@@ -115,7 +117,9 @@ module RubyRouting
           raise RubyRouting::State::DurableCorruptionError,
             "recovery schedule delay does not match pinned policy"
         end
-        schedule
+        return schedule unless @monotonic_reference
+
+        schedule.rebase(monotonic_reference: @monotonic_reference)
       rescue ArgumentError, KeyError, TypeError => error
         raise RubyRouting::State::DurableCorruptionError,
           "invalid recovery schedule history: #{error.message}"

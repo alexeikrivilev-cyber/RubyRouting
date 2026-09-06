@@ -37,10 +37,7 @@ module RubyRouting
 
       def normalize_provider_ids(provider_ids, label)
         RubyRouting::Collection.to_array(provider_ids, label).map do |provider_id|
-          normalized = provider_id.to_s.strip
-          raise ArgumentError, "provider id must be non-empty" if normalized.empty?
-
-          normalized
+          RubyRouting::Identity.normalize(provider_id, "provider id")
         end.uniq.sort
       end
       private_class_method :normalize_provider_ids

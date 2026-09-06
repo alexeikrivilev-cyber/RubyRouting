@@ -9,7 +9,7 @@ module RubyRouting
     class SystemClock
       def initialize
         @wall_origin = Time.now.utc.freeze
-        @monotonic_origin = raw_monotonic
+        @monotonic_origin = monotonic_now
       end
 
       def now
@@ -17,7 +17,7 @@ module RubyRouting
       end
 
       def monotonic
-        Rational(raw_monotonic, 1_000_000_000)
+        monotonic_now
       end
 
       # This is a restore-boundary translation for wall timestamps persisted
@@ -35,6 +35,10 @@ module RubyRouting
 
       def raw_monotonic
         Process.clock_gettime(Process::CLOCK_MONOTONIC, :nanosecond)
+      end
+
+      def monotonic_now
+        Rational(raw_monotonic, 1_000_000_000)
       end
     end
   end

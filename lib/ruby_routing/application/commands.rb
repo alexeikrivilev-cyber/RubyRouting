@@ -6,38 +6,83 @@ module RubyRouting
     # routing state. It delegates business decisions to the coordinator and
     # orchestrator rather than reimplementing routing semantics.
     class Commands
-      attr_reader :policy_registry
 
       def initialize(coordinator:, orchestrator:, policy_registry:, configuration_store: nil)
+        unless policy_registry.is_a?(RubyRouting::PolicyRegistry)
+          raise ArgumentError, "policy_registry must be PolicyRegistry"
+        end
         @coordinator = coordinator
         @orchestrator = orchestrator
         @policy_registry = policy_registry
-        @configuration_store = configuration_store || RubyRouting::Application::ConfigurationStore.new(
+        orchestrator_store = orchestrator.respond_to?(:configuration_store) ? orchestrator.configuration_store : nil
+        if configuration_store && orchestrator_store && configuration_store != orchestrator_store
+          raise ArgumentError, "commands and orchestrator must share one configuration store"
+        end
+        @configuration_store = configuration_store || orchestrator_store || RubyRouting::Application::ConfigurationStore.new(
           configuration: RubyRouting::Application::RoutingConfiguration.new(
             policies: policy_registry.policies,
             provider_opportunities: coordinator.provider_opportunities
           )
         )
-        @configuration_mutex = Thread::Mutex.new
+        if !RubyRouting::PolicyRegistry.same_policy_set?(
+          policy_registry.policies,
+          @configuration_store.current.policies
+        )
+          raise ArgumentError, "policy_registry and configuration_store must share one active policy set"
+        end
+        @policy_registry_view = @policy_registry.read_only(
+          configuration_store: @configuration_store
+        )
         freeze
       end
 
+      def policy_registry
+        @policy_registry_view
+      end
+
       def register_policy(policy)
-        @configuration_mutex.synchronize do
-          registered = policy_registry.register(policy)
-          refresh_configuration!
-          registered
+        registered = nil
+        update_configuration do |current|
+          # The immutable active generation owns the current policy set. The
+          # registry is a compatibility/index view and must never be allowed
+          # to drop policies that were published through a supplied
+          # ConfigurationStore.
+          candidate_registry = RubyRouting::PolicyRegistry.new(current.policies + [policy])
+          registered = candidate_registry.fetch(
+            id: policy.id,
+            epoch: policy.epoch,
+            scope: policy.scope
+          )
+          configuration = RubyRouting::Application::RoutingConfiguration.new(
+            policies: candidate_registry.policies,
+            provider_opportunities: current.provider_opportunities
+          )
+          configuration.compile.raise_if_invalid!
+          begin
+            replace_policy_registry!(candidate_registry.policies)
+          rescue StandardError => error
+            rollback_policy_registry!(current.policies)
+            raise error
+          end
+          configuration
         end
+        registered
       end
 
       def replace_provider_opportunities(opportunities)
-        @configuration_mutex.synchronize do
+        update_configuration do |current|
           configuration = RubyRouting::Application::RoutingConfiguration.new(
-            policies: policy_registry.policies,
+            policies: current.policies,
             provider_opportunities: opportunities
           )
-          @coordinator.replace_provider_opportunities(configuration.provider_opportunities)
-          @configuration_store.replace(configuration)
+          configuration.compile.raise_if_invalid!
+          begin
+            @coordinator.replace_provider_opportunities(configuration.provider_opportunities)
+          rescue StandardError => error
+            rollback_provider_catalog!(current.provider_opportunities)
+            raise error
+          end
+          configuration
         end
         nil
       end
@@ -47,26 +92,54 @@ module RubyRouting
           raise ArgumentError, "configuration must be Application::RoutingConfiguration"
         end
 
-        @configuration_mutex.synchronize do
+        update_configuration do |current|
           # Validate the replacement set completely before touching the live
-          # provider catalog. The registry swap itself cannot then fail due to
-          # policy identity or fingerprint validation.
+          # provider catalog. The candidate registry is therefore valid before
+          # mutation; compensation still protects post-commit failures.
           candidate_registry = RubyRouting::PolicyRegistry.new(configuration.policies)
-          @coordinator.replace_provider_opportunities(configuration.provider_opportunities)
-          policy_registry.replace!(candidate_registry.policies)
-          @configuration_store.replace(configuration)
+          configuration.compile.raise_if_invalid!
+          begin
+            @coordinator.replace_provider_opportunities(configuration.provider_opportunities)
+            replace_policy_registry!(candidate_registry.policies)
+          rescue StandardError => error
+            rollback_configuration!(current)
+            raise error
+          end
+          configuration
         end
         configuration
       end
 
       def set_provider_availability(provider_id, available:, capacity_available: nil)
-        @configuration_mutex.synchronize do
-          @coordinator.set_provider_availability(
-            provider_id,
+        update_configuration do |current|
+          normalized_provider_id = RubyRouting::Identity.normalize(provider_id, "provider id")
+          opportunity = current.provider_opportunities.find do |candidate|
+            candidate.provider_id == normalized_provider_id
+          end
+          raise ArgumentError, "unknown provider opportunity" unless opportunity
+
+          replacement = opportunity.with_runtime(
             available: available,
-            capacity_available: capacity_available
+            capacity_available: capacity_available.nil? ? opportunity.capacity_available : capacity_available
           )
-          refresh_configuration!
+          configuration = RubyRouting::Application::RoutingConfiguration.new(
+            policies: current.policies,
+            provider_opportunities: current.provider_opportunities.map do |candidate|
+              candidate.provider_id == opportunity.provider_id ? replacement : candidate
+            end
+          )
+          configuration.compile.raise_if_invalid!
+          begin
+            @coordinator.set_provider_availability(
+              provider_id,
+              available: available,
+              capacity_available: capacity_available
+            )
+          rescue StandardError => error
+            rollback_provider_catalog!(current.provider_opportunities)
+            raise error
+          end
+          configuration
         end
         nil
       end
@@ -99,8 +172,7 @@ module RubyRouting
           raise ArgumentError, "provider normalizer must implement executable #normalize"
         end
 
-        normalized_provider_id = provider_id.to_s.strip
-        raise ArgumentError, "provider id must be non-empty" if normalized_provider_id.empty?
+        normalized_provider_id = RubyRouting::Identity.normalize(provider_id, "provider id")
 
         observation = normalizer.normalize(raw: raw, provider_id: normalized_provider_id)
         unless observation.is_a?(RubyRouting::ProviderObservation) &&
@@ -117,14 +189,68 @@ module RubyRouting
 
       private
 
-      def refresh_configuration!
-        @configuration_store.replace(
-          RubyRouting::Application::RoutingConfiguration.new(
-            policies: policy_registry.policies,
-            provider_opportunities: @coordinator.provider_opportunities
-          )
-        )
+      # ConfigurationStore mutation is deliberately private to prevent a
+      # caller holding a store reference from publishing a generation without
+      # the matching registry/catalog transaction. Commands are the one
+      # coordinated application publication path.
+      def update_configuration(&block)
+        @configuration_store.__send__(:update, &block)
       end
+
+      def rollback_provider_catalog!(previous_opportunities)
+        begin
+          current_opportunities = @coordinator.provider_opportunities
+          unless same_provider_set?(current_opportunities, previous_opportunities)
+            @coordinator.replace_provider_opportunities(previous_opportunities)
+          end
+        rescue StandardError => rollback_error
+          raise RubyRouting::State::DurableCorruptionError,
+            "active provider configuration rollback failed: #{rollback_error.message}"
+        end
+      end
+
+      def rollback_policy_registry!(previous_policies)
+        begin
+          unless RubyRouting::PolicyRegistry.same_policy_set?(
+            @policy_registry.policies,
+            previous_policies
+          )
+            replace_policy_registry!(previous_policies)
+          end
+        rescue StandardError => rollback_error
+          raise RubyRouting::State::DurableCorruptionError,
+            "active policy configuration rollback failed: #{rollback_error.message}"
+        end
+      end
+
+      def rollback_configuration!(previous_configuration)
+        rollback_errors = []
+        begin
+          rollback_policy_registry!(previous_configuration.policies)
+        rescue StandardError => error
+          rollback_errors << error
+        end
+        begin
+          rollback_provider_catalog!(previous_configuration.provider_opportunities)
+        rescue StandardError => error
+          rollback_errors << error
+        end
+        return if rollback_errors.empty?
+
+        raise RubyRouting::State::DurableCorruptionError,
+          "active configuration rollback failed: #{rollback_errors.map(&:message).join("; ")}"
+      end
+
+      def replace_policy_registry!(policies)
+        @policy_registry.__send__(:with_application_mutation) do
+          @policy_registry.replace!(policies)
+        end
+      end
+
+      def same_provider_set?(left, right)
+        RubyRouting::Application::RoutingConfiguration.same_provider_opportunity_set?(left, right)
+      end
+
     end
   end
 end

@@ -31,7 +31,8 @@ module RubyRouting
         @attempt_state = attempt_state
       end
 
-      def commit_assignment(state, intent, policy, proposal, eligibility, allocation_snapshot)
+      def commit_assignment(state, intent, policy, proposal, eligibility, allocation_snapshot,
+                            configuration_revision: nil)
         state.recovery_schedule = nil
         next_number = state.attempts.length + 1
         attempt_id = "#{intent.id}:attempt:#{next_number}".freeze
@@ -56,10 +57,17 @@ module RubyRouting
         provider_opportunity = eligibility.opportunities.find do |opportunity|
           opportunity.provider_id == committed_proposal.provider_id
         end
-        health_before_commit = @health_controller.snapshot(provider_opportunity.provider_id)
+        routing_context = RubyRouting::Routing::HealthController.canonical_routing_context(
+          intent.routing_context
+        )
+        health_before_commit = @health_controller.snapshot(
+          provider_opportunity.provider_id,
+          routing_context: routing_context
+        )
         unless @health_controller.reserve_exposure(
           provider_opportunity.provider_id,
-          owner: operation_id
+          owner: operation_id,
+          routing_context: routing_context
         )
           raise ArgumentError, "provider health exposure became unavailable before commit"
         end
@@ -69,7 +77,11 @@ module RubyRouting
           throughput_event = @admission_ledger.reserve_throughput!(provider_opportunity)
         rescue StandardError
           release_capacity_reservation!(state, operation_id) if state.capacity_reservations.key?(operation_id)
-          @health_controller.release_exposure(provider_opportunity.provider_id, owner: operation_id)
+          @health_controller.release_exposure(
+            provider_opportunity.provider_id,
+            owner: operation_id,
+            routing_context: routing_context
+          )
           raise
         end
         state.health_exposure_reservations[operation_id] = true if health_probe_reserved
@@ -83,6 +95,7 @@ module RubyRouting
           attempt_id: attempt_id,
           role: committed_proposal.role,
           policy_epoch: policy.epoch,
+          configuration_revision: configuration_revision,
           reasons: committed_proposal.reasons,
           reason_codes: committed_proposal.reason_codes,
           snapshot_revision: allocation_snapshot.revision,
@@ -126,7 +139,8 @@ module RubyRouting
             intent.id,
             provider_id: provider_opportunity.provider_id,
             operation_id: operation_id,
-            attempt_id: attempt_id
+            attempt_id: attempt_id,
+            routing_context: routing_context&.to_h
           )
         end
         if throughput_event
@@ -201,7 +215,7 @@ module RubyRouting
         )
       end
 
-      def commit_resolution(state, intent, policy, proposal)
+      def commit_resolution(state, intent, policy, proposal, configuration_revision: nil)
         state.recovery_schedule = nil
         attempt = state.operations.fetch(proposal.operation_id)
         append_fact(
@@ -213,6 +227,7 @@ module RubyRouting
           attempt_id: proposal.attempt_id,
           role: proposal.role,
           policy_epoch: policy.epoch,
+          configuration_revision: configuration_revision,
           reasons: proposal.reasons,
           reason_codes: proposal.reason_codes
         )
@@ -299,14 +314,22 @@ module RubyRouting
         state.dispatch_pending.delete(attempt.operation_id)
         release_capacity_reservation!(state, attempt.operation_id)
         health_probe_released = state.health_exposure_reservations.delete(attempt.operation_id)
-        @health_controller.release_exposure(attempt.provider_id, owner: attempt.operation_id) if health_probe_released
+        routing_context = RubyRouting::Routing::HealthController.canonical_routing_context(
+          state.intent.routing_context
+        )
+        @health_controller.release_exposure(
+          attempt.provider_id,
+          owner: attempt.operation_id,
+          routing_context: routing_context
+        ) if health_probe_released
         if health_probe_released
           append_fact(
             :health_exposure_released,
             state.intent.id,
             provider_id: attempt.provider_id,
             operation_id: attempt.operation_id,
-            attempt_id: attempt.attempt_id
+            attempt_id: attempt.attempt_id,
+            routing_context: routing_context&.to_h
           )
         end
         append_fact(

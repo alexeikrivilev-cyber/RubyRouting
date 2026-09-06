@@ -256,6 +256,54 @@ class FactCodecTest < Minitest::Test
     end
   end
 
+  def test_durable_codec_and_file_journal_reject_duplicate_json_object_keys
+    body = {
+      "version" => RubyRouting::State::FactCodec::VERSION,
+      "sequence" => 1,
+      "type" => "intent_registered",
+      "fact_id" => "fact:1",
+      "payout_id" => "duplicate-envelope-key",
+      "payload" => {}
+    }
+    encoded = JSON.generate(
+      body.merge("checksum" => Digest::SHA256.hexdigest(JSON.generate(body)))
+    )
+    duplicate_fact = encoded.sub('"sequence":1', '"sequence":1,"sequence":1')
+
+    assert_raises(RubyRouting::State::DurableCorruptionError) do
+      RubyRouting::State::FactCodec.decode_fact(duplicate_fact)
+    end
+
+    fact = RubyRouting::Fact.new(
+      sequence: 1,
+      type: :intent_registered,
+      fact_id: "fact:1",
+      payout_id: "duplicate-batch-envelope",
+      payload: {}
+    )
+    batch_body = {
+      "version" => RubyRouting::State::FactCodec::VERSION,
+      "kind" => "batch",
+      "facts" => [JSON.parse(RubyRouting::State::FactCodec.encode_fact(fact))]
+    }
+    encoded_batch = JSON.generate(
+      batch_body.merge("checksum" => Digest::SHA256.hexdigest(JSON.generate(batch_body)))
+    )
+    duplicate_batch = encoded_batch.sub('"sequence":1', '"sequence":1,"sequence":1')
+
+    assert_raises(RubyRouting::State::DurableCorruptionError) do
+      RubyRouting::State::FactCodec.decode_batch(duplicate_batch)
+    end
+
+    Dir.mktmpdir("ruby-routing-duplicate-envelope") do |directory|
+      path = File.join(directory, "facts.jsonl")
+      File.binwrite(path, "#{duplicate_batch}\n")
+      journal = RubyRouting::State::FileJournal.new(path)
+
+      assert_raises(RubyRouting::State::DurableCorruptionError) { journal.facts }
+    end
+  end
+
   def test_durable_codec_rejects_noncanonical_fact_envelope_identity
     body = {
       "version" => RubyRouting::State::FactCodec::VERSION,

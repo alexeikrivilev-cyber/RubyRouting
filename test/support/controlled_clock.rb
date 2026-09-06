@@ -2,14 +2,17 @@
 
 module TestSupport
   class ControlledClock
-    def initialize(start_time: Time.utc(2026, 1, 1, 0, 0, 0))
+    def initialize(start_time: Time.utc(2026, 1, 1, 0, 0, 0), monotonic_origin: 0)
       unless start_time.is_a?(Time)
         raise ArgumentError, "start_time must be Time"
+      end
+      unless monotonic_origin.is_a?(Integer) || monotonic_origin.is_a?(Rational)
+        raise ArgumentError, "monotonic_origin must be exact"
       end
 
       @mutex = Thread::Mutex.new
       @current_time = start_time.utc.freeze
-      @monotonic = Rational(0, 1)
+      @monotonic = monotonic_origin
     end
 
     def current_time

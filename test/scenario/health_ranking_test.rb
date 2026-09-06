@@ -48,6 +48,15 @@ class HealthRankingTest < Minitest::Test
     refute coordinator.facts.any? { |fact| fact.type == :health_signal && fact.payload[:provider_id] == "B" }
   end
 
+  def test_health_rejects_unknown_explicit_route_keys_instead_of_using_global_state
+    controller = RubyRouting::Routing::HealthController.new
+
+    assert_raises(ArgumentError) do
+      controller.snapshot("A", routing_context: { payment_methd: "card" })
+    end
+    assert_empty controller.provider_ids
+  end
+
   def test_static_health_exclusion_cannot_be_overridden_by_default_controller_state
     coordinator = RubyRouting::State::Coordinator.new(
       opportunities: [
@@ -79,6 +88,126 @@ class HealthRankingTest < Minitest::Test
 
     assert_equal :healthy, controller.snapshot("A").state
     assert_equal 0, controller.snapshot("A").operational_failure_count
+  end
+
+  def test_global_health_quarantine_is_a_safety_ceiling_for_scoped_routes
+    route = RubyRouting::RoutingContext.new(
+      payment_method: :card,
+      rail: :bank,
+      destination_kind: :bank_account
+    )
+    coordinator = RubyRouting::State::Coordinator.new(
+      health_policy: RubyRouting::Routing::HealthPolicy.new(
+        degrade_after: 1,
+        quarantine_after: 1,
+        recover_after: 1
+      ),
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+
+    coordinator.record_health_signal(
+      provider_id: "A",
+      signal: :provider_failure,
+      attribution: :provider
+    )
+
+    assert_equal :quarantined, coordinator.health_snapshot("A").state
+    assert_equal :quarantined, coordinator.health_snapshot("A", routing_context: route).state
+    assert_equal :quarantined, coordinator.health_projection.snapshot("A", routing_context: route).state
+
+    controller = RubyRouting::Routing::HealthController.new(
+      policy: RubyRouting::Routing::HealthPolicy.new(
+        degrade_after: 1,
+        quarantine_after: 1,
+        recover_after: 1
+      )
+    )
+    controller.observe(provider_id: "A", signal: :provider_failure, attribution: :provider)
+    refute controller.reserve_exposure(
+      "A",
+      owner: "global-quarantine-route-operation",
+      routing_context: route
+    )
+
+    restored = RubyRouting::State::Coordinator.from_facts(facts: coordinator.facts)
+    assert_equal coordinator.health_snapshot("A", routing_context: route).to_h,
+      restored.health_snapshot("A", routing_context: route).to_h
+    assert_equal :quarantined, restored.health_projection.snapshot("A", routing_context: route).state
+  end
+
+  def test_route_assignment_accepts_global_degraded_health_without_bypassing_the_ceiling
+    route = RubyRouting::RoutingContext.new(payment_method: :card)
+    coordinator = RubyRouting::State::Coordinator.new(
+      health_policy: RubyRouting::Routing::HealthPolicy.new(
+        degrade_after: 2,
+        quarantine_after: 3,
+        recover_after: 1
+      ),
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "global-degraded-route",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1 }
+    )
+    2.times do
+      coordinator.record_health_signal(
+        provider_id: "A",
+        signal: :provider_failure,
+        attribution: :provider
+      )
+    end
+
+    commit = coordinator.prepare_and_commit_decision(
+      intent: intent_with_route("global-degraded-route-payout", route),
+      policy: policy
+    )
+
+    assert_equal :assign, commit.proposal.action
+    assert_equal :degraded, coordinator.health_snapshot("A", routing_context: route).state
+  end
+
+  def test_route_probe_uses_global_probe_budget_and_recovers_the_global_state
+    route = RubyRouting::RoutingContext.new(payment_method: :card)
+    coordinator = RubyRouting::State::Coordinator.new(
+      health_policy: RubyRouting::Routing::HealthPolicy.new(
+        degrade_after: 1,
+        quarantine_after: 1,
+        recover_after: 1
+      ),
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "global-probe-route",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1 }
+    )
+    coordinator.record_health_signal(
+      provider_id: "A",
+      signal: :provider_failure,
+      attribution: :provider
+    )
+    coordinator.record_health_signal(
+      provider_id: "A",
+      signal: :operational_success,
+      attribution: :provider
+    )
+    assert_equal :probing, coordinator.health_snapshot("A").state
+
+    commit = coordinator.prepare_and_commit_decision(
+      intent: intent_with_route("global-probe-route-payout", route),
+      policy: policy
+    )
+
+    assert_equal :assign, commit.proposal.action
+    assert_equal 1, coordinator.health_snapshot("A").probe_in_flight
+    coordinator.mark_attempt_started(commit)
+    coordinator.apply_observation(observation(commit, :success))
+
+    assert_equal :healthy, coordinator.health_snapshot("A").state
+    assert_equal 0, coordinator.health_snapshot("A").probe_in_flight
   end
 
   def test_generic_provider_operational_signals_share_hysteresis_but_non_provider_evidence_is_neutral
@@ -721,6 +850,101 @@ class HealthRankingTest < Minitest::Test
     assert_equal({ optimizer_choice: { count: 1, measure: 1 } }, analytics.deviation_by_cause)
   end
 
+  def test_route_scoped_provider_failure_does_not_quarantine_another_route
+    card = RubyRouting::RoutingContext.new(payment_method: :card)
+    card_with_label = RubyRouting::RoutingContext.new(
+      payment_method: :card,
+      labels: ["tenant-a"]
+    )
+    bank = RubyRouting::RoutingContext.new(payment_method: :bank_transfer)
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [
+        RubyRouting::ProviderOpportunity.new(
+          provider_id: "A",
+          route_capabilities: RubyRouting::ProviderRouteCapabilities.new(
+            supported_payment_methods: %i[card bank_transfer]
+          )
+        )
+      ],
+      health_policy: RubyRouting::Routing::HealthPolicy.new(
+        degrade_after: 1,
+        quarantine_after: 1,
+        recover_after: 1
+      )
+    )
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "route-scoped-health",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 10 }
+    )
+
+    first = coordinator.prepare_and_commit_decision(
+      intent: intent_with_route("route-scoped-card", card),
+      policy: policy
+    )
+    assert_equal "A", first.proposal.provider_id
+    coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(observation(first, :safe_route_failure))
+
+    assert_equal :quarantined, coordinator.health_snapshot("A", routing_context: card).state
+    assert_equal :quarantined,
+      coordinator.health_snapshot("A", routing_context: card_with_label).state
+    assert_equal :healthy, coordinator.health_snapshot("A", routing_context: bank).state
+    assert_equal :healthy, coordinator.health_snapshot("A").state
+
+    second = coordinator.prepare_and_commit_decision(
+      intent: intent_with_route("route-scoped-bank", bank),
+      policy: policy
+    )
+    assert_equal "A", second.proposal.provider_id
+    assert_equal :quarantined,
+      coordinator.health_projection.snapshot("A", routing_context: card).state
+    assert_equal :healthy,
+      coordinator.health_projection.snapshot("A", routing_context: bank).state
+
+    restored = RubyRouting::State::Coordinator.from_facts(facts: coordinator.facts)
+    assert_equal coordinator.health_snapshot("A", routing_context: card).to_h,
+      restored.health_snapshot("A", routing_context: card).to_h
+    assert_equal coordinator.health_snapshot("A", routing_context: bank).to_h,
+      restored.health_snapshot("A", routing_context: bank).to_h
+    assert_equal second.proposal.provider_id,
+      restored.payout_snapshot("route-scoped-bank").ownership.provider_id
+  end
+
+  def test_route_scoped_health_query_exposes_the_admission_state_without_global_pooling
+    route = RubyRouting::RoutingContext.new(payment_method: :card)
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")],
+      health_policy: RubyRouting::Routing::HealthPolicy.new(
+        degrade_after: 1,
+        quarantine_after: 1,
+        recover_after: 1
+      )
+    )
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "route-health-query",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1 }
+    )
+    payout = intent_with_route("route-health-query-payout", route)
+    commit = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
+    coordinator.mark_attempt_started(commit)
+    coordinator.apply_observation(observation(commit, :safe_route_failure))
+    queries = RubyRouting::Application::Queries.new(
+      coordinator: coordinator,
+      policy_registry: RubyRouting::PolicyRegistry.new
+    )
+
+    assert_equal :healthy, queries.health.to_h.fetch("A").fetch(:state)
+    assert_equal :quarantined,
+      queries.health(routing_context: route).snapshot("A").state
+    assert_equal :quarantined,
+      RubyRouting::State::Coordinator.from_facts(facts: coordinator.facts)
+        .health_projection(routing_context: route).snapshot("A").state
+  end
+
   def test_ranking_breaks_only_allocation_ties_inside_feasible_set
     policy = RubyRouting::RoutingPolicy.new(
       id: "ranked",
@@ -751,6 +975,14 @@ class HealthRankingTest < Minitest::Test
 
   def intent(id)
     RubyRouting::PayoutIntent.new(id: id, money: RubyRouting::Money.new(100, "RUB"))
+  end
+
+  def intent_with_route(id, routing_context)
+    RubyRouting::PayoutIntent.new(
+      id: id,
+      money: RubyRouting::Money.new(100, "RUB"),
+      routing_context: routing_context
+    )
   end
 
   def observation(commit, status, attribution: :provider)

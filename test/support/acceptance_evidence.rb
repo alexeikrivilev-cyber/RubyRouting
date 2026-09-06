@@ -137,6 +137,252 @@ module TestSupport
     ],
     "PTZ2-110" => [
       "test/unit/fact_store_test.rb#test_indexed_audit_queries_and_pages_preserve_fact_order"
+    ],
+    "PTZ3-001" => [
+      "test/scenario/application_service_test.rb#test_active_configuration_publishes_immutable_monotonic_revisions",
+      "test/concurrency/coordinator_races_test.rb#test_active_configuration_race_publishes_a_whole_generation",
+      "test/concurrency/coordinator_races_test.rb#test_configuration_lock_is_released_before_provider_io"
+    ],
+    "PTZ3-002" => [
+      "test/unit/routing_context_test.rb#test_malformed_routing_context_shapes_fail_closed",
+      "test/unit/routing_context_test.rb#test_false_explicit_routing_context_is_not_treated_as_absent",
+      "test/scenario/http_app_test.rb#test_http_rejects_a_scalar_routing_context_instead_of_broadening_the_route"
+    ],
+    "PTZ3-003" => [
+      "test/unit/quality_test.rb#test_quality_filters_each_expired_sample_instead_of_refreshing_the_cohort",
+      "test/scenario/quality_hardening_test.rb#test_mixed_age_route_quality_has_live_replay_restart_parity"
+    ],
+    "PTZ3-004" => [
+      "test/scenario/recovery_schedule_test.rb#test_restart_rebases_recovery_schedule_and_ttl_for_a_new_monotonic_origin",
+      "test/scenario/restart_recovery_test.rb#test_restart_rebases_throughput_window_for_a_new_monotonic_origin"
+    ],
+    "PTZ3-005" => [
+      "test/scenario/recovery_schedule_test.rb#test_replay_clears_delayed_schedule_when_live_expiry_blocks_reconciliation"
+    ],
+    "PTZ3-101" => [
+      "test/unit/quality_test.rb#test_quality_route_cohorts_are_partitioned_by_currency",
+      "test/scenario/quality_hardening_test.rb#test_currency_scoped_route_quality_survives_replay_and_restart"
+    ],
+    "PTZ3-102" => [
+      "test/unit/quality_test.rb#test_sparse_route_evidence_falls_back_until_route_minimum_is_reached"
+    ],
+    "PTZ3-103" => [
+      "test/unit/policy_resolution_test.rb#test_semantic_subsumption_wins_independently_of_registration_order",
+      "test/unit/policy_resolution_test.rb#test_equal_priority_incomparable_matches_remain_ambiguous_even_with_different_field_counts",
+      "test/unit/policy_resolution_test.rb#test_amount_band_boundaries_and_currency_are_exact",
+      "test/unit/policy_resolution_test.rb#test_selector_definition_and_fingerprint_survive_durable_restart"
+    ],
+    "PTZ3-104" => [
+      "test/scenario/application_service_test.rb#test_configuration_snapshot_exposes_non_blocking_diagnostics",
+      "test/scenario/application_service_test.rb#test_configuration_compiler_rejects_static_provider_incompatibility_without_mutation",
+      "test/scenario/application_service_test.rb#test_configuration_compiler_rejects_static_infeasible_policy_before_publish"
+    ],
+    "PTZ3-105" => [
+      "test/unit/policy_test.rb#test_recovery_objective_is_typed_explicit_and_default_compatible",
+      "test/unit/allocation_test.rb#test_recovery_objective_keeps_allocation_authority_before_quality"
+    ],
+    "PTZ3-106" => [
+      "test/unit/allocation_test.rb#test_allocation_authority_keeps_primary_and_recovery_paths_explicit",
+      "test/unit/decision_evaluation_test.rb#test_standalone_decision_engine_uses_the_shared_preparation_contract",
+      "test/scenario/projection_replay_test.rb#test_lifecycle_replay_preserves_status_resolution_counters_and_contract"
+    ],
+    "PTZ3-107" => [
+      "test/scenario/http_app_test.rb#test_http_exposes_configuration_diagnostics_and_due_recovery_work",
+      "test/scenario/http_app_test.rb#test_http_adapter_exposes_submit_query_and_analytics_without_routing_logic",
+      "test/scenario/analytics_dimensions_test.rb#test_application_query_filters_and_groups_only_compatible_dimensioned_measures"
+    ],
+    "PTZ3-108" => [
+      "test/scenario/health_ranking_test.rb#test_route_scoped_provider_failure_does_not_quarantine_another_route",
+      "test/scenario/health_ranking_test.rb#test_canonical_provider_path_records_exact_latency_and_replays_provider_health",
+      "test/scenario/restart_recovery_test.rb#test_working_restore_rejects_missing_health_transition_fact"
+    ],
+    "PTZ3-109" => [
+      "test/scenario/history_performance_evidence_test.rb#test_bounded_history_profile_measures_density_analytics_and_restore",
+      "test/scenario/history_performance_evidence_test.rb#test_bounded_profile_measures_concurrent_canonical_throughput"
+    ],
+    "PTZ3-111" => [
+      "test/scenario/application_service_test.rb#test_supplied_configuration_store_seeds_and_remains_the_policy_source_of_truth",
+      "test/scenario/application_service_test.rb#test_supplied_configuration_store_bootstraps_provider_history_for_restore"
+    ],
+    "PTZ3-112" => [
+      "test/scenario/http_app_test.rb#test_http_rejects_ambiguous_duplicate_query_parameters"
+    ],
+    "PTZ3-113" => [
+      "test/unit/quality_test.rb#test_quality_as_of_excludes_future_dated_evidence_from_counts_and_latest_timestamp"
+    ],
+    "PTZ3-114" => [
+      "test/scenario/application_service_test.rb#test_configuration_publish_rolls_back_provider_catalog_after_post_commit_failure"
+    ],
+    "PTZ3-115" => [
+      "test/unit/policy_resolution_test.rb#test_policy_currency_participates_in_semantic_subsumption"
+    ],
+    "PTZ3-116" => [
+      "test/unit/quality_test.rb#test_quality_rejects_malformed_routing_context_instead_of_pooling_global_evidence",
+      "test/scenario/restart_recovery_test.rb#test_working_restore_rejects_malformed_quality_routing_context"
+    ],
+    "PTZ3-117" => [
+      "test/scenario/health_ranking_test.rb#test_global_health_quarantine_is_a_safety_ceiling_for_scoped_routes"
+    ],
+    "PTZ3-118" => [
+      "test/unit/policy_resolution_test.rb#test_policy_currency_participates_in_semantic_subsumption"
+    ],
+    "PTZ3-119" => [
+      "test/scenario/application_service_test.rb#test_decision_trace_records_active_configuration_revision_for_explanation_and_audit",
+      "test/scenario/restart_recovery_test.rb#test_working_restore_rejects_malformed_configuration_revision"
+    ],
+    "PTZ3-120" => [
+      "test/scenario/http_app_test.rb#test_http_rejects_duplicate_json_keys_before_registering_a_payout"
+    ],
+    "PTZ3-121" => [
+      "test/scenario/application_service_test.rb#test_configuration_store_rejects_uncoordinated_public_mutation"
+    ],
+    "PTZ3-122" => [
+      "test/scenario/quality_hardening_test.rb#test_application_quality_query_uses_current_time_for_staleness",
+      "test/scenario/http_app_test.rb#test_http_quality_query_replays_evidence_as_of_injected_time"
+    ],
+    "PTZ3-123" => [
+      "test/scenario/health_ranking_test.rb#test_route_scoped_health_query_exposes_the_admission_state_without_global_pooling",
+      "test/scenario/http_app_test.rb#test_http_health_query_exposes_route_scoped_admission_state"
+    ],
+    "PTZ3-124" => [
+      "test/scenario/health_ranking_test.rb#test_route_assignment_accepts_global_degraded_health_without_bypassing_the_ceiling",
+      "test/scenario/health_ranking_test.rb#test_route_probe_uses_global_probe_budget_and_recovers_the_global_state"
+    ],
+    "PTZ3-125" => [
+      "test/unit/routing_context_test.rb#test_explicit_canonical_routing_context_rejects_unknown_keys",
+      "test/scenario/restart_recovery_test.rb#test_working_restore_rejects_unknown_persisted_routing_context_key"
+    ],
+    "PTZ3-126" => [
+      "test/unit/quality_test.rb#test_quality_rejects_malformed_routing_context_instead_of_pooling_global_evidence",
+      "test/unit/quality_test.rb#test_quality_snapshot_rejects_unknown_explicit_route_keys",
+      "test/unit/provider_operation_test.rb#test_direct_payload_rejects_unknown_explicit_route_keys",
+      "test/scenario/health_ranking_test.rb#test_health_rejects_unknown_explicit_route_keys_instead_of_using_global_state"
+    ],
+    "PTZ3-127" => [
+      "test/scenario/http_app_test.rb#test_http_submit_uses_and_exposes_explicit_canonical_routing_context",
+      "test/scenario/http_app_test.rb#test_http_rejects_unknown_explicit_routing_context_keys"
+    ],
+    "PTZ3-128" => [
+      "test/scenario/http_app_test.rb#test_http_preserves_typed_no_matching_policy_error",
+      "test/scenario/http_app_test.rb#test_http_preserves_typed_ambiguous_policy_error"
+    ],
+    "PTZ3-129" => [
+      "test/scenario/application_service_test.rb#test_application_fails_closed_when_coordinator_catalog_drifts_out_of_band",
+      "test/scenario/application_service_test.rb#test_application_resume_checks_catalog_drift_before_expiring_unresolved_state",
+      "test/scenario/http_app_test.rb#test_http_reports_configuration_drift_without_registering_a_payout"
+    ],
+    "PTZ3-130" => [
+      "test/scenario/application_service_test.rb#test_resume_recovery_decision_records_the_active_configuration_revision"
+    ],
+    "PTZ3-131" => [
+      "test/scenario/http_app_test.rb#test_http_rejects_unknown_health_route_query_parameters_instead_of_using_global_state",
+      "test/scenario/http_app_test.rb#test_http_rejects_alias_health_route_query_parameters_instead_of_silently_broadening"
+    ],
+    "PTZ3-132" => [
+      "test/scenario/application_service_test.rb#test_provider_query_projects_current_runtime_over_the_active_definition"
+    ],
+    "PTZ3-133" => [
+      "test/unit/fact_codec_test.rb#test_durable_codec_and_file_journal_reject_duplicate_json_object_keys"
+    ],
+    "PTZ3-134" => [
+      "test/scenario/http_app_test.rb#test_http_query_endpoints_reject_unsupported_parameters_instead_of_broadening"
+    ],
+    "PTZ3-135" => [
+      "test/scenario/http_app_test.rb#test_http_rejects_malformed_route_filters_even_when_projections_are_empty"
+    ],
+    "PTZ3-136" => [
+      "test/scenario/http_app_test.rb#test_http_routes_without_query_semantics_reject_parameters"
+    ],
+    "PTZ3-137" => [
+      "test/scenario/application_service_test.rb#test_application_policy_registry_is_read_only_compatibility_view"
+    ],
+    "PTZ3-138" => [
+      "test/scenario/application_service_test.rb#test_application_cannot_share_a_policy_registry_with_another_active_generation"
+    ],
+    "PTZ3-139" => [
+      "test/scenario/application_service_test.rb#test_failed_application_bootstrap_does_not_capture_policy_registry"
+    ],
+    "PTZ3-140" => [
+      "test/scenario/application_service_test.rb#test_configuration_compiler_rejects_disjoint_selector_and_hard_amount_ranges"
+    ],
+    "PTZ3-141" => [
+      "test/scenario/application_service_test.rb#test_query_policy_registry_view_tracks_the_active_application_registry"
+    ],
+    "PTZ3-142" => [
+      "test/scenario/http_app_test.rb#test_http_rejects_unknown_payout_fields_before_route_broadening"
+    ],
+    "PTZ3-143" => [
+      "test/unit/policy_resolution_test.rb#test_orchestrator_policy_registry_view_tracks_supplied_registry"
+    ],
+    "PTZ3-144" => [
+      "test/scenario/application_service_test.rb#test_policy_registry_views_do_not_expose_a_partially_published_generation"
+    ],
+    "PTZ3-145" => [
+      "test/scenario/http_app_test.rb#test_http_resume_rejects_a_body_because_it_has_no_body_semantics"
+    ],
+    "PTZ3-146" => [
+      "test/unit/provider_operation_test.rb#test_payload_constructor_preserves_or_rejects_an_explicit_contract"
+    ],
+    "PTZ3-147" => [
+      "test/unit/provider_operation_test.rb#test_payload_constructor_rejects_duplicate_legacy_route_fields"
+    ],
+    "PTZ3-148" => [
+      "test/scenario/capacity_test.rb#test_capacity_amounts_remain_currency_dimensioned_when_active_budget_changes"
+    ],
+    "PTZ3-149" => [
+      "test/unit/admission_ledger_test.rb#test_capacity_release_underflow_does_not_mutate_usage"
+    ],
+    "PTZ3-150" => [
+      "test/scenario/application_service_test.rb#test_rejected_application_bootstrap_does_not_mutate_a_second_provider_catalog"
+    ],
+    "PTZ3-151" => [
+      "test/unit/provider_operation_test.rb#test_executable_operation_identities_reject_non_scalar_values",
+      "test/unit/policy_resolution_test.rb#test_policy_resolution_rejects_non_scalar_scope_input",
+      "test/scenario/recovery_schedule_test.rb#test_recovery_work_identities_reject_non_scalar_values"
+    ],
+    "PTZ3-152" => [
+      "test/unit/identity_test.rb#test_core_routing_and_state_identities_reject_structured_values"
+    ],
+    "PTZ3-153" => [
+      "test/unit/identity_test.rb#test_provider_configuration_scalars_reject_arbitrary_string_coercion"
+    ],
+    "PTZ3-154" => [
+      "test/unit/identity_test.rb#test_provider_configuration_scalars_reject_arbitrary_string_coercion"
+    ],
+    "PTZ3-155" => [
+      "test/scenario/http_app_test.rb#test_normalizer_configuration_rejects_arbitrary_provider_id_coercion"
+    ],
+    "PTZ4-001" => [
+      "test/scenario/outcome_analytics_test.rb#test_mixed_case_exposes_typed_provider_and_fallback_outcome_counts",
+      "test/scenario/outcome_analytics_test.rb#test_exact_duplicate_observation_does_not_duplicate_typed_outcome_counts",
+      "test/scenario/outcome_analytics_test.rb#test_http_outcome_query_uses_the_same_canonical_projection"
+    ],
+    "PTZ4-002" => [
+      "test/concurrency/due_recovery_workers_test.rb#test_concurrent_due_workers_start_one_status_resolution_after_restart",
+      "test/concurrency/due_recovery_workers_test.rb#test_concurrent_due_workers_start_one_idempotent_retry_after_restart",
+      "test/concurrency/due_recovery_workers_test.rb#test_unclassified_adapter_failure_releases_only_the_live_guard"
+    ],
+    "PTZ4-003" => [
+      "test/scenario/configuration_crash_consistency_test.rb#test_fresh_process_crash_after_provider_publication_restarts_only_with_a_coherent_generation"
+    ],
+    "PTZ4-004" => [
+      "test/concurrency/due_recovery_workers_test.rb#test_duplicate_observation_during_blocked_resolution_cannot_release_live_guard",
+      "test/concurrency/due_recovery_workers_test.rb#test_duplicate_observation_during_blocked_idempotent_retry_cannot_release_live_guard",
+      "test/concurrency/due_recovery_workers_test.rb#test_non_applying_observation_during_blocked_resolution_cannot_release_live_guard",
+      "test/concurrency/due_recovery_workers_test.rb#test_stale_interaction_token_cannot_release_a_newer_invocation"
+    ],
+    "PTZ4-101" => [
+      "test/scenario/read_path_hardening_test.rb#test_revision_cache_reprojects_only_age_and_invalidates_after_new_facts",
+      "test/scenario/read_path_hardening_test.rb#test_explanation_uses_indexed_payout_facts_without_changing_the_projection"
+    ],
+    "PTZ4-102" => [
+      "test/scenario/read_path_hardening_test.rb#test_revision_cache_reprojects_only_age_and_invalidates_after_new_facts"
+    ],
+    "PTZ4-103" => [
+      "test/scenario/case_fidelity_campaign_test.rb#test_case_campaign_preserves_count_volume_fallback_unknown_and_restart"
+    ],
+    "PTZ4-104" => [
+      "test/scenario/case_fidelity_campaign_test.rb#test_public_surfaces_preserve_every_multi_attempt_history_entry_after_restart"
     ]
   }.freeze
 end

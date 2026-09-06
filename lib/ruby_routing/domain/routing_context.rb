@@ -19,10 +19,21 @@ module RubyRouting
       freeze
     end
 
-    def self.from(value)
+    def self.from(value = nil, strict: true, **keyword_values)
+      unless keyword_values.empty?
+        if value.nil?
+          value = keyword_values
+        else
+          raise ArgumentError, "routing context accepts either a value or keyword dimensions"
+        end
+      end
       return value if value.is_a?(self)
-      return new if value.nil? || !value.is_a?(Hash)
+      return new if value.nil?
+      unless value.is_a?(Hash)
+        raise ArgumentError, "routing context must be a Hash, RoutingContext or nil"
+      end
 
+      validate_input_keys!(value) if strict
       values = recognized_values(value)
       destination_kind = coalesced_alias(values, :destination_kind, :destination_type)
       labels = []
@@ -71,6 +82,15 @@ module RubyRouting
       end
 
       private
+
+      def validate_input_keys!(value)
+        value.each_key do |key|
+          next if (key.is_a?(String) || key.is_a?(Symbol)) &&
+            INPUT_KEYS.any? { |candidate| candidate.to_s == key.to_s }
+
+          raise ArgumentError, "routing context contains unknown key #{key.inspect}"
+        end
+      end
 
       def recognized_values(value)
         value.each_with_object({}) do |(key, nested), values|

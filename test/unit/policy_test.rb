@@ -293,6 +293,19 @@ class PolicyTest < Minitest::Test
       hard_share_capacity.static_feasibility
     )
 
+    disjoint_amounts = RubyRouting::RoutingPolicy.new(
+      id: "disjoint-amount-bounds",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1 },
+      selector: { currency: "RUB", minimum_amount_minor: 100 },
+      hard_constraints: { maximum_amount_minor: 10 }
+    )
+    assert_equal(
+      { status: :infeasible, reason_codes: [:selector_hard_amount_ranges_disjoint] },
+      disjoint_amounts.static_feasibility
+    )
+
     error = assert_raises(RubyRouting::StaticPolicyInfeasibilityError) do
       RubyRouting::RoutingPolicy.new(
         id: "invalid-measure-corridor",

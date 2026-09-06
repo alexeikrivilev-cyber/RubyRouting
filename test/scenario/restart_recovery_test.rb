@@ -156,6 +156,43 @@ class RestartRecoveryTest < Minitest::Test
     assert_equal 1, restored.throughput_snapshot("A").consumed_count
   end
 
+  def test_restart_rebases_throughput_window_for_a_new_monotonic_origin
+    start_time = Time.utc(2026, 8, 31, 12, 0, 0)
+    clock = TestSupport::ControlledClock.new(start_time: start_time, monotonic_origin: 0)
+    provider = RubyRouting::ProviderOpportunity.new(
+      provider_id: "A",
+      throughput: RubyRouting::ThroughputBudget.new(max_operations: 1, window_seconds: 60)
+    )
+    policy = policy_for("restart-throughput-origin")
+    first = RubyRouting::State::Coordinator.new(clock: clock, opportunities: [provider])
+    committed = first.prepare_and_commit_decision(
+      intent: intent("restart-throughput-origin-first"),
+      policy: policy
+    )
+    first.mark_attempt_started(committed)
+    first.apply_observation(observation_for(committed, :safe_route_failure))
+    clock.advance(1)
+
+    restarted_clock = TestSupport::ControlledClock.new(
+      start_time: clock.now,
+      monotonic_origin: 100
+    )
+    restored = RubyRouting::State::Coordinator.from_facts(
+      facts: first.facts,
+      opportunities: [provider],
+      clock: restarted_clock
+    )
+
+    assert_equal 1, restored.throughput_snapshot("A").consumed_count
+    second = restored.prepare_and_commit_decision(
+      intent: intent("restart-throughput-origin-second"),
+      policy: policy
+    )
+
+    assert_equal :defer, second.proposal.action
+    assert_includes second.proposal.reason_codes, :throughput_exhausted
+  end
+
   def test_restart_deduplication_preserves_observation_identity
     Dir.mktmpdir("ruby-routing-dedup") do |directory|
       path = File.join(directory, "facts.jsonl")
@@ -837,6 +874,7 @@ class RestartRecoveryTest < Minitest::Test
         opportunities: [provider]
       )
     end
+
   end
 
   def test_working_restore_rejects_assignment_without_allocation_fact
@@ -1348,7 +1386,7 @@ class RestartRecoveryTest < Minitest::Test
     {
       reason: :forged_reason,
       elapsed: payload.fetch(:elapsed) + 1,
-      blocked_monotonic_at: payload.fetch(:blocked_monotonic_at) + 1
+      blocked_at: payload.fetch(:blocked_at) + 1
     }.each do |field, value|
       corrupted = replace_fact_payload(
         coordinator.facts,
@@ -3024,6 +3062,129 @@ class RestartRecoveryTest < Minitest::Test
     end
   end
 
+  def test_working_restore_rejects_quality_signal_with_cross_currency_evidence
+    provider = RubyRouting::ProviderOpportunity.new(provider_id: "A")
+    payout = intent("cross-currency-quality-signal-payout")
+    coordinator = RubyRouting::State::Coordinator.new(opportunities: [provider])
+    commit = coordinator.prepare_and_commit_decision(intent: payout, policy: policy_for("cross-currency-quality-signal"))
+    coordinator.mark_attempt_started(commit)
+    coordinator.apply_observation(
+      RubyRouting::ProviderObservation.new(
+        observation_id: "cross-currency-quality-signal-observation",
+        payout_id: payout.id,
+        provider_id: "A",
+        operation_id: commit.proposal.operation_id,
+        attempt_id: commit.proposal.attempt_id,
+        outcome: RubyRouting::NormalizedOutcome.success(attribution: :provider)
+      )
+    )
+    corrupted = replace_fact_payload(
+      coordinator.facts,
+      type: :quality_signal,
+      changes: { currency: "USD" }
+    )
+
+    assert_raises(RubyRouting::State::DurableCorruptionError) do
+      RubyRouting::State::Coordinator.from_facts(
+        facts: corrupted,
+        opportunities: [provider]
+      )
+    end
+  end
+
+  def test_working_restore_rejects_malformed_quality_routing_context
+    provider = RubyRouting::ProviderOpportunity.new(provider_id: "A")
+    payout = intent("malformed-quality-routing-context-payout")
+    coordinator = RubyRouting::State::Coordinator.new(opportunities: [provider])
+    commit = coordinator.prepare_and_commit_decision(
+      intent: payout,
+      policy: policy_for("malformed-quality-routing-context")
+    )
+    coordinator.mark_attempt_started(commit)
+    coordinator.apply_observation(
+      RubyRouting::ProviderObservation.new(
+        observation_id: "malformed-quality-routing-context-observation",
+        payout_id: payout.id,
+        provider_id: "A",
+        operation_id: commit.proposal.operation_id,
+        attempt_id: commit.proposal.attempt_id,
+        outcome: RubyRouting::NormalizedOutcome.success(attribution: :provider)
+      )
+    )
+    corrupted = replace_fact_payload(
+      coordinator.facts,
+      type: :quality_signal,
+      changes: { routing_context: "card" }
+    )
+
+    assert_raises(RubyRouting::State::DurableCorruptionError) do
+      RubyRouting::State::Coordinator.from_facts(
+        facts: corrupted,
+        opportunities: [provider]
+      )
+    end
+  end
+
+  def test_working_restore_rejects_unknown_persisted_routing_context_key
+    provider = RubyRouting::ProviderOpportunity.new(provider_id: "A")
+    payout = intent("unknown-persisted-routing-context-key")
+    coordinator = RubyRouting::State::Coordinator.new(opportunities: [provider])
+    coordinator.register_intent(payout)
+    corrupted = replace_fact_payload(
+      coordinator.facts,
+      type: :intent_registered,
+      changes: { routing_context: { payment_methd: "card" } }
+    )
+
+    assert_raises(RubyRouting::State::DurableCorruptionError) do
+      RubyRouting::State::Coordinator.from_facts(
+        facts: corrupted,
+        opportunities: [provider]
+      )
+    end
+  end
+
+  def test_working_restore_rejects_malformed_configuration_revision
+    provider = RubyRouting::ProviderOpportunity.new(provider_id: "A")
+    payout = intent("malformed-configuration-revision-payout")
+    coordinator = RubyRouting::State::Coordinator.new(opportunities: [provider])
+    coordinator.prepare_and_commit_decision(
+      intent: payout,
+      policy: policy_for("malformed-configuration-revision")
+    )
+    corrupted = replace_fact_payload(
+      coordinator.facts,
+      type: :opportunity_evaluated,
+      changes: { configuration_revision: "1" }
+    )
+
+    assert_raises(RubyRouting::State::DurableCorruptionError) do
+      RubyRouting::State::Coordinator.from_facts(
+        facts: corrupted,
+        opportunities: [provider]
+      )
+    end
+
+    coordinator = RubyRouting::State::Coordinator.new(opportunities: [provider])
+    coordinator.prepare_and_commit_decision(
+      intent: intent("mismatched-configuration-revision-payout"),
+      policy: policy_for("mismatched-configuration-revision"),
+      configuration_revision: 1
+    )
+    mismatched = replace_fact_payload(
+      coordinator.facts,
+      type: :decision_committed,
+      changes: { configuration_revision: 2 }
+    )
+
+    assert_raises(RubyRouting::State::DurableCorruptionError) do
+      RubyRouting::State::Coordinator.from_facts(
+        facts: mismatched,
+        opportunities: [provider]
+      )
+    end
+  end
+
   def test_working_restore_rejects_duplicate_transport_classification
     provider = RubyRouting::ProviderOpportunity.new(provider_id: "A")
     payout = intent("duplicate-transport-payout")
@@ -3265,14 +3426,14 @@ class RestartRecoveryTest < Minitest::Test
     RubyRouting::PayoutIntent.new(id: id, money: RubyRouting::Money.new(100, "RUB"))
   end
 
-  def observation_for(commit)
+  def observation_for(commit, status = :success)
     RubyRouting::ProviderObservation.new(
       observation_id: "dedup-observation",
       payout_id: commit.request.payout_id,
       provider_id: commit.proposal.provider_id,
       operation_id: commit.proposal.operation_id,
       attempt_id: commit.proposal.attempt_id,
-      outcome: RubyRouting::NormalizedOutcome.success(attribution: :provider)
+      outcome: RubyRouting::NormalizedOutcome.new(status: status, attribution: :provider)
     )
   end
 

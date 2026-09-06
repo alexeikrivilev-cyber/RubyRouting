@@ -17,9 +17,11 @@ module RubyRouting
     end
 
     class Orchestrator
-      attr_reader :policy_registry
+      ProviderInvocation = Data.define(:observation, :interaction_token)
 
-      def initialize(coordinator:, providers:, policy_registry: nil)
+      attr_reader :configuration_store
+
+      def initialize(coordinator:, providers:, policy_registry: nil, configuration_store: nil)
         unless coordinator.is_a?(RubyRouting::State::Coordinator)
           raise ArgumentError, "coordinator must be State::Coordinator"
         end
@@ -29,12 +31,36 @@ module RubyRouting
         if policy_registry && !policy_registry.is_a?(RubyRouting::PolicyRegistry)
           raise ArgumentError, "policy_registry must be PolicyRegistry or nil"
         end
+        if configuration_store && !configuration_store.is_a?(RubyRouting::Application::ConfigurationStore)
+          raise ArgumentError, "configuration_store must be Application::ConfigurationStore or nil"
+        end
 
         @coordinator = coordinator
-        @policy_registry = policy_registry
+        @configuration_store = configuration_store || RubyRouting::Application::ConfigurationStore.new(
+          configuration: RubyRouting::Application::RoutingConfiguration.new(
+            policies: policy_registry ? policy_registry.policies : [],
+            provider_opportunities: coordinator.provider_opportunities
+          )
+        )
+        @policy_registry = if policy_registry
+          if configuration_store && !RubyRouting::PolicyRegistry.same_policy_set?(
+            policy_registry.policies,
+            @configuration_store.current.policies
+          )
+            raise ArgumentError, "policy_registry and configuration_store must share one active policy set"
+          end
+          # The supplied registry is the application-owned compatibility
+          # source. Cloning it here makes the orchestrator view stale after a
+          # coordinated command publishes a new active generation.
+          policy_registry
+        else
+          RubyRouting::PolicyRegistry.new(@configuration_store.current.policies)
+        end
+        @policy_registry_view = @policy_registry.read_only(
+          configuration_store: @configuration_store
+        )
         @providers = providers.each_with_object({}) do |(id, provider), copy|
-          normalized_id = id.to_s.strip
-          raise ArgumentError, "provider id must be non-empty" if normalized_id.empty?
+          normalized_id = RubyRouting::Identity.normalize(id, "provider id")
           raise ArgumentError, "provider ids must be unique after normalization" if copy.key?(normalized_id)
           unless executable_provider_method?(provider, :initiate) &&
                  executable_provider_method?(provider, :resolve)
@@ -43,49 +69,50 @@ module RubyRouting
 
           copy[normalized_id] = provider
         end.freeze
+        # Validate the complete adapter boundary before bootstrapping a
+        # supplied provider generation into the shared Coordinator. A failed
+        # application construction must not leave that Coordinator mutated.
+        synchronize_provider_catalog!(coordinator, @configuration_store.current.provider_opportunities) if configuration_store
+      end
+
+      def policy_registry
+        @policy_registry_view
       end
 
       def submit(intent:, policy: nil, scope: :default)
-        resolved_policy = policy || resolve_policy_for(intent, scope: scope)
-        unless resolved_policy.is_a?(RubyRouting::RoutingPolicy)
-          raise ArgumentError, "policy must be provided or resolvable from policy_registry"
-        end
-
-        # Each money-moving operation and each resolution/retry interaction can
-        # consume one loop turn. Keep the guard derived from both independent
-        # budgets so a deliberately larger resolution budget cannot be cut off
-        # by the operation budget.
-        max_steps = resolved_policy.recovery.max_operations +
-          resolved_policy.recovery.max_resolution_interactions + 2
+        resolved_policy = policy
+        max_steps = nil
         steps = 0
 
         loop do
           steps += 1
-          if steps > max_steps
+          if max_steps && steps > max_steps
             payout = @coordinator.payout_snapshot(intent.id)
             return RouteResult.new(payout: payout, action: :defer)
           end
 
-          commit = @coordinator.prepare_and_commit_decision(
+          commit, resolved_policy = prepare_decision(
             intent: intent,
             policy: resolved_policy,
-            available_provider_ids: @providers.keys
+            scope: scope
           )
+          max_steps ||= resolved_policy.recovery.max_operations +
+            resolved_policy.recovery.max_resolution_interactions + 2
           proposal = commit.proposal
           case proposal.action
           when :already_final, :terminate, :defer
             return RouteResult.new(payout: commit.payout, action: proposal.action)
           when :assign, :retry_same
-            observation = initiate(commit)
-            next unless observation
+            invocation = initiate(commit)
+            next unless invocation
           when :resolve
-            observation = resolve(commit)
-            next unless observation
+            invocation = resolve(commit)
+            next unless invocation
           else
             raise ArgumentError, "unsupported orchestrator action #{proposal.action.inspect}"
           end
 
-          application = @coordinator.apply_observation(observation)
+          application = apply_provider_invocation(invocation)
           case application.next_action
           when :reroute
             next
@@ -102,22 +129,33 @@ module RubyRouting
       end
 
       def resume(payout_id:, policy: nil, scope: :default)
-        payout = @coordinator.payout_snapshot(payout_id)
-        resolved_policy = policy || @coordinator.policy_for(payout_id) ||
-          resolve_policy_for(payout.intent, scope: scope)
-        if (resumed_operation = @coordinator.resume_operation(payout_id))
+        payout, resolved_policy, resumed_operation = @configuration_store.with_snapshot do |snapshot|
+          current_payout = @coordinator.payout_snapshot(payout_id)
+          current_policy = policy || @coordinator.policy_for(payout_id) ||
+            resolve_policy_for(current_payout.intent, scope: scope, configuration: snapshot.configuration)
+          [
+            current_payout,
+            current_policy,
+            @coordinator.resume_operation(
+              payout_id,
+              provider_opportunities: snapshot.provider_opportunities,
+              configuration_revision: snapshot.revision
+            )
+          ]
+        end
+        if resumed_operation
           unless @providers.key?(resumed_operation.proposal.provider_id)
             return RouteResult.new(payout: resumed_operation.payout, action: :defer)
           end
 
-          observation = if resumed_operation.proposal.resolution?
+          invocation = if resumed_operation.proposal.resolution?
             resolve(resumed_operation)
           else
             initiate(resumed_operation)
           end
-          return RouteResult.new(payout: resumed_operation.payout, action: :defer) unless observation
+          return RouteResult.new(payout: resumed_operation.payout, action: :defer) unless invocation
 
-          application = @coordinator.apply_observation(observation)
+          application = apply_provider_invocation(invocation)
           return RouteResult.new(payout: application.payout, action: application.next_action) unless application.next_action == :reroute
 
           return submit(intent: payout.intent, policy: resolved_policy, scope: scope)
@@ -139,10 +177,38 @@ module RubyRouting
 
       private
 
-      def resolve_policy_for(intent, scope:)
+      def prepare_decision(intent:, policy:, scope:)
+        @configuration_store.with_snapshot do |snapshot|
+          resolved_policy = policy || resolve_policy_for(
+            intent,
+            scope: scope,
+            configuration: snapshot.configuration
+          )
+          unless resolved_policy.is_a?(RubyRouting::RoutingPolicy)
+            raise ArgumentError, "policy must be provided or resolvable from policy_registry"
+          end
+
+          [
+            @coordinator.prepare_and_commit_decision(
+              intent: intent,
+              policy: resolved_policy,
+              available_provider_ids: @providers.keys,
+              provider_opportunities: snapshot.provider_opportunities,
+              configuration_revision: snapshot.revision
+            ),
+            resolved_policy
+          ]
+        end
+      end
+
+      def resolve_policy_for(intent, scope:, configuration: nil)
         return nil unless @policy_registry
 
-        resolution = @policy_registry.resolve_for_intent(intent, scope: scope)
+        resolution = if configuration
+          configuration.resolve_policy_for(intent, scope: scope)
+        else
+          @policy_registry.resolve_for_intent(intent, scope: scope)
+        end
         return resolution.policy if resolution.matched?
 
         error_class = if resolution.ambiguous?
@@ -166,20 +232,70 @@ module RubyRouting
         false
       end
 
+      def synchronize_provider_catalog!(coordinator, desired_opportunities)
+        previous_opportunities = coordinator.provider_opportunities
+        return if RubyRouting::Application::RoutingConfiguration.same_provider_opportunity_set?(
+          previous_opportunities,
+          desired_opportunities
+        )
+
+        begin
+          coordinator.replace_provider_opportunities(desired_opportunities)
+        rescue StandardError => error
+          begin
+            current_opportunities = coordinator.provider_opportunities
+            unless RubyRouting::Application::RoutingConfiguration.same_provider_opportunity_set?(
+              current_opportunities,
+              previous_opportunities
+            )
+              coordinator.replace_provider_opportunities(previous_opportunities)
+            end
+          rescue StandardError => rollback_error
+            raise RubyRouting::State::DurableCorruptionError,
+              "active provider bootstrap rollback failed: #{rollback_error.message}"
+          end
+          raise error
+        end
+      end
+
       def initiate(commit)
         provider = @providers.fetch(commit.proposal.provider_id) do
           raise ArgumentError, "no adapter configured for #{commit.proposal.provider_id}"
         end
-        return nil unless @coordinator.mark_attempt_started(commit)
-        invoke_provider(provider, :initiate, commit)
+        interaction_token = @coordinator.mark_attempt_started(commit)
+        return nil unless interaction_token
+        invoke_provider_with_guard(provider, :initiate, commit, interaction_token)
       end
 
       def resolve(commit)
         provider = @providers.fetch(commit.proposal.provider_id) do
           raise ArgumentError, "no adapter configured for #{commit.proposal.provider_id}"
         end
-        return nil unless @coordinator.mark_resolution_started(commit)
-        invoke_provider(provider, :resolve, commit)
+        interaction_token = @coordinator.mark_resolution_started(commit)
+        return nil unless interaction_token
+        invoke_provider_with_guard(provider, :resolve, commit, interaction_token)
+      end
+
+      def invoke_provider_with_guard(provider, method_name, commit, interaction_token)
+        ProviderInvocation.new(
+          observation: invoke_provider(provider, method_name, commit),
+          interaction_token: interaction_token
+        )
+      rescue StandardError
+        @coordinator.provider_interaction_failed(interaction_token: interaction_token)
+        raise
+      end
+
+      def apply_provider_invocation(invocation)
+        @coordinator.apply_observation(
+          invocation.observation,
+          interaction_token: invocation.interaction_token
+        )
+      rescue StandardError
+        @coordinator.provider_interaction_failed(
+          interaction_token: invocation.interaction_token
+        )
+        raise
       end
 
       def invoke_provider(provider, method_name, commit)

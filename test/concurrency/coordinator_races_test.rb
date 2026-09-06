@@ -2,6 +2,48 @@
 
 require_relative "../test_helper"
 
+class PausingConfigurationCoordinator < RubyRouting::State::Coordinator
+  attr_reader :provider_replacement_started, :provider_replacement_release
+
+  def initialize(**attributes)
+    @pause_after_provider_replacement = false
+    @provider_replacement_started = Queue.new
+    @provider_replacement_release = Queue.new
+    super
+  end
+
+  def pause_after_provider_replacement!
+    @pause_after_provider_replacement = true
+  end
+
+  def replace_provider_opportunities(opportunities)
+    super
+    return unless @pause_after_provider_replacement
+
+    @pause_after_provider_replacement = false
+    @provider_replacement_started << true
+    @provider_replacement_release.pop
+  end
+end
+
+class ObservingConfigurationStore < RubyRouting::Application::ConfigurationStore
+  attr_reader :snapshot_attempted, :snapshot_entered
+
+  def initialize(**attributes)
+    @snapshot_attempted = Queue.new
+    @snapshot_entered = Queue.new
+    super
+  end
+
+  def with_snapshot
+    @snapshot_attempted << true
+    super do |snapshot|
+      @snapshot_entered << snapshot.revision
+      yield snapshot
+    end
+  end
+end
+
 class CoordinatorRacesTest < Minitest::Test
   def test_concurrent_same_intent_commits_at_most_one_owner
     coordinator = RubyRouting::State::Coordinator.new(opportunities: opportunities)
@@ -83,6 +125,116 @@ class CoordinatorRacesTest < Minitest::Test
     end
 
     raise first_error if first_error
+  end
+
+  def test_active_configuration_race_publishes_a_whole_generation
+    coordinator = PausingConfigurationCoordinator.new
+    configuration_store = ObservingConfigurationStore.new(
+      configuration: RubyRouting::Application::RoutingConfiguration.new
+    )
+    provider_a = TestSupport::Simulator::ScriptedProvider.new(provider_id: "A", steps: [TestSupport::Simulator::Step.success])
+    provider_b = TestSupport::Simulator::ScriptedProvider.new(provider_id: "B", steps: [TestSupport::Simulator::Step.success])
+    service = RubyRouting::Application::Service.new(
+      coordinator: coordinator,
+      providers: { "A" => provider_a, "B" => provider_b },
+      configuration_store: configuration_store
+    )
+    policy_a = RubyRouting::RoutingPolicy.new(id: "generation-a", epoch: "1", measure: :count, targets: { "A" => 1 })
+    policy_b = RubyRouting::RoutingPolicy.new(id: "generation-b", epoch: "1", measure: :count, targets: { "B" => 1 })
+    configuration_a = RubyRouting::Application::RoutingConfiguration.new(
+      policies: [policy_a], provider_opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+    configuration_b = RubyRouting::Application::RoutingConfiguration.new(
+      policies: [policy_b], provider_opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "B")]
+    )
+    service.apply_configuration(configuration_a)
+    coordinator.pause_after_provider_replacement!
+
+    apply_errors = Queue.new
+    apply_thread = Thread.new do
+      service.apply_configuration(configuration_b)
+    rescue StandardError => error
+      apply_errors << error
+    end
+    coordinator.provider_replacement_started.pop
+
+    payout = intent("configuration-generation-race")
+    submit_result = Queue.new
+    submit_thread = Thread.new do
+      submit_result << service.submit(intent: payout)
+    rescue StandardError => error
+      submit_result << error
+    end
+    configuration_store.snapshot_attempted.pop
+
+    assert_empty coordinator.facts.select { |fact| fact.type == :opportunity_evaluated && fact.payout_id == payout.id }
+    assert_raises(ThreadError) { configuration_store.snapshot_entered.pop(true) }
+
+    coordinator.provider_replacement_release << true
+    apply_thread.join
+    result = Timeout.timeout(2) { submit_result.pop }
+    submit_thread.join
+    raise apply_errors.pop unless apply_errors.empty?
+    raise result if result.is_a?(StandardError)
+
+    assert_equal :success, result.status
+    assert_equal 2, service.queries.configuration_revision
+    evaluation = coordinator.facts.find do |fact|
+      fact.type == :opportunity_evaluated && fact.payout_id == payout.id
+    end
+    assert_equal "generation-b", evaluation.payload.fetch(:policy_id)
+    assert_equal ["B"], evaluation.payload.fetch(:opportunities)
+    assert_empty provider_a.calls
+    assert_equal [[:initiate, "configuration-generation-race:configuration-generation-race:operation:1"]], provider_b.calls
+  end
+
+  def test_configuration_lock_is_released_before_provider_io
+    blocking_provider = BlockingProvider.new
+    coordinator = RubyRouting::State::Coordinator.new
+    configuration_store = ObservingConfigurationStore.new(
+      configuration: RubyRouting::Application::RoutingConfiguration.new
+    )
+    service = RubyRouting::Application::Service.new(
+      coordinator: coordinator,
+      providers: {
+        "A" => blocking_provider,
+        "B" => TestSupport::Simulator::ScriptedProvider.new(provider_id: "B", steps: [])
+      },
+      configuration_store: configuration_store
+    )
+    policy_a = RubyRouting::RoutingPolicy.new(id: "io-generation-a", epoch: "1", measure: :count, targets: { "A" => 1 })
+    policy_b = RubyRouting::RoutingPolicy.new(id: "io-generation-b", epoch: "1", measure: :count, targets: { "B" => 1 })
+    service.apply_configuration(
+      RubyRouting::Application::RoutingConfiguration.new(
+        policies: [policy_a], provider_opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+      )
+    )
+
+    submit_result = Queue.new
+    submit_thread = Thread.new do
+      submit_result << service.submit(intent: intent("configuration-io-race"))
+    end
+    blocking_provider.started.pop
+
+    apply_result = Queue.new
+    apply_thread = Thread.new do
+      service.apply_configuration(
+        RubyRouting::Application::RoutingConfiguration.new(
+          policies: [policy_b], provider_opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "B")]
+        )
+      )
+      apply_result << :applied
+    rescue StandardError => error
+      apply_result << error
+    end
+
+    assert_equal :applied, Timeout.timeout(2) { apply_result.pop }
+    apply_thread.join
+    blocking_provider.release << true
+    result = Timeout.timeout(2) { submit_result.pop }
+    submit_thread.join
+    raise result if result.is_a?(StandardError)
+    assert_equal :success, result.status
   end
 
   def test_duplicate_submit_during_dispatch_does_not_start_resolution_or_retry

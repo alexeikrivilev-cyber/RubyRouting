@@ -105,6 +105,7 @@ module RubyRouting
       def validate_health_state_change!(fact)
         payload = fact.payload
         provider_id = @provider_identity.call(payload, :provider_id)
+        routing_context = normalized_routing_context(payload[:routing_context])
         validate_provider_system_fact(fact, provider_id, require_registered: :historical)
         from = @enum_value.call(
           payload,
@@ -123,17 +124,19 @@ module RubyRouting
           raise RubyRouting::State::DurableCorruptionError,
             "invalid health state transition #{from.inspect}->#{to.inspect}"
         end
-        expected_transition = @pending_health_transitions.call.delete(provider_id)
+        expected_transition = @pending_health_transitions.call.delete(
+          health_state_key(provider_id, routing_context)
+        )
         unless expected_transition == [from, to]
           raise RubyRouting::State::DurableCorruptionError,
             "health state transition does not match preceding signal for #{provider_id}"
         end
-        current = health_controller.snapshot(provider_id)
+        current = health_controller.snapshot(provider_id, routing_context: routing_context)
         unless current.state == to
           raise RubyRouting::State::DurableCorruptionError,
             "health state change does not match provider #{provider_id}"
         end
-      rescue KeyError, TypeError, NoMethodError => error
+      rescue KeyError, ArgumentError, TypeError, NoMethodError => error
         raise RubyRouting::State::DurableCorruptionError,
           "malformed health state change: #{error.message}"
       end
@@ -141,6 +144,7 @@ module RubyRouting
       def restore_health_signal!(fact)
         payload = fact.payload
         provider_id = @provider_identity.call(payload, :provider_id)
+        routing_context = normalized_routing_context(payload[:routing_context])
         validate_provider_system_fact(fact, provider_id, require_registered: :historical)
         unless payload.fetch(:policy) == health_controller.policy.to_h
           raise RubyRouting::State::DurableCorruptionError,
@@ -164,6 +168,12 @@ module RubyRouting
         source_key = nil
         if source_kind == :observation
           source_key, observation = restored_observation_source!(payload, observation_id_key: :source)
+          payout_state = @payout_state.call(payload.fetch(:source_payout_id))
+          expected_context = normalized_routing_context(payout_state.intent.routing_context)
+          unless expected_context == routing_context
+            raise RubyRouting::State::DurableCorruptionError,
+              "health signal route context does not match source observation #{source_key.inspect}"
+          end
           expected_signal = health_signal_for_observation_payload(observation)
           expected_attribution = health_attribution_for_observation_payload(observation)
           signal = @enum_value.call(
@@ -198,15 +208,17 @@ module RubyRouting
           provider_id: provider_id,
           signal: payload.fetch(:signal),
           attribution: payload.fetch(:attribution),
-          release_exposure: release_exposure
+          release_exposure: release_exposure,
+          routing_context: routing_context
         )
         @restored_health_signal_sources.call[source_key] = true if source_key
+        transition_key = health_state_key(provider_id, routing_context)
         if before.state == after.state
-          @pending_health_transitions.call.delete(provider_id)
+          @pending_health_transitions.call.delete(transition_key)
         else
-          @pending_health_transitions.call[provider_id] = [before.state, after.state]
+          @pending_health_transitions.call[transition_key] = [before.state, after.state]
         end
-      rescue KeyError, TypeError, NoMethodError => error
+      rescue KeyError, ArgumentError, TypeError, NoMethodError => error
         raise RubyRouting::State::DurableCorruptionError,
           "malformed health signal: #{error.message}"
       end
@@ -250,6 +262,12 @@ module RubyRouting
           raise RubyRouting::State::DurableCorruptionError,
             "quality signal timestamp does not match source observation #{source_key.inspect}"
         end
+        source_state = @payout_state.call(payload.fetch(:source_payout_id))
+        source_currency = source_state.intent.money.currency
+        if payload.key?(:currency) && payload[:currency] != source_currency
+          raise RubyRouting::State::DurableCorruptionError,
+            "quality signal currency does not match source payout #{source_key.inspect}"
+        end
         if @restored_quality_signal_sources.call.key?(source_key)
           raise RubyRouting::State::DurableCorruptionError,
             "duplicate quality signal for observation #{source_key.inspect}"
@@ -258,6 +276,7 @@ module RubyRouting
           provider_id: provider_id,
           context_key: payload.fetch(:context_key, []),
           routing_context: payload[:routing_context],
+          currency: payload[:currency],
           observed_at: payload[:observed_at],
           outcome: RubyRouting::NormalizedOutcome.new(
             status: payload.fetch(:status),
@@ -268,7 +287,8 @@ module RubyRouting
         after = quality_controller.evidence_snapshot(
           provider_id,
           context_key: payload.fetch(:context_key, []),
-          routing_context: payload[:routing_context]
+          routing_context: payload[:routing_context],
+          currency: payload[:currency]
         )
         unless after.successful_samples == payload.fetch(:successful_samples, after.successful_samples) &&
                after.failed_samples == payload.fetch(:failed_samples, after.failed_samples) &&
@@ -280,6 +300,7 @@ module RubyRouting
                after.evidence_window == payload.fetch(:evidence_window, after.evidence_window) &&
                after.context_key == payload.fetch(:context_key, []) &&
                (!payload.key?(:routing_context) || after.routing_context&.to_h == payload[:routing_context]) &&
+               (!payload.key?(:currency) || after.currency == payload[:currency]) &&
                (!payload.key?(:observed_at) || after.last_observed_at == payload[:observed_at]) &&
                (!payload.key?(:last_observed_at) || after.last_observed_at == payload[:last_observed_at]) &&
                (!payload.key?(:max_evidence_age_seconds) ||
@@ -294,7 +315,7 @@ module RubyRouting
             "quality signal projection does not match source observation #{source_key.inspect}"
         end
         @restored_quality_signal_sources.call[source_key] = true
-      rescue KeyError, TypeError, NoMethodError => error
+      rescue ArgumentError, KeyError, TypeError, NoMethodError => error
         raise RubyRouting::State::DurableCorruptionError,
           "malformed quality signal: #{error.message}"
       end
@@ -377,6 +398,19 @@ module RubyRouting
       rescue KeyError, ArgumentError, TypeError => error
         raise RubyRouting::State::DurableCorruptionError,
           "malformed source observation interaction duration: #{error.message}"
+      end
+
+      def normalized_routing_context(value)
+        RubyRouting::Routing::HealthController.canonical_routing_context(value)
+      rescue ArgumentError => error
+        raise RubyRouting::State::DurableCorruptionError,
+          "malformed health routing context: #{error.message}"
+      end
+
+      def health_state_key(provider_id, routing_context)
+        return provider_id unless routing_context
+
+        [provider_id, routing_context.to_h].freeze
       end
     end
   end

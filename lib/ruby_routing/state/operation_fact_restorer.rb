@@ -202,13 +202,14 @@ module RubyRouting
           raise RubyRouting::State::DurableCorruptionError,
             "duplicate health exposure reservation for #{operation_id}"
         end
+        routing_context = operation_routing_context(state, payload)
         unless state.ownership.nil? && attempt.phase == :committed &&
                state.dispatch_pending[operation_id] == true &&
                state.allocation_fact_operations.key?(operation_id) &&
                attempt.provider_id == provider_id &&
                attempt.attempt_id == @operation_identity.call(payload, :attempt_id) &&
-               health_controller.snapshot(provider_id).state == :probing &&
-               health_controller.reserve_exposure(provider_id, owner: operation_id)
+               health_snapshot(provider_id, routing_context).state == :probing &&
+               reserve_health_exposure(provider_id, operation_id, routing_context)
           raise RubyRouting::State::DurableCorruptionError,
             "health exposure reservation does not match operation #{operation_id}"
         end
@@ -234,7 +235,8 @@ module RubyRouting
             "health exposure release does not match operation #{operation_id}"
         end
         validate_operation_release_order(state, attempt, operation_id, "health exposure release")
-        health_controller.release_exposure(provider_id, owner: operation_id)
+        routing_context = operation_routing_context(state, payload)
+        release_health_exposure(provider_id, operation_id, routing_context)
       end
 
       def health_controller
@@ -243,6 +245,55 @@ module RubyRouting
 
       def validate_operation_release_order(state, attempt, operation_id, label)
         @validate_operation_release_order.call(state, attempt, operation_id, label)
+      end
+
+      def operation_routing_context(state, payload)
+        expected = if state.respond_to?(:intent)
+          RubyRouting::Routing::HealthController.canonical_routing_context(
+            state.intent.routing_context
+          )
+        else
+          RubyRouting::Routing::HealthController.canonical_routing_context(payload[:routing_context])
+        end
+        return expected unless payload.key?(:routing_context)
+
+        actual = RubyRouting::Routing::HealthController.canonical_routing_context(
+          payload[:routing_context]
+        )
+        unless actual == expected
+          raise RubyRouting::State::DurableCorruptionError,
+            "health exposure route context does not match payout intent"
+        end
+        actual
+      rescue ArgumentError => error
+        raise RubyRouting::State::DurableCorruptionError,
+          "malformed health exposure route context: #{error.message}"
+      end
+
+      def health_snapshot(provider_id, routing_context)
+        return health_controller.snapshot(provider_id) if routing_context.nil? || routing_context.empty?
+
+        health_controller.snapshot(provider_id, routing_context: routing_context)
+      end
+
+      def reserve_health_exposure(provider_id, operation_id, routing_context)
+        return health_controller.reserve_exposure(provider_id, owner: operation_id) if routing_context.nil? || routing_context.empty?
+
+        health_controller.reserve_exposure(
+          provider_id,
+          owner: operation_id,
+          routing_context: routing_context
+        )
+      end
+
+      def release_health_exposure(provider_id, operation_id, routing_context)
+        return health_controller.release_exposure(provider_id, owner: operation_id) if routing_context.nil? || routing_context.empty?
+
+        health_controller.release_exposure(
+          provider_id,
+          owner: operation_id,
+          routing_context: routing_context
+        )
       end
     end
   end

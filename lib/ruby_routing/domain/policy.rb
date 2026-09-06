@@ -36,7 +36,7 @@ module RubyRouting
 
     def violations(intent:, provider_id:)
       violations = []
-      normalized_provider_id = provider_id.to_s.strip
+      normalized_provider_id = RubyRouting::Identity.normalize(provider_id, "provider id")
       violations << :provider_not_allowed if allowed_provider_ids && !allowed_provider_ids.include?(normalized_provider_id)
       violations << :provider_excluded if excluded_provider_ids.include?(normalized_provider_id)
       if intent.is_a?(RubyRouting::PayoutIntent)
@@ -64,10 +64,7 @@ module RubyRouting
       return nil if value.nil?
 
       RubyRouting::Collection.to_array(value, label).map do |provider_id|
-        normalized = provider_id.to_s.strip
-        raise ArgumentError, "#{label} must contain non-empty ids" if normalized.empty?
-
-        normalized.freeze
+        RubyRouting::Identity.normalize(provider_id, "#{label} provider id")
       end.uniq.freeze
     end
 
@@ -213,15 +210,15 @@ module RubyRouting
     end
 
     def priority_for(provider_id)
-      priority_by_provider.fetch(provider_id.to_s.strip, 0)
+      priority_by_provider.fetch(RubyRouting::Identity.normalize(provider_id, "provider id"), 0)
     end
 
     def cost_for(provider_id)
-      cost_minor_by_provider.fetch(provider_id.to_s.strip, 0)
+      cost_minor_by_provider.fetch(RubyRouting::Identity.normalize(provider_id, "provider id"), 0)
     end
 
     def latency_for(provider_id)
-      latency_ms_by_provider.fetch(provider_id.to_s.strip, 0)
+      latency_ms_by_provider.fetch(RubyRouting::Identity.normalize(provider_id, "provider id"), 0)
     end
 
     def to_h
@@ -240,8 +237,7 @@ module RubyRouting
       end
 
       value.each_with_object({}) do |(provider_id, metric), copy|
-        normalized_id = provider_id.to_s.strip
-        raise ArgumentError, "provider id must be non-empty" if normalized_id.empty?
+        normalized_id = RubyRouting::Identity.normalize(provider_id, "provider id")
         unless metric.is_a?(Integer) && (allow_zero ? metric >= 0 : metric.positive?)
           raise ArgumentError, "#{label} metrics must be non-negative Integers"
         end
@@ -392,6 +388,14 @@ module RubyRouting
          target_provider_ids.sum { |provider_id| maximum_share_for(provider_id) } < 1
         reason_codes << :share_maximums_below_hard_constraint_capacity
       end
+      if amount_ranges_disjoint?(
+        selector.minimum_amount_minor,
+        selector.maximum_amount_minor,
+        hard_constraints.minimum_amount_minor,
+        hard_constraints.maximum_amount_minor
+      )
+        reason_codes << :selector_hard_amount_ranges_disjoint
+      end
 
       {
         status: reason_codes.empty? ? :feasible : :infeasible,
@@ -413,19 +417,19 @@ module RubyRouting
       cohort = RubyRouting::Collection.to_array(
         opportunity_provider_ids || targets.keys,
         "opportunity_provider_ids"
-      ).map { |provider_id| provider_id.to_s.strip }.uniq.select do |provider_id|
+      ).map { |provider_id| RubyRouting::Identity.normalize(provider_id, "provider id") }.uniq.select do |provider_id|
         targets.key?(provider_id)
       end.sort.freeze
       [id, epoch, scope, cohort].freeze
     end
 
     def weight_for(provider_id)
-      targets.fetch(provider_id.to_s.strip, 0)
+      targets.fetch(RubyRouting::Identity.normalize(provider_id, "provider id"), 0)
     end
 
     def weights_for(provider_ids)
       RubyRouting::Collection.to_array(provider_ids, "provider_ids").each_with_object({}) do |provider_id, weights|
-        normalized = provider_id.to_s.strip
+        normalized = RubyRouting::Identity.normalize(provider_id, "provider id")
         weight = weight_for(normalized)
         weights[normalized] = weight if weight.positive?
       end.freeze
@@ -454,11 +458,11 @@ module RubyRouting
     end
 
     def minimum_measure_for(provider_id)
-      minimum_measures.fetch(provider_id.to_s.strip, 0)
+      minimum_measures.fetch(RubyRouting::Identity.normalize(provider_id, "provider id"), 0)
     end
 
     def maximum_measure_for(provider_id)
-      maximum_measures.fetch(provider_id.to_s.strip, nil)
+      maximum_measures.fetch(RubyRouting::Identity.normalize(provider_id, "provider id"), nil)
     end
 
     def allows_measure?(provider_id, measure)
@@ -470,18 +474,18 @@ module RubyRouting
 
     def measure_exclusions(provider_ids, measure)
       RubyRouting::Collection.to_array(provider_ids, "provider_ids").each_with_object({}) do |provider_id, exclusions|
-        normalized = provider_id.to_s.strip
+        normalized = RubyRouting::Identity.normalize(provider_id, "provider id")
         exclusions[normalized] = :policy_measure_constraint unless
           allows_measure?(provider_id, measure)
       end.freeze
     end
 
     def minimum_share_for(provider_id)
-      minimum_shares.fetch(provider_id.to_s.strip, Rational(0, 1))
+      minimum_shares.fetch(RubyRouting::Identity.normalize(provider_id, "provider id"), Rational(0, 1))
     end
 
     def maximum_share_for(provider_id)
-      maximum_shares.fetch(provider_id.to_s.strip, Rational(1, 1))
+      maximum_shares.fetch(RubyRouting::Identity.normalize(provider_id, "provider id"), Rational(1, 1))
     end
 
     # Returns only positive exact violations. Share obligations are part of
@@ -499,7 +503,9 @@ module RubyRouting
       end
       return {}.freeze if total.zero?
 
-      RubyRouting::Collection.to_array(provider_ids, "provider_ids").map { |provider_id| provider_id.to_s.strip }.uniq.sort.each_with_object({}) do |provider_id, violations|
+      RubyRouting::Collection.to_array(provider_ids, "provider_ids").map do |provider_id|
+        RubyRouting::Identity.normalize(provider_id, "provider id")
+      end.uniq.sort.each_with_object({}) do |provider_id, violations|
         share = Rational(measures.fetch(provider_id, 0), total)
         provider_violations = {}
         minimum = minimum_share_for(provider_id)
@@ -698,6 +704,14 @@ module RubyRouting
       return RoutingConstraints.new(**value) if value.is_a?(Hash)
 
       raise ArgumentError, "constraints must be RoutingConstraints, Hash or nil"
+    end
+
+    def amount_ranges_disjoint?(first_minimum, first_maximum, second_minimum, second_maximum)
+      return false if first_minimum.nil? && first_maximum.nil?
+      return false if second_minimum.nil? && second_maximum.nil?
+
+      (first_maximum && second_minimum && first_maximum < second_minimum) ||
+        (second_maximum && first_minimum && second_maximum < first_minimum)
     end
   end
 end

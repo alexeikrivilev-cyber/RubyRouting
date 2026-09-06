@@ -64,6 +64,41 @@ class CapacityTest < Minitest::Test
     assert coordinator.capacity_snapshot("A").available_for?(intent("unbounded").money)
   end
 
+  def test_capacity_amounts_remain_currency_dimensioned_when_active_budget_changes
+    rub_provider = RubyRouting::ProviderOpportunity.new(
+      provider_id: "A",
+      capacity: RubyRouting::CapacityBudget.new(max_amount_minor: 100, currency: "RUB")
+    )
+    coordinator = RubyRouting::State::Coordinator.new(opportunities: [rub_provider])
+    rub_policy = policy_for("capacity-rub")
+    rub_intent = intent("capacity-rub-payout")
+
+    coordinator.prepare_and_commit_decision(intent: rub_intent, policy: rub_policy)
+    assert_equal 100, coordinator.capacity_snapshot("A").used_amount_minor
+
+    usd_provider = RubyRouting::ProviderOpportunity.new(
+      provider_id: "A",
+      capacity: RubyRouting::CapacityBudget.new(max_amount_minor: 100, currency: "USD")
+    )
+    coordinator.replace_provider_opportunities([usd_provider])
+
+    after_reconfiguration = coordinator.capacity_snapshot("A")
+    assert_equal "USD", after_reconfiguration.budget.currency
+    assert_equal 0, after_reconfiguration.used_amount_minor
+    usd_result = coordinator.prepare_and_commit_decision(
+      intent: RubyRouting::PayoutIntent.new(
+        id: "capacity-usd-payout",
+        money: RubyRouting::Money.new(2, "USD")
+      ),
+      policy: policy_for("capacity-usd")
+    )
+
+    assert usd_result.proposal.assignment?
+    assert_equal 2, coordinator.capacity_snapshot("A").used_amount_minor
+    assert_equal coordinator.capacity_projection.to_h,
+      RubyRouting::Projections::Replay.capacity(coordinator.facts).to_h
+  end
+
   private
 
   def policy_for(id)

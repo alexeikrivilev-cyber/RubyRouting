@@ -117,10 +117,7 @@ module RubyRouting
       end
 
       def normalize_id(provider_id)
-        normalized = provider_id.to_s.strip
-        raise ArgumentError, "provider id must be non-empty" if normalized.empty?
-
-        normalized
+        RubyRouting::Identity.normalize(provider_id, "provider id")
       end
     end
   end

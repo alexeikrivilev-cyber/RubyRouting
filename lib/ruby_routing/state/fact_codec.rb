@@ -45,7 +45,7 @@ module RubyRouting
       end
 
       def decode_fact(line, line_number: nil)
-        record = JSON.parse(line)
+        record = JSON.parse(line, allow_duplicate_key: false)
         validate_exact_keys!(
           record,
           %w[version sequence type fact_id payout_id payload checksum],
@@ -83,7 +83,7 @@ module RubyRouting
       end
 
       def decode_batch(line, line_number: nil)
-        record = JSON.parse(line)
+        record = JSON.parse(line, allow_duplicate_key: false)
         validate_exact_keys!(
           record,
           %w[version kind facts checksum],
@@ -310,7 +310,7 @@ module RubyRouting
           decoded = lines.each_with_index.flat_map do |line, index|
             raise DurableCorruptionError, "fact line #{index + 1} is blank" if line.empty?
 
-            record = JSON.parse(line)
+            record = JSON.parse(line, allow_duplicate_key: false)
             unless record.is_a?(Hash)
               raise DurableCorruptionError, "fact line #{index + 1} must contain a JSON object"
             end

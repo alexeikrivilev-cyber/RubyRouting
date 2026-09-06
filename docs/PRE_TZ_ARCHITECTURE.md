@@ -395,10 +395,10 @@ Performance work must preserve correctness evidence and deterministic replay sem
 Analytics replay, fresh restore, bounded public/filtered audit-page reads and
 post-GC heap deltas; it is explicitly not a 100k capacity claim. On the exact
 candidate CRuby 4.0.6 run without YJIT, 500 payouts produced 7,002 facts,
-0.0407 seconds Analytics replay, 0.6982 seconds restore, 0.0003 seconds for
+0.0648 seconds Analytics replay, 0.8642 seconds restore, 0.0002 seconds for
 100 unfiltered 256-fact page reads and 0.0007 seconds for 100 payout/type
 filtered page reads. The same run measured 500 concurrent payouts across four
-workers at 696.9 ops/s and 7,002 facts. The append-only index is deliberately
+workers at 488.3 ops/s and 7,002 facts. The append-only index is deliberately
 bounded to payout/type selection; full durable history remains the source for
 replay and audit correctness, and no production-scale claim is inferred.
 

@@ -60,8 +60,7 @@ module RubyRouting
         end
 
         quality.each_with_object({}) do |(provider_id, snapshot), copy|
-          normalized_provider_id = provider_id.to_s.strip
-          raise ArgumentError, "provider id must be non-empty" if normalized_provider_id.empty?
+          normalized_provider_id = RubyRouting::Identity.normalize(provider_id, "provider id")
           if copy.key?(normalized_provider_id)
             raise ArgumentError, "quality contains duplicate provider id"
           end

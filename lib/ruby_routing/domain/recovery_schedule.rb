@@ -63,6 +63,29 @@ module RubyRouting
       end
     end
 
+    # Monotonic values belong to the process that created the schedule. On a
+    # durable restore, retain the wall anchors for auditability but translate
+    # both deadlines into the current process clock domain.
+    def rebase(monotonic_reference:)
+      unless monotonic_reference.respond_to?(:call)
+        raise ArgumentError, "monotonic_reference must be callable"
+      end
+
+      self.class.new(
+        action: action,
+        provider_id: provider_id,
+        operation_id: operation_id,
+        attempt_id: attempt_id,
+        scheduled_at: scheduled_at,
+        scheduled_monotonic_at: monotonic_reference.call(scheduled_at),
+        next_action_at: next_action_at,
+        next_action_monotonic_at: monotonic_reference.call(next_action_at),
+        delay_seconds: delay_seconds,
+        interaction_index: interaction_index,
+        reason_code: reason_code
+      )
+    end
+
     def to_h
       {
         action: action,
@@ -82,6 +105,10 @@ module RubyRouting
     private
 
     def normalize_id(value, label)
+      unless value.is_a?(String) || value.is_a?(Symbol)
+        raise ArgumentError, "#{label} must be a non-empty String or Symbol"
+      end
+
       normalized = value.to_s.strip
       raise ArgumentError, "#{label} must be non-empty" if normalized.empty?
 
@@ -185,6 +212,10 @@ module RubyRouting
     private
 
     def normalize_id(value, label)
+      unless value.is_a?(String) || value.is_a?(Symbol)
+        raise ArgumentError, "#{label} must be a non-empty String or Symbol"
+      end
+
       normalized = value.to_s.strip
       raise ArgumentError, "#{label} must be non-empty" if normalized.empty?
 

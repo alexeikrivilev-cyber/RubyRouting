@@ -23,13 +23,16 @@ module RubyRouting
 
       def capacity_snapshot(provider_id, budget:)
         normalized_provider_id = normalize_provider_id(provider_id)
+        unless budget.nil? || budget.is_a?(RubyRouting::CapacityBudget)
+          raise ArgumentError, "budget must be CapacityBudget or nil"
+        end
         usage = @capacity_usage.fetch(normalized_provider_id, CapacityUsage.new)
         RubyRouting::State::CapacitySnapshot.new(
           provider_id: normalized_provider_id,
           budget: budget,
           used_slots: usage.slots,
           used_count: usage.count,
-          used_amount_minor: usage.amount_minor
+          used_amount_minor: usage.amount_minor(currency: budget&.currency)
         )
       end
 
@@ -42,7 +45,7 @@ module RubyRouting
           intent.money,
           used_slots: usage.slots,
           used_count: usage.count,
-          used_amount_minor: usage.amount_minor
+          used_amount_minor: usage.amount_minor(currency: opportunity.capacity.currency)
         )
       end
 
@@ -60,7 +63,7 @@ module RubyRouting
           budget: opportunity.capacity&.to_h,
           used_slots: usage.slots,
           used_count: usage.count,
-          used_amount_minor: usage.amount_minor,
+          used_amount_minor: usage.amount_minor(currency: opportunity.capacity&.currency),
           throughput: opportunity.throughput&.to_h,
           throughput_consumed_count: throughput_events_for(opportunity).length
         }
@@ -160,10 +163,7 @@ module RubyRouting
       end
 
       def normalize_provider_id(provider_id)
-        normalized = provider_id.to_s.strip
-        raise ArgumentError, "provider id must be non-empty" if normalized.empty?
-
-        normalized
+        RubyRouting::Identity.normalize(provider_id, "provider id")
       end
 
       def current_time
@@ -239,11 +239,9 @@ module RubyRouting
       end
 
       class CapacityUsage
-        attr_reader :amount_minor
-
         def initialize
           @in_flight = 0
-          @amount_minor = 0
+          @amount_minor_by_currency = Hash.new(0)
         end
 
         def slots
@@ -254,17 +252,27 @@ module RubyRouting
           @in_flight
         end
 
+        def amount_minor(currency: nil)
+          return @amount_minor_by_currency.values.sum if currency.nil?
+
+          @amount_minor_by_currency.fetch(currency, 0)
+        end
+
         def reserve(money)
           @in_flight += 1
-          @amount_minor += money.amount_minor
+          @amount_minor_by_currency[money.currency] += money.amount_minor
         end
 
         def release(money)
-          @in_flight -= 1
-          @amount_minor -= money.amount_minor
-          if @in_flight.negative? || @amount_minor.negative?
+          current_amount = @amount_minor_by_currency.fetch(money.currency, 0)
+          next_amount = current_amount - money.amount_minor
+          if @in_flight <= 0 || next_amount.negative?
             raise ArgumentError, "capacity usage underflow"
           end
+
+          @in_flight -= 1
+          @amount_minor_by_currency[money.currency] = next_amount
+          @amount_minor_by_currency.delete(money.currency) if next_amount.zero?
         end
       end
     end

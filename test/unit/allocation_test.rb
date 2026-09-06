@@ -122,6 +122,68 @@ class AllocationTest < Minitest::Test
     assert_equal "B", decision.chosen_provider
   end
 
+  def test_recovery_objective_keeps_allocation_authority_before_quality
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "recovery-objective-order",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1, "B" => 1 },
+      maximum_shares: { "A" => "1/2" }
+    )
+    allocation = RubyRouting::Routing::RecoverySelection.choose(
+      policy: policy,
+      candidates: %w[A B],
+      attempted_provider_ids: [],
+      snapshot: RubyRouting::Routing::AllocationSnapshot.new(measures: { "A" => 1, "B" => 1 }),
+      incoming_measure: 1,
+      accounting_provider_ids: %w[A B]
+    )
+    quality = {
+      "A" => RubyRouting::Routing::ProviderQualitySnapshot.new(
+        provider_id: "A", successful_samples: 10, failed_samples: 0
+      ),
+      "B" => RubyRouting::Routing::ProviderQualitySnapshot.new(
+        provider_id: "B", successful_samples: 0, failed_samples: 10
+      )
+    }
+
+    optimized = RubyRouting::Routing::ConstrainedOptimizer.choose(
+      policy: policy,
+      allocation: allocation,
+      quality: quality
+    )
+
+    assert_equal ["B"], allocation.allocation_tie_candidates
+    assert_equal "B", optimized.chosen_provider
+    assert_equal false, optimized.optimization_trace.fetch("A").fetch(:allocation_admissible)
+  end
+
+  def test_allocation_authority_keeps_primary_and_recovery_paths_explicit
+    policy = count_policy("A" => 1, "B" => 1)
+    snapshot = RubyRouting::Routing::AllocationSnapshot.empty
+
+    primary = RubyRouting::Routing::AllocationAuthority.choose(
+      policy: policy,
+      candidates: %w[A B],
+      attempted_provider_ids: [],
+      snapshot: snapshot,
+      incoming_measure: 1,
+      accounting_provider_ids: %w[A B]
+    )
+    recovery = RubyRouting::Routing::AllocationAuthority.choose(
+      policy: policy,
+      candidates: %w[A B],
+      attempted_provider_ids: ["A"],
+      snapshot: snapshot,
+      incoming_measure: 1,
+      accounting_provider_ids: %w[A B]
+    )
+
+    assert_equal "A", primary.chosen_provider
+    assert_equal "B", recovery.chosen_provider
+    assert_equal ["B"], recovery.candidate_discrepancies.keys
+  end
+
   def test_allocation_snapshot_canonicalizes_provider_ids_and_rejects_collisions
     snapshot = RubyRouting::Routing::AllocationSnapshot.new(measures: { " A " => 2 })
 

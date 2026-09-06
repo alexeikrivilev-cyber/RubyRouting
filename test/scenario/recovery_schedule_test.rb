@@ -40,6 +40,40 @@ class RecoveryScheduleTest < Minitest::Test
     assert_equal base.fingerprint, defaulted.fingerprint
   end
 
+  def test_recovery_work_identities_reject_non_scalar_values
+    schedule_attributes = {
+      action: :resolve,
+      provider_id: "A",
+      operation_id: "operation",
+      attempt_id: "attempt",
+      scheduled_at: Time.utc(2026, 1, 1),
+      scheduled_monotonic_at: 0,
+      next_action_at: Time.utc(2026, 1, 1),
+      next_action_monotonic_at: 0,
+      delay_seconds: 0,
+      interaction_index: 0,
+      reason_code: :test
+    }
+    %i[provider_id operation_id attempt_id].each do |field|
+      assert_raises(ArgumentError, field: field) do
+        RubyRouting::RecoverySchedule.new(**schedule_attributes.merge(field => []))
+      end
+    end
+
+    assert_raises(ArgumentError) do
+      RubyRouting::RecoveryWorkItem.new(
+        payout_id: [],
+        action: :reconcile,
+        provider_id: "A",
+        operation_id: "operation",
+        attempt_id: "attempt",
+        due_at: nil,
+        reason_code: :test,
+        status: :reconciliation_blocked
+      )
+    end
+  end
+
   def test_early_resume_cannot_bypass_schedule_and_exact_due_boundary_allows_resolution
     clock = TestSupport::ControlledClock.new
     provider = TestSupport::Simulator::ScriptedProvider.new(
@@ -208,6 +242,88 @@ class RecoveryScheduleTest < Minitest::Test
     work = coordinator.due_recovery_work(as_of: clock.now)
     assert_equal [:reconcile], work.map(&:action)
     assert_nil work.first.due_at
+  end
+
+  def test_restart_rebases_recovery_schedule_and_ttl_for_a_new_monotonic_origin
+    start_time = Time.utc(2026, 8, 31, 12, 0, 0)
+    clock = TestSupport::ControlledClock.new(start_time: start_time, monotonic_origin: 0)
+    provider = RubyRouting::ProviderOpportunity.new(
+      provider_id: "A",
+      capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true, ttl_seconds: 3)
+    )
+    coordinator = RubyRouting::State::Coordinator.new(clock: clock, opportunities: [provider])
+    policy = policy_for("origin-rebase", initial_delay_seconds: 10)
+    payout = intent("origin-rebase-payout")
+    commit = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
+    coordinator.mark_attempt_started(commit)
+    coordinator.apply_observation(observation(commit, :unknown))
+    clock.advance(1)
+
+    restarted_clock = TestSupport::ControlledClock.new(
+      start_time: clock.now,
+      monotonic_origin: 100
+    )
+    restored = RubyRouting::State::Coordinator.from_facts(
+      facts: coordinator.facts,
+      opportunities: [provider],
+      clock: restarted_clock
+    )
+    schedule = restored.payout_snapshot(payout.id).recovery_schedule
+
+    refute schedule.due?(as_of: restarted_clock.now, as_of_monotonic: restarted_clock.monotonic)
+    deferred = restored.prepare_and_commit_decision(intent: payout, policy: policy)
+    assert_equal :defer, deferred.proposal.action
+    assert_includes deferred.proposal.reason_codes, :recovery_not_due
+    assert_equal :unknown, deferred.payout.status
+
+    restarted_clock.advance(2)
+    blocked = restored.prepare_and_commit_decision(intent: payout, policy: policy)
+    assert_equal :reconciliation_blocked, blocked.payout.status
+    assert_nil blocked.payout.recovery_schedule
+  end
+
+  def test_replay_clears_delayed_schedule_when_live_expiry_blocks_reconciliation
+    clock = TestSupport::ControlledClock.new
+    coordinator = RubyRouting::State::Coordinator.new(
+      clock: clock,
+      opportunities: [RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true, ttl_seconds: 3)
+      )]
+    )
+    policy = policy_for("replay-expiry-divergence", initial_delay_seconds: 10)
+    payout = intent("replay-expiry-divergence-payout")
+    commit = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
+    coordinator.mark_attempt_started(commit)
+    coordinator.apply_observation(observation(commit, :unknown))
+    clock.advance(3)
+
+    live = coordinator.prepare_and_commit_decision(intent: payout, policy: policy).payout
+    replayed = RubyRouting::Projections::Replay.payout(coordinator.facts, payout.id)
+    restored = RubyRouting::State::Coordinator.from_facts(
+      facts: coordinator.facts,
+      opportunities: [RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true, ttl_seconds: 3)
+      )],
+      clock: clock
+    ).payout_snapshot(payout.id)
+
+    assert_equal :reconciliation_blocked, live.status
+    assert_nil live.recovery_schedule
+    assert_equal live.status, replayed.status
+    assert_equal live.current_operation_phase, replayed.current_operation_phase
+    assert_equal(
+      [live.ownership.payout_id, live.ownership.provider_id, live.ownership.operation_id, live.ownership.attempt_id],
+      [replayed.ownership.payout_id, replayed.ownership.provider_id, replayed.ownership.operation_id, replayed.ownership.attempt_id]
+    )
+    assert_nil replayed.recovery_schedule
+    assert_equal live.status, restored.status
+    assert_equal live.current_operation_phase, restored.current_operation_phase
+    assert_equal live.ownership.provider_id, restored.ownership.provider_id
+    assert_equal live.ownership.operation_id, restored.ownership.operation_id
+    assert_equal live.ownership.attempt_id, restored.ownership.attempt_id
+    assert_nil restored.recovery_schedule
   end
 
   def test_restart_and_replay_preserve_schedule_and_due_work

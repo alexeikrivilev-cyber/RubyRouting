@@ -77,7 +77,7 @@ module RubyRouting
         AllocationProjection.new(states.transform_values(&:snapshot))
       end
 
-      def health(facts)
+      def health(facts, routing_context: nil)
         controller = nil
         RubyRouting::Collection.to_array(facts, "facts").sort_by(&:sequence).each do |fact|
           payload = fact.payload
@@ -101,27 +101,33 @@ module RubyRouting
               provider_id: normalize_identity(payload.fetch(:provider_id), "provider id"),
               signal: payload.fetch(:signal),
               attribution: payload.fetch(:attribution),
-              release_exposure: payload.fetch(:release_exposure, true)
+              release_exposure: payload.fetch(:release_exposure, true),
+              routing_context: payload[:routing_context]
             )
           elsif fact.type == :health_exposure_reserved
             controller ||= RubyRouting::Routing::HealthController.new
             controller.reserve_exposure(
               normalize_identity(payload.fetch(:provider_id), "provider id"),
-              owner: normalize_identity(payload.fetch(:operation_id), "operation id")
+              owner: normalize_identity(payload.fetch(:operation_id), "operation id"),
+              routing_context: payload[:routing_context]
             )
           elsif fact.type == :health_exposure_released
             provider_id = normalize_identity(payload.fetch(:provider_id), "provider id")
             operation_id = normalize_identity(payload.fetch(:operation_id), "operation id")
             controller&.release_exposure(
               provider_id,
-              owner: operation_id
+              owner: operation_id,
+              routing_context: payload[:routing_context]
             )
           end
         end
-        HealthProjection.new(controller || RubyRouting::Routing::HealthController.new)
+        HealthProjection.new(
+          controller || RubyRouting::Routing::HealthController.new,
+          routing_context: routing_context
+        )
       end
 
-      def quality(facts)
+      def quality(facts, as_of: nil, context: nil, context_key: nil, routing_context: nil, currency: nil)
         controller = nil
         RubyRouting::Collection.to_array(facts, "facts").sort_by(&:sequence).each do |fact|
           payload = fact.payload
@@ -138,6 +144,7 @@ module RubyRouting
               provider_id: normalize_identity(payload.fetch(:provider_id), "provider id"),
               context_key: normalize_context_key(payload.fetch(:context_key, [])),
               routing_context: payload[:routing_context],
+              currency: payload[:currency],
               observed_at: payload[:observed_at],
               outcome: RubyRouting::NormalizedOutcome.new(
                 status: payload.fetch(:status),
@@ -147,7 +154,14 @@ module RubyRouting
             )
           end
         end
-        QualityProjection.new(controller || RubyRouting::Routing::QualityController.new)
+        QualityProjection.new(
+          controller || RubyRouting::Routing::QualityController.new,
+          as_of: as_of,
+          context: context,
+          context_key: context_key,
+          routing_context: routing_context,
+          currency: currency
+        )
       end
 
       def lifecycle(facts)
@@ -190,7 +204,7 @@ module RubyRouting
 
         values = RubyRouting::HashKeys.symbolize(
           payload,
-          %i[minimum_samples prior_successes prior_failures evidence_window max_evidence_age_seconds],
+          %i[minimum_samples prior_successes prior_failures evidence_window max_evidence_age_seconds route_minimum_samples],
           "quality policy"
         )
         RubyRouting::Routing::QualityPolicy.new(**values)
@@ -327,7 +341,7 @@ module RubyRouting
           @provider_id = Replay.send(:normalize_identity, provider_id, "provider id")
           @budget = nil
           @in_flight = 0
-          @used_amount_minor = 0
+          @used_amount_minor_by_currency = Hash.new(0)
         end
 
         def set_budget(payload)
@@ -345,14 +359,17 @@ module RubyRouting
 
         def reserve(money)
           @in_flight += 1
-          @used_amount_minor += money.amount_minor
+          @used_amount_minor_by_currency[money.currency] += money.amount_minor
         end
 
         def release(money)
+          current_amount = @used_amount_minor_by_currency.fetch(money.currency, 0)
+          next_amount = current_amount - money.amount_minor
+          raise ArgumentError, "replayed capacity usage underflow" if @in_flight <= 0 || next_amount.negative?
+
           @in_flight -= 1
-          @used_amount_minor -= money.amount_minor
-          raise ArgumentError, "replayed capacity usage underflow" if @in_flight.negative? ||
-            @used_amount_minor.negative?
+          @used_amount_minor_by_currency[money.currency] = next_amount
+          @used_amount_minor_by_currency.delete(money.currency) if next_amount.zero?
         end
 
         def snapshot
@@ -361,8 +378,16 @@ module RubyRouting
             budget: @budget,
             used_slots: @in_flight,
             used_count: @in_flight,
-            used_amount_minor: @used_amount_minor
+            used_amount_minor: used_amount_minor
           )
+        end
+
+        private
+
+        def used_amount_minor
+          return @used_amount_minor_by_currency.values.sum if @budget.nil? || @budget.currency.nil?
+
+          @used_amount_minor_by_currency.fetch(@budget.currency, 0)
         end
       end
 
@@ -406,41 +431,54 @@ module RubyRouting
       end
 
       class HealthProjection
-        def initialize(controller)
+        def initialize(controller, routing_context: nil)
           @controller = controller
+          @routing_context = routing_context
           freeze
         end
 
-        def snapshot(provider_id)
-          @controller.snapshot(Replay.send(:normalize_identity, provider_id, "provider id"))
+        def snapshot(provider_id, routing_context: @routing_context)
+          @controller.snapshot(
+            Replay.send(:normalize_identity, provider_id, "provider id"),
+            routing_context: routing_context
+          )
         end
 
         def to_h
           @controller.provider_ids.each_with_object({}) do |provider_id, copy|
-            copy[provider_id] = @controller.snapshot(provider_id).to_h
+            copy[provider_id] = snapshot(provider_id).to_h
           end.freeze
         end
       end
 
       class QualityProjection
-        def initialize(controller)
+        def initialize(controller, as_of: nil, context: nil, context_key: nil,
+                       routing_context: nil, currency: nil)
           @controller = controller
+          @as_of = as_of
+          @context = context
+          @context_key = context_key
+          @routing_context = routing_context
+          @currency = currency
           freeze
         end
 
-        def snapshot(provider_id, context: nil, context_key: nil, routing_context: nil, as_of: nil)
+        def snapshot(provider_id, context: @context, context_key: @context_key,
+                     routing_context: @routing_context, currency: @currency,
+                     as_of: @as_of)
           @controller.snapshot(
             Replay.send(:normalize_identity, provider_id, "provider id"),
             context: context,
             context_key: context_key,
             routing_context: routing_context,
+            currency: currency,
             as_of: as_of
           )
         end
 
         def to_h
           @controller.provider_ids.each_with_object({}) do |provider_id, copy|
-            copy[provider_id] = @controller.snapshot(provider_id).to_h
+            copy[provider_id] = snapshot(provider_id).to_h
           end.freeze
         end
       end
@@ -613,6 +651,11 @@ module RubyRouting
             @recovery_schedule = nil
           when :reconciliation_blocked
             @status = :reconciliation_blocked
+            # The live expiry transition consumes any delayed recovery work
+            # before publishing the terminal reconciliation obligation. Keep
+            # replay aligned with that ownership-preserving, fail-closed
+            # transition so the snapshot remains valid and deterministic.
+            @recovery_schedule = nil
           when :economic_conflict
             @conflicts << RubyRouting::EconomicConflict.new(
               payout_id: fact.payout_id,

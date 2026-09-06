@@ -60,6 +60,10 @@ module RubyRouting
     end
 
     def normalize_currency(value)
+      unless value.is_a?(String) || value.is_a?(Symbol)
+        raise ArgumentError, "capacity currency must be a String or Symbol"
+      end
+
       normalized = value.to_s.strip.upcase
       raise ArgumentError, "capacity currency must be a three-letter code" unless /\A[A-Z]{3}\z/.match?(normalized)
 
@@ -77,8 +81,7 @@ module RubyRouting
       @status_lookup = normalize_boolean(status_lookup, "status_lookup")
       @ttl_seconds = normalize_duration(ttl_seconds, "ttl_seconds")
       @deadline_seconds = normalize_duration(deadline_seconds, "deadline_seconds")
-      @version = version.to_s.strip.freeze
-      raise ArgumentError, "version must be non-empty" if @version.empty?
+      @version = RubyRouting::Identity.normalize(version, "provider capability version")
       @authoritative_sequence = normalize_boolean(authoritative_sequence, "authoritative_sequence")
       freeze
     end
@@ -141,6 +144,17 @@ module RubyRouting
   end
 
   class ProviderOpportunity
+    # These fields are operational evidence rather than the functional
+    # provider definition. They can change inside the Coordinator while an
+    # active configuration generation remains valid.
+    RUNTIME_FIELDS = %i[
+      available
+      capacity_available
+      enabled
+      health_available
+      throughput_available
+    ].freeze
+
     attr_reader :provider_id, :functional_eligible, :available, :capacity_available,
                 :capabilities, :exclusion_reason, :supported_currencies,
                 :minimum_amount_minor, :maximum_amount_minor,
@@ -183,7 +197,11 @@ module RubyRouting
       else
         configured_route_capabilities
       end
-      @exclusion_reason = exclusion_reason&.to_s&.freeze
+      @exclusion_reason = if exclusion_reason.nil?
+        nil
+      else
+        RubyRouting::Identity.normalize(exclusion_reason, "provider exclusion reason")
+      end
       @supported_currencies = normalize_currencies(supported_currencies)
       @minimum_amount_minor = normalize_amount_limit(minimum_amount_minor, "minimum_amount_minor")
       @maximum_amount_minor = normalize_amount_limit(maximum_amount_minor, "maximum_amount_minor")
@@ -270,6 +288,10 @@ module RubyRouting
       }.freeze
     end
 
+    def definition_to_h
+      to_h.reject { |key, _value| RUNTIME_FIELDS.include?(key) }.freeze
+    end
+
     def reason_for(intent:, policy: nil)
       return exclusion_reason if exclusion_reason && !functional_eligible
       return :functionally_ineligible unless intent.is_a?(RubyRouting::PayoutIntent)
@@ -323,6 +345,10 @@ module RubyRouting
       return [].freeze if value.nil?
 
       RubyRouting::Collection.to_array(value, "supported_currencies").map do |currency|
+        unless currency.is_a?(String) || currency.is_a?(Symbol)
+          raise ArgumentError, "supported currencies must be Strings or Symbols"
+        end
+
         normalized = currency.to_s.strip.upcase
         raise ArgumentError, "supported currencies must be three-letter codes" unless /\A[A-Z]{3}\z/.match?(normalized)
 

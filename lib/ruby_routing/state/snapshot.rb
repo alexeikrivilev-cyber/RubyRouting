@@ -61,10 +61,7 @@ module RubyRouting
       private
 
       def normalize_id(value, label)
-        normalized = value.to_s.strip
-        raise ArgumentError, "#{label} must be non-empty" if normalized.empty?
-
-        normalized.freeze
+        RubyRouting::Identity.normalize(value, label)
       end
 
       def normalize_role(value)
@@ -234,10 +231,7 @@ module RubyRouting
       def normalize_optional_id(value, label)
         return nil if value.nil?
 
-        normalized = value.to_s.strip
-        raise ArgumentError, "#{label} must be non-empty" if normalized.empty?
-
-        normalized.freeze
+        RubyRouting::Identity.normalize(value, label)
       end
 
       def normalize_policy_scope_key(value)
@@ -319,10 +313,7 @@ module RubyRouting
       private
 
       def normalize_provider_id(provider_id)
-        normalized = provider_id.to_s.strip
-        raise ArgumentError, "provider id must be non-empty" if normalized.empty?
-
-        normalized.freeze
+        RubyRouting::Identity.normalize(provider_id, "provider id")
       end
 
       def normalize_non_negative_integer(value, label)
@@ -338,10 +329,7 @@ module RubyRouting
       attr_reader :provider_id, :budget, :consumed_at
 
       def initialize(provider_id:, budget:, consumed_at:)
-        normalized_provider_id = provider_id.to_s.strip
-        raise ArgumentError, "provider id must be non-empty" if normalized_provider_id.empty?
-
-        @provider_id = normalized_provider_id.freeze
+        @provider_id = RubyRouting::Identity.normalize(provider_id, "provider id")
         unless budget.nil? || budget.is_a?(RubyRouting::ThroughputBudget)
           raise ArgumentError, "budget must be ThroughputBudget or nil"
         end

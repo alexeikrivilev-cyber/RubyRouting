@@ -15,7 +15,7 @@ module RubyRouting
         intent_registered: %i[money created_at],
         policy_registered: %i[policy_id policy_epoch policy_scope policy_fingerprint definition static_feasibility],
         opportunity_evaluated: %i[
-          policy_id policy_epoch policy_scope policy_fingerprint measure_kind currency
+          policy_id policy_epoch policy_scope policy_fingerprint configuration_revision measure_kind currency
           opportunities functional_provider_ids feasible_provider_ids exclusions exclusion_codes
           allocation_exclusions static_policy_feasibility runtime_feasibility soft_violations
           allocation_snapshot allocation_key capacity throughput health quality ranking health_policy
@@ -23,7 +23,7 @@ module RubyRouting
         ],
         decision_committed: %i[
           action provider_id operation_id attempt_id role policy_epoch policy_id policy_scope
-          measure_kind currency reasons reason_codes snapshot_revision allocation_discrepancy
+          configuration_revision measure_kind currency reasons reason_codes snapshot_revision allocation_discrepancy
           allocation_candidates allocation_deviation_cause allocation_deviation_recoverability
           allocation_tolerance allocation_share_violations optimization_trace runtime_feasibility
           soft_constraint_violations measure allocation_key committed_at contract available_provider_ids
@@ -48,10 +48,11 @@ module RubyRouting
         reversal_recorded: %i[reversal_id provider_id operation_id amount reason],
         health_signal: %i[
           provider_id signal attribution source_kind source source_payout_id release_exposure policy
+          routing_context
         ],
-        health_state_changed: %i[provider_id from to],
-        health_exposure_reserved: %i[provider_id operation_id attempt_id],
-        health_exposure_released: %i[provider_id operation_id attempt_id],
+        health_state_changed: %i[provider_id from to routing_context],
+        health_exposure_reserved: %i[provider_id operation_id attempt_id routing_context],
+        health_exposure_released: %i[provider_id operation_id attempt_id routing_context],
         quality_signal: %i[
           observation_id source_payout_id provider_id status attribution safe_to_release successful_samples
           failed_samples sample_count score minimum_samples prior_successes prior_failures evidence_window

@@ -4,125 +4,126 @@ Smart payout-routing system for Hack.Genesis case **«Умный роутинг 
 
 ## Current direction
 
-Current Version Goal: **v0.3.2 — Semantic Control Plane & Recovery Readiness — VERSION_COMPLETE (pre-TZ)**.
+Current Version Goal: **v0.3.4 — Pre-TZ Adversarial Case Fidelity & Edge Hardening — VERSION_COMPLETE**.
 
-v0.3.1 / SPEC-005 is a completed historical checkpoint at baseline revision `01c00f2f258a82fcf6e3b2ee843947a68ba62ed1`. v0.3.2 has now closed the semantic control plane around it before the official TZ arrives. The next normative change is the bounded reconciliation protocol, not speculative TZ-specific implementation.
+v0.3.3 / SPEC-007 remains a verified `VERSION_COMPLETE` pre-TZ baseline. v0.3.4 reached a closure checkpoint on `799f6977f07310105c30be9df549a536cc9d665d`, but a fresh post-closure audit found and deterministically reproduced a material recovery-concurrency counterexample. The token-ownership slice fixes that finding; fresh skeptical discovery, exact candidate verification and final docs-only CI are clean, so v0.3.4 is honestly published as `VERSION_COMPLETE` at the published exact head.
 
 Ruby is mandatory. Current development baseline: **CRuby 4.0.6**.
 
-## Product principle
+## Case contract we optimize for
 
-One canonical flow owns the system:
+Before the authoritative TZ arrives, every substantial improvement should strengthen one of the generic requirements already explicit in the case:
+
+1. route new payouts across providers by configurable strategies such as share by request count and share by payout volume;
+2. if the chosen provider safely fails, recompute and try the next suitable provider;
+3. if the provider may have accepted the payout, keep the economic owner and resolve safely before any cross-provider fallback;
+4. preserve the full attempt/audit history;
+5. expose clear analytics for target/actual distribution and payment/provider/fallback success.
+
+The project avoids unrelated platform sophistication unless it produces measurable value for those requirements.
+
+## Canonical product flow
 
 `Payout Intent`
 → `Canonical RoutingContext`
-→ `Policy Resolution`
-→ `Provider Route Compatibility / Functional Opportunity`
+→ `Active Configuration Snapshot / Policy Resolution`
+→ `Provider Compatibility / Functional Opportunity`
 → `Operational Admission`
 → `Allocation Authority`
-→ `Recovery Legality / Due Schedule / Role`
+→ `Recovery Legality / Timing / Role`
 → `Constrained Optimization`
 → `Atomic Decision + Ownership + Reservations`
 → `Provider Operation`
-→ `Operational Telemetry + Normalized Observation`
+→ `Normalized Observation`
 → `Lifecycle / Recovery / Reconciliation`
-→ `Durable State + Facts`
-→ `Dimensioned Analytics / Explainability / Configuration / Queries`.
+→ `Durable Facts`
+→ `Payout History / Distribution Analytics / Outcome Analytics / Explanation`.
 
-API, persistence, simulator, configuration endpoints and dashboard layers may not implement alternate provider-selection semantics.
+HTTP, demo, persistence and query layers may not implement alternate routing or trusted-provider semantics.
 
-## Protected baseline
+## Protected v0.3.3 baseline
 
-The repository already has a strong deterministic payout-routing platform:
+The repository already has:
 
-- exact `Money` and `Rational` allocation math;
-- one economic intent and one unresolved economic owner maximum;
-- conservative `UNKNOWN` handling after ambiguous transmission;
-- explicit operation/idempotency contract;
-- immutable executable provider operation payload with destination/context/method/rail;
-- primary/recovery/settlement separation;
-- count and volume allocation with committed work;
-- opportunity/eligibility and operational admission separation;
-- capacity, throughput and provider health;
-- deterministic constrained optimization;
-- safe retry/status-resolution/fresh fallback;
-- confidence-aware bounded deterministic provider quality;
-- duplicate/delayed/out-of-order provider event handling;
-- settlement, reversal and economic-conflict handling;
-- typed facts, replay and restart-safe unresolved continuation;
-- dimensionally correct analytics across policy/measure/currency;
-- typed decision explanation and public audit privacy boundary;
-- application commands/queries and a small Rack-compatible HTTP adapter;
-- unit/property/model/concurrency/fault/restart evidence;
-- bounded performance/history evidence in CI;
-- GitHub Actions on CRuby 4.0.6.
+- exact Integer/Rational money and allocation math;
+- deterministic count and volume allocation;
+- one unresolved economic owner maximum;
+- conservative `UNKNOWN` handling after ambiguous send;
+- same-provider resolution/retry separated from fresh fallback;
+- immutable provider operation/idempotency contracts;
+- provider route capability, eligibility, capacity, throughput and health gates;
+- lower-priority deterministic quality/cost/latency optimization;
+- one coherent immutable active configuration generation per new decision;
+- fail-closed routing/config input;
+- restart-safe recovery/TTL/throughput timing across a changed monotonic origin;
+- duplicate/out-of-order observation handling, settlement, reversals and economic conflicts;
+- append-only facts, replay and restart reconstruction;
+- dimension-safe distribution analytics, explanation and public audit;
+- application commands/queries and a thin Rack-compatible HTTP adapter;
+- unit/property/model/concurrency/fault/restart verification;
+- bounded history/performance evidence and GitHub Actions on CRuby 4.0.6.
 
-Do not casually rewrite these mechanisms. Extend them only when SPEC-006 or new evidence identifies a real semantic gap.
+Do not rewrite these mechanisms merely because v0.3.4 is active.
 
-## What v0.3.2 closed
+## v0.3.4 work already verified
 
-A fresh audit of the completed v0.3.1 main found the next-order gaps that mattered directly to the case; all required gaps are now closed:
+The current branch already contains strong verified checkpoints for:
 
-1. **Routing context is now canonical across the product.** `PayoutIntent#routing_context` feeds provider compatibility, policy resolution, quality cohorts and executable provider payloads.
-2. **Policy auto-resolution is deterministic.** Typed selectors use explicit priority/specificity and expose no-match and ambiguity.
-3. **Recovery timing is explicit.** Injected-clock delay/backoff, TTL/deadline precedence and due-work queries are durable semantics.
-4. **Quality evidence is route-aware and time-bounded.** Mature route/context/global evidence is selected deterministically with independent staleness.
-5. **Canonical provider interaction timing is first-class exact telemetry.** Only provider-attributable slow interactions feed fast health; economic UNKNOWN remains unchanged.
-6. **Configuration is represented by one typed application/control-plane model.** The deterministic demo applies that model before routing and accepts custom typed configuration/providers for operator-facing proof.
-7. **Semantic convergence is materially reduced.** The standalone evaluation seam and live/restore/replay outcome reduction are shared; analytics querying now stays on the canonical dimensioned projection.
-8. **Admission semantics are now explicit.** One in-flight exposure metric governs both legacy `max_slots`/`max_count` caps; time-window counts remain owned by throughput.
-9. **Analytics is mathematically safe and queryable.** The application query surface filters/groups only compatible dimensioned measures and rejects ungrouped policy/unit variation.
-10. **Audit retrieval is bounded at the application seam.** Append-only fact indexes preserve sequence order for payout/type filters, and the HTTP page path reads only the requested page without adding a database or changing durable facts.
+- dimension-safe provider/fallback outcome analytics;
+- measured analytics/explanation read-path hardening;
+- sparse due-work scanning without a new durable index;
+- fresh-process active-configuration crash consistency evidence;
+- deterministic exact-case count/volume/fallback/UNKNOWN/restart campaign;
+- product-facing multi-attempt history after restart;
+- baseline duplicate due-worker serialization when no competing observation interferes.
+
+These are protected checkpoints, not reasons to ignore a new counterexample.
+
+## Why v0.3.4 is reopened
+
+A fresh review of the live recovery interval found a new material hypothesis not covered by the closure campaign and reproduced it with controlled queues:
+
+- `mark_attempt_started` / `mark_resolution_started` install a process-local in-flight provider-interaction guard;
+- `resume_operation` correctly refuses to rebuild a provider interaction while that guard exists;
+- the operation-keyed marker was cleared by an exact duplicate or other non-applying observation for the operation;
+- therefore an old/duplicate callback arriving while a new live `resolve` or same-provider retry was blocked allowed a second recovery worker to start the same provider interaction concurrently.
+
+The race is now fixed with a process-local invocation token/generation. Only the invocation that acquired the token can release it; independent callbacks may update durable evidence but cannot unlock another live call. The fresh skeptical pass, exact candidate verification and final docs-only CI are clean.
+
+The previous closure also left active docs inconsistent (`VERSION_COMPLETE` in backlog/ExecPlan while README/AGENTS/SPEC/ROADMAP remained ACTIVE). Documentation consistency is itself a completion gate and is repaired by the current reopen checkpoint.
 
 ## Active sources
 
 Read these first for substantial work:
 
 1. `README.md`
-2. `specifications/006-pre-tz-semantic-control-plane.md`
-3. `docs/exec-plans/active/pre-tz-semantic-control-plane.md`
-4. `docs/PRE_TZ_BACKLOG.md`
-5. `docs/ROADMAP.md`
-6. `docs/PRE_TZ_ARCHITECTURE.md` for the protected v0.3.1 architecture baseline
-7. `docs/CURRENT_ARCHITECTURE.md` for the inherited v0.3 baseline
-8. `docs/COMPLETION_POLICY.md`
-9. `docs/TZ_RECONCILIATION.md`
-10. `specifications/005-pre-tz-maximum-hardening.md` for inherited detail.
+2. `AGENTS.md`
+3. `specifications/008-pre-tz-adversarial-edge-hardening.md`
+4. `docs/exec-plans/active/pre-tz-adversarial-edge-hardening.md`
+5. `docs/PRE_TZ_BACKLOG.md`
+6. `docs/ROADMAP.md`
+7. `docs/COMPLETION_POLICY.md`
+8. `docs/PRE_TZ_ARCHITECTURE_V03_4.md`
+9. `docs/DECISIONS_V03_4.md`
+10. SPEC-007/v0.3.3 docs only for inherited guarantees/rationale
+11. `docs/TESTING.md`, `docs/RUBY.md`, `docs/WORKFLOW.md` as relevant
+12. `docs/TZ_RECONCILIATION.md` when authoritative TZ arrives.
 
-Historical large backlogs/decision logs are not required reading for every new session.
+Then inspect exact HEAD, production code, tests and current CI before implementation.
 
-## Governing specifications before TZ
+## Current implementation vector
 
-Precedence:
+Priority order:
 
-1. direct current user instruction;
-2. `specifications/006-pre-tz-semantic-control-plane.md`;
-3. active v0.3.2 ExecPlan and active backlog;
-4. `specifications/005-pre-tz-maximum-hardening.md`;
-5. `docs/PRE_TZ_ARCHITECTURE.md` / `docs/CURRENT_ARCHITECTURE.md` for compatible baseline architecture;
-6. older specifications and durable decisions;
-7. implementation/tests.
+1. reproduce or falsify the live provider-interaction guard ownership race;
+2. if reproduced, replace boolean/operation-scoped guard release semantics with invocation-owned interaction identity/generation so only the active invocation can release its guard;
+3. prove both status-resolution and idempotent-retry paths under duplicate, stale and non-applying observations;
+4. verify adapter-exception cleanup, callback-before-start behavior and restart semantics remain correct;
+5. run adjacent concurrency/property/model/fault regression and full exact-HEAD verification;
+6. perform a fresh independent skeptical pass after the fix;
+7. only then reconsider `VERSION_CANDIDATE` / `VERSION_COMPLETE`.
 
-When the official TZ arrives, use `docs/TZ_RECONCILIATION.md`. The authoritative TZ then overrides provisional semantics through explicit reconciliation.
-
-## Closed implementation vector
-
-The v0.3.2 implementation vector is complete:
-
-1. canonical immutable `RoutingContext`;
-2. explicit provider method/rail/destination capability matching;
-3. deterministic registration-order-independent `PolicyResolver`;
-4. recovery scheduling, backoff and due-work query semantics;
-5. typed active policy/provider configuration model;
-6. route-aware and age-stale deterministic quality evidence;
-7. explicit recovery-objective seam;
-8. prepared-evaluation and live/restore convergence plus admission semantic cleanup;
-9. filtered dimension-safe analytics/configuration/due-recovery product queries;
-10. bounded/indexable audit retrieval over the append-only fact history;
-11. SPEC-006 executable traceability and fresh exact-revision closure.
-
-Only optional P2 ideas remain in `docs/PRE_TZ_BACKLOG.md`; the next required
-change is official-TZ reconciliation through `docs/TZ_RECONCILIATION.md`.
+No new product feature outranks this P0 correctness work.
 
 ## Non-negotiable financial invariants
 
@@ -139,20 +140,17 @@ change is official-TZ reconciliation through `docs/TZ_RECONCILIATION.md`.
 - Late evidence of a second monetary effect is an economic conflict requiring reconciliation.
 - No-safe-route/defer/reconciliation-blocked are valid outcomes.
 - Additive analytics never mixes incompatible measures/currencies.
+- A process-local provider interaction guard is owned by the live invocation that acquired it; unrelated callbacks must not release another invocation's guard.
 
 ## Architecture stance
 
-Keep a plain-Ruby modular monolith with one atomic correctness boundary.
+Keep a plain-Ruby modular monolith with one atomic correctness facade.
 
-Prefer:
+The Coordinator remains the atomic correctness boundary. Do not split it cosmetically. Extract a smaller interaction-guard component only if the recovery fix proves that explicit ownership/token semantics materially clarify correctness and tests.
 
-`typed command/context -> prepared evaluation -> shared pure transition/reducer -> atomic state mutation + durable facts`
+Performance caches/indexes are rebuildable derived state and never economic truth. Prefer existing FactStore indexes, revision-keyed derived projections and sorting only actionable due work before considering heavier infrastructure.
 
-and restore:
-
-`fact -> validation/linkage -> same/shared transition/invariant semantics -> reconstructed state`.
-
-Do not introduce microservices, Rails/ORM, queues, PSP-specific core schemas or ML/bandits before an authoritative requirement or measured need exists.
+Do not introduce microservices, Rails/ORM, Redis/Sidekiq, distributed leases, a database-backed config service, PSP-specific core schemas or ML/bandits before authoritative requirements or measured need exists.
 
 ## Development commands
 
@@ -167,16 +165,18 @@ bundle exec rake benchmark
 bundle exec rake load_10k
 bundle exec rake degradation_metrics
 bundle exec rake history_profile
+bundle exec rake read_path_profile
 ruby -Ilib bin/ruby_routing_demo
 ```
 
-Old green runs are historical evidence only. Changed code requires current verification.
+For the next coding session, run the focused recovery race reproducer first. Do not burn full-suite time before the counterexample has been made deterministic.
 
-## Current stage
+## Completion discipline
 
-RubyRouting is a mature, deeply verified pre-TZ payout-routing product with a strong financial kernel. v0.3.2 is a `VERSION_COMPLETE` checkpoint focused on route semantics, policy/control-plane determinism, timed recovery and product operability rather than feature-count expansion.
+The closure publication at `799f6977f07310105c30be9df549a536cc9d665d` is historical evidence, not an immutable declaration of correctness. A later material finding reopens the version by design.
 
-The v0.3.2 stop condition has been met by a fresh SPEC-006 closure on exact
-HEAD. Do not add speculative pre-TZ scope merely because optional P2 ideas
-remain. When the authoritative TZ arrives, switch immediately to
-`docs/TZ_RECONCILIATION.md`.
+After the recovery guard finding was resolved, finishing known PTZ4 items created only `VERSION_CANDIDATE`. The independent skeptical discovery protocol then found no new material issue, and exact candidate verification/CI passed before this final publication.
+
+Any new material locally solvable finding returns v0.3.4 to ACTIVE. `VERSION_COMPLETE` requires fresh exact-HEAD verification, current CI, and all active normative docs agreeing on the status.
+
+The absence of the official TZ is not a stop condition.

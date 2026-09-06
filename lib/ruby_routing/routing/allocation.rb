@@ -2,6 +2,45 @@
 
 module RubyRouting
   module Routing
+    # One pure allocation seam shared by live decision preparation and durable
+    # decision-trace validation. It keeps the primary/recovery distinction
+    # explicit: recovery applies its legal attempted-provider exclusion first,
+    # then reuses the same allocation authority without advancing primary
+    # accounting.
+    module AllocationAuthority
+      module_function
+
+      def choose(policy:, candidates:, attempted_provider_ids:, snapshot:, incoming_measure:,
+                 accounting_provider_ids:)
+        attempted_ids = normalize_provider_ids(attempted_provider_ids, "attempted_provider_ids")
+        if attempted_ids.empty?
+          RubyRouting::Routing::Allocation.choose(
+            policy: policy,
+            candidates: candidates,
+            snapshot: snapshot,
+            incoming_measure: incoming_measure,
+            accounting_provider_ids: accounting_provider_ids
+          )
+        else
+          RubyRouting::Routing::RecoverySelection.choose(
+            policy: policy,
+            candidates: candidates,
+            attempted_provider_ids: attempted_ids,
+            snapshot: snapshot,
+            incoming_measure: incoming_measure,
+            accounting_provider_ids: accounting_provider_ids
+          )
+        end
+      end
+
+      def normalize_provider_ids(provider_ids, label)
+        RubyRouting::Collection.to_array(provider_ids, label).map do |provider_id|
+          RubyRouting::Identity.normalize(provider_id, "provider id")
+        end.uniq.sort
+      end
+      private_class_method :normalize_provider_ids
+    end
+
     class AllocationSnapshot
       attr_reader :measures, :revision
 
@@ -51,10 +90,7 @@ module RubyRouting
       private
 
       def normalize_provider_id(provider_id)
-        normalized = provider_id.to_s.strip
-        raise ArgumentError, "provider id must be non-empty" if normalized.empty?
-
-        normalized
+        RubyRouting::Identity.normalize(provider_id, "provider id")
       end
     end
 
@@ -237,10 +273,7 @@ module RubyRouting
       end
 
       def normalize_provider_id(provider_id)
-        normalized = provider_id.to_s.strip
-        raise ArgumentError, "provider id must be non-empty" if normalized.empty?
-
-        normalized
+        RubyRouting::Identity.normalize(provider_id, "provider id")
       end
 
       def share_violation_total(violations, kind)
@@ -369,10 +402,7 @@ module RubyRouting
 
       def normalize_provider_ids(provider_ids, label)
         RubyRouting::Collection.to_array(provider_ids, label).map do |provider_id|
-          normalized = provider_id.to_s.strip
-          raise ArgumentError, "provider id must be non-empty" if normalized.empty?
-
-          normalized
+          RubyRouting::Identity.normalize(provider_id, "provider id")
         end.uniq.sort
       end
       private_class_method :normalize_provider_ids

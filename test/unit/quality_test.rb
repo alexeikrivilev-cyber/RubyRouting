@@ -139,10 +139,70 @@ class QualityTest < Minitest::Test
     assert_equal Rational(1, 4), bank.score
   end
 
+  def test_quality_route_cohorts_are_partitioned_by_currency
+    controller = RubyRouting::Routing::QualityController.new(
+      policy: RubyRouting::Routing::QualityPolicy.new(minimum_samples: 2)
+    )
+    route = RubyRouting::RoutingContext.new(payment_method: :card, rail: :instant)
+    success = RubyRouting::NormalizedOutcome.success(attribution: :provider)
+    failure = RubyRouting::NormalizedOutcome.temporary_provider_failure(attribution: :provider)
+
+    2.times { controller.observe(provider_id: "A", routing_context: route, currency: "usd", outcome: success) }
+    2.times { controller.observe(provider_id: "A", routing_context: route, currency: "EUR", outcome: failure) }
+
+    usd = controller.snapshot("A", routing_context: route, currency: "USD")
+    eur = controller.snapshot("A", routing_context: route, currency: "eur")
+    unscoped = controller.snapshot("A", routing_context: route)
+
+    assert_equal "USD", usd.currency
+    assert_equal :route, usd.evidence_scope
+    assert_equal 2, usd.successful_samples
+    assert_equal 0, usd.failed_samples
+    assert_equal Rational(3, 4), usd.score
+    assert_equal "EUR", eur.currency
+    assert_equal :route, eur.evidence_scope
+    assert_equal 0, eur.successful_samples
+    assert_equal 2, eur.failed_samples
+    assert_equal Rational(1, 4), eur.score
+    assert_nil unscoped.currency
+    assert_equal 0, unscoped.sample_count
+    assert_equal Rational(1, 2), unscoped.score
+  end
+
+  def test_sparse_route_evidence_falls_back_until_route_minimum_is_reached
+    policy = RubyRouting::Routing::QualityPolicy.new(minimum_samples: 1)
+    assert_equal 2, policy.route_minimum_samples
+    refute policy.to_h.key?(:route_minimum_samples)
+
+    controller = RubyRouting::Routing::QualityController.new(policy: policy)
+    route = RubyRouting::RoutingContext.new(payment_method: :card, rail: :instant)
+    success = RubyRouting::NormalizedOutcome.success(attribution: :provider)
+    failure = RubyRouting::NormalizedOutcome.temporary_provider_failure(attribution: :provider)
+    2.times { controller.observe(provider_id: "A", currency: "USD", outcome: success) }
+
+    controller.observe(provider_id: "A", routing_context: route, currency: "USD", outcome: failure)
+    sparse = controller.snapshot("A", routing_context: route, currency: "USD")
+
+    assert_equal :global, sparse.evidence_scope
+    assert_equal 2, sparse.successful_samples
+    assert_equal 1, sparse.failed_samples
+    assert_equal Rational(3, 5), sparse.score
+
+    controller.observe(provider_id: "A", routing_context: route, currency: "USD", outcome: failure)
+    mature = controller.snapshot("A", routing_context: route, currency: "USD")
+
+    assert_equal :route, mature.evidence_scope
+    assert_equal 0, mature.successful_samples
+    assert_equal 2, mature.failed_samples
+    assert_equal Rational(1, 4), mature.score
+    assert_equal 2, mature.minimum_samples
+  end
+
   def test_quality_staleness_is_independent_from_maturity_and_exact_at_boundary
     policy = RubyRouting::Routing::QualityPolicy.new(
       minimum_samples: 1,
-      max_evidence_age_seconds: 10
+      max_evidence_age_seconds: 10,
+      route_minimum_samples: 1
     )
     controller = RubyRouting::Routing::QualityController.new(policy: policy)
     observed_at = Time.utc(2026, 8, 31, 12, 0, 0)
@@ -176,6 +236,74 @@ class QualityTest < Minitest::Test
     assert untimestamped.mature?
     assert untimestamped.stale?
     refute untimestamped.authoritative?
+  end
+
+  def test_quality_filters_each_expired_sample_instead_of_refreshing_the_cohort
+    policy = RubyRouting::Routing::QualityPolicy.new(
+      minimum_samples: 1,
+      evidence_window: 10,
+      max_evidence_age_seconds: 10
+    )
+    controller = RubyRouting::Routing::QualityController.new(policy: policy)
+    route = RubyRouting::RoutingContext.new(payment_method: :card, rail: :instant)
+    old_at = Time.utc(2026, 8, 31, 12, 0, 0)
+    fresh_at = old_at + 20
+    success = RubyRouting::NormalizedOutcome.success(attribution: :provider)
+    failure = RubyRouting::NormalizedOutcome.temporary_provider_failure(attribution: :provider)
+
+    2.times do
+      controller.observe(
+        provider_id: "A",
+        routing_context: route,
+        outcome: success,
+        observed_at: old_at
+      )
+    end
+    controller.observe(
+      provider_id: "A",
+      routing_context: route,
+      outcome: failure,
+      observed_at: fresh_at
+    )
+
+    current = controller.snapshot("A", routing_context: route, as_of: fresh_at)
+
+    assert_equal 0, current.successful_samples
+    assert_equal 1, current.failed_samples
+    assert_equal Rational(1, 3), current.score
+    assert_equal 1, current.confidence
+    assert_equal fresh_at, current.last_observed_at
+    assert current.authoritative?
+  end
+
+  def test_quality_as_of_excludes_future_dated_evidence_from_counts_and_latest_timestamp
+    policy = RubyRouting::Routing::QualityPolicy.new(
+      minimum_samples: 1,
+      max_evidence_age_seconds: 10,
+      route_minimum_samples: 1
+    )
+    controller = RubyRouting::Routing::QualityController.new(policy: policy)
+    route = RubyRouting::RoutingContext.new(payment_method: :card)
+    observed_at = Time.utc(2026, 8, 31, 12, 0, 10)
+    as_of = Time.utc(2026, 8, 31, 12, 0, 0)
+
+    controller.observe(
+      provider_id: "A",
+      routing_context: route,
+      outcome: RubyRouting::NormalizedOutcome.success(attribution: :provider),
+      observed_at: observed_at
+    )
+
+    before = controller.snapshot("A", routing_context: route, as_of: as_of)
+    after = controller.snapshot("A", routing_context: route, as_of: observed_at)
+
+    assert_equal 0, before.sample_count
+    refute before.mature?
+    assert_nil before.last_observed_at
+    assert_equal :global, before.evidence_scope
+    assert_equal 1, after.sample_count
+    assert_equal observed_at, after.last_observed_at
+    assert after.authoritative?
   end
 
   def test_quality_rejects_non_positive_age_policy_and_non_time_evidence
@@ -283,6 +411,10 @@ class QualityTest < Minitest::Test
 
     assert_equal %w[A B], snapshots.keys
     assert_equal ["retail"], snapshot.context_key
+    assert_equal "USD", RubyRouting::Routing::ProviderQualitySnapshot.new(
+      provider_id: "A",
+      currency: " usd "
+    ).currency
   end
 
   def test_quality_provider_snapshot_boundaries_canonicalize_padded_each_only_ids
@@ -316,6 +448,47 @@ class QualityTest < Minitest::Test
     end
     assert_raises(ArgumentError) do
       RubyRouting::Routing::ProviderQualitySnapshot.new(provider_id: "A", context_key: [" "])
+    end
+    assert_raises(ArgumentError) do
+      RubyRouting::Routing::ProviderQualitySnapshot.new(provider_id: "A", currency: "US")
+    end
+    assert_raises(ArgumentError) do
+      RubyRouting::Routing::QualityPolicy.new(minimum_samples: 1, evidence_window: 1, route_minimum_samples: 2)
+    end
+  end
+
+  def test_quality_rejects_malformed_routing_context_instead_of_pooling_global_evidence
+    controller = RubyRouting::Routing::QualityController.new
+    success = RubyRouting::NormalizedOutcome.success(attribution: :provider)
+
+    assert_raises(ArgumentError) do
+      controller.observe(provider_id: "A", routing_context: "card", outcome: success)
+    end
+    assert_raises(ArgumentError) do
+      controller.snapshot("A", routing_context: Object.new)
+    end
+    assert_raises(ArgumentError) do
+      controller.observe(provider_id: "A", context: Object.new, outcome: success)
+    end
+    assert_raises(ArgumentError) do
+      controller.observe(
+        provider_id: "A",
+        routing_context: { payment_methd: "card" },
+        outcome: success
+      )
+    end
+    assert_raises(ArgumentError) do
+      controller.observe(provider_id: "A", context_key: [Object.new], outcome: success)
+    end
+    assert_empty controller.provider_ids
+  end
+
+  def test_quality_snapshot_rejects_unknown_explicit_route_keys
+    assert_raises(ArgumentError) do
+      RubyRouting::Routing::ProviderQualitySnapshot.new(
+        provider_id: "A",
+        routing_context: { payment_methd: "card" }
+      )
     end
   end
 
@@ -355,10 +528,13 @@ class QualityTest < Minitest::Test
       )
     )
 
-    assert_equal 1, coordinator.quality_snapshot(commit.proposal.provider_id).successful_samples
+    assert_equal 1, coordinator.quality_snapshot(
+      commit.proposal.provider_id,
+      currency: "RUB"
+    ).successful_samples
     as_of = coordinator.current_time
-    assert_equal coordinator.quality_snapshot(commit.proposal.provider_id, as_of: as_of).to_h,
-      coordinator.quality_projection.snapshot(commit.proposal.provider_id, as_of: as_of).to_h
+    assert_equal coordinator.quality_snapshot(commit.proposal.provider_id, currency: "RUB", as_of: as_of).to_h,
+      coordinator.quality_projection.snapshot(commit.proposal.provider_id, currency: "RUB", as_of: as_of).to_h
     assert_equal 1, coordinator.facts.count { |fact| fact.type == :quality_signal }
     quality_fact = coordinator.facts.find { |fact| fact.type == :quality_signal }
     assert_equal [], quality_fact.payload.fetch(:context_key)

@@ -91,13 +91,14 @@ module RubyRouting
         )
       end
 
-      def evaluate(intent:, policy:, payout_state:, available_provider_ids:)
-        opportunities = @provider_catalog.current.sort_by(&:provider_id).map do |opportunity|
+      def evaluate(intent:, policy:, payout_state:, available_provider_ids:, provider_opportunities: nil)
+        source_opportunities = provider_opportunities || @provider_catalog.current
+        opportunities = source_opportunities.sort_by(&:provider_id).map do |opportunity|
           RubyRouting::Routing::OpportunityRuntime.materialize(
             opportunity: opportunity,
             available_provider_ids: available_provider_ids,
             capacity_available: @admission_ledger.capacity_available?(opportunity, intent),
-            health_available: health_available_for?(opportunity.provider_id),
+            health_available: health_available_for?(opportunity.provider_id, intent.routing_context),
             throughput_available: @admission_ledger.throughput_available?(opportunity)
           )
         end
@@ -123,6 +124,7 @@ module RubyRouting
           eligibility.opportunity_provider_ids,
           context: intent.routing_context,
           routing_context: intent.routing_context,
+          currency: intent.money.currency,
           as_of: evaluated_at
         )
         evaluation = Evaluation.new(
@@ -150,8 +152,8 @@ module RubyRouting
 
       private
 
-      def health_available_for?(provider_id)
-        @health_controller.snapshot(provider_id).exposed?
+      def health_available_for?(provider_id, routing_context)
+        @health_controller.snapshot(provider_id, routing_context: routing_context).exposed?
       end
 
       def current_time

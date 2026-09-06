@@ -46,6 +46,7 @@ module RubyRouting
             "unsupported decision action #{action.inspect}"
         end
         @decision_trace_validator.validate_policy_binding(state, payload)
+        @decision_trace_validator.validate_configuration_revision_binding(state, payload)
         operation_id = payload[:operation_id]
         unless operation_id
           @decision_trace_validator.validate_non_operation_decision(

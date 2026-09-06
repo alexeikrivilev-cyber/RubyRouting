@@ -107,6 +107,92 @@ module RubyRouting
       end
     end
 
+    class OutcomeDimension
+      FIELDS = %i[
+        policy_id policy_epoch policy_scope currency provider_id role outcome_class attribution
+      ].freeze
+      OUTCOME_CLASSES = %i[
+        first_attempt_success
+        eventual_settlement
+        provider_failure
+        successful_fallback_recovery
+        unresolved
+        reconciliation_blocked
+        terminal_failure
+      ].freeze
+      ROLES = %i[primary recovery].freeze
+
+      attr_reader :policy_id, :policy_epoch, :policy_scope, :currency, :provider_id,
+                  :role, :outcome_class, :attribution
+
+      def initialize(policy_id:, policy_epoch:, policy_scope:, currency:, provider_id:, role:,
+                     outcome_class:, attribution:)
+        @policy_id = normalize_identity(policy_id, "outcome policy id")
+        @policy_epoch = normalize_identity(policy_epoch, "outcome policy epoch")
+        @policy_scope = normalize_identity(policy_scope, "outcome policy scope")
+        @currency = normalize_currency(currency)
+        @provider_id = normalize_identity(provider_id, "outcome provider id")
+        @role = RubyRouting::Enum.normalize(role, ROLES, "outcome role")
+        @outcome_class = RubyRouting::Enum.normalize(
+          outcome_class,
+          OUTCOME_CLASSES,
+          "outcome class"
+        )
+        @attribution = RubyRouting::Enum.normalize(
+          attribution,
+          RubyRouting::NormalizedOutcome::ATTRIBUTIONS,
+          "outcome attribution"
+        )
+        freeze
+      end
+
+      def to_h
+        {
+          policy_id: policy_id,
+          policy_epoch: policy_epoch,
+          policy_scope: policy_scope,
+          currency: currency,
+          provider_id: provider_id,
+          role: role,
+          outcome_class: outcome_class,
+          attribution: attribution
+        }.freeze
+      end
+
+      def ==(other)
+        other.is_a?(self.class) && to_h == other.to_h
+      end
+      alias eql? ==
+
+      def hash
+        to_h.hash
+      end
+
+      private
+
+      def normalize_identity(value, label)
+        unless value.is_a?(String) || value.is_a?(Symbol)
+          raise ArgumentError, "#{label} must be a String or Symbol"
+        end
+
+        normalized = value.to_s.strip
+        raise ArgumentError, "#{label} must be non-empty" if normalized.empty?
+
+        normalized.freeze
+      end
+
+      def normalize_currency(value)
+        unless value.is_a?(String)
+          raise ArgumentError, "outcome currency must be a String"
+        end
+
+        normalized = value.strip.upcase
+        raise ArgumentError, "outcome currency must be a three-letter code" unless /\A[A-Z]{3}\z/.match?(normalized)
+
+        normalized.freeze
+      end
+    end
+
     AnalyticsQueryRow = Data.define(:group, :value) do
       def initialize(group:, value:)
         super(
@@ -140,6 +226,28 @@ module RubyRouting
       end
     end
 
+    OutcomeAnalyticsQueryResult = Data.define(:metric, :filters, :group_by, :rows, :population) do
+      def initialize(metric:, filters:, group_by:, rows:, population:)
+        super(
+          metric: metric,
+          filters: RubyRouting::ImmutableData.deep_freeze(filters),
+          group_by: group_by.map(&:freeze).freeze,
+          rows: rows.freeze,
+          population: population
+        )
+      end
+
+      def to_h
+        {
+          metric: metric,
+          population: population,
+          filters: filters,
+          group_by: group_by,
+          rows: rows.map(&:to_h).freeze
+        }.freeze
+      end
+    end
+
     class Analytics
       QUERY_METRICS = {
         assignment_measure: :assignment_measure_by_dimension,
@@ -147,6 +255,24 @@ module RubyRouting
         primary_target_measure: :primary_target_measure_by_dimension,
         primary_deviation_measure: :primary_deviation_measure_by_dimension,
         settlement_measure: :settlement_measure_by_dimension
+      }.freeze
+      OUTCOME_QUERY_METRICS = {
+        first_attempt_success_count: :first_attempt_success,
+        eventual_settlement_count: :eventual_settlement,
+        provider_failure_count: :provider_failure,
+        successful_fallback_recovery_count: :successful_fallback_recovery,
+        unresolved_count: :unresolved,
+        reconciliation_blocked_count: :reconciliation_blocked,
+        terminal_failure_count: :terminal_failure
+      }.freeze
+      OUTCOME_POPULATIONS = {
+        first_attempt_success: :payouts,
+        eventual_settlement: :payouts,
+        provider_failure: :provider_attributed_attempts,
+        successful_fallback_recovery: :payouts,
+        unresolved: :payouts,
+        reconciliation_blocked: :payouts,
+        terminal_failure: :payouts
       }.freeze
       DEVIATION_ATTRIBUTION_SEMANTICS = :deterministic_routing_reason
       RUNTIME_INFEASIBILITY_ATTRIBUTION_SEMANTICS = :deterministic_exclusion_reason
@@ -182,7 +308,8 @@ module RubyRouting
                   :deviation_attribution_semantics, :runtime_infeasibility_attribution_semantics,
                   :assignment_measure_by_dimension, :primary_assignment_measure_by_dimension,
                   :primary_target_measure_by_dimension, :primary_deviation_measure_by_dimension,
-                  :settlement_measure_by_dimension, :deviation_by_cause_dimension,
+                  :settlement_measure_by_dimension, :outcome_count_by_dimension,
+                  :deviation_by_cause_dimension,
                   :deviation_by_recoverability_dimension
 
       def self.from_facts(facts, as_of: nil)
@@ -206,6 +333,8 @@ module RubyRouting
         @money_moving_operation_count_by_provider = Hash.new(0)
         @settlement_measure_by_provider = Hash.new(0)
         @settlement_measure_by_dimension = Hash.new(0)
+        @outcome_count_by_dimension = Hash.new(0)
+        @outcome_payout_ids = {}
         @provider_failure_count = Hash.new(0)
         @first_attempt_success_count = 0
         @eventual_success_count = 0
@@ -225,6 +354,7 @@ module RubyRouting
         @transport_count_by_kind = Hash.new(0)
         @unresolved_count_by_status = Hash.new(0)
         @unresolved_age_seconds_by_payout = {}
+        @unresolved_age_sources = {}
         @attempt_count_by_payout = Hash.new(0)
         @provider_interaction_count_by_payout = Hash.new(0)
         @provider_switch_count_by_payout = Hash.new(0)
@@ -262,6 +392,7 @@ module RubyRouting
           money_moving_operation_count_by_provider: money_moving_operation_count_by_provider,
           settlement_measure_by_provider: settlement_measure_by_provider,
           settlement_measure_by_dimension: dimension_entries(settlement_measure_by_dimension),
+          outcome_count_by_dimension: dimension_entries(outcome_count_by_dimension),
           first_attempt_success_count: first_attempt_success_count,
           eventual_success_count: eventual_success_count,
           fallback_recovery_count: fallback_recovery_count,
@@ -294,17 +425,42 @@ module RubyRouting
         }
       end
 
+      # Reuse the immutable fact projection when only the read-time clock
+      # changed. Analytics currently has one time-dependent field (unresolved
+      # age); every count, dimension and attribution remains tied to the same
+      # append-only fact revision. The returned value is a new immutable view,
+      # never a mutation of the cached base projection.
+      def with_as_of(as_of)
+        return self if @as_of == as_of
+
+        projected = dup
+        projected.instance_variable_set(:@as_of, as_of)
+        projected.instance_variable_set(
+          :@unresolved_age_seconds_by_payout,
+          projected.send(:unresolved_ages_for, as_of)
+        )
+        projected.freeze
+      end
+
       # Query the already-computed dimensioned measures. This is deliberately
       # not another fact aggregation path: filters and grouping only select
       # and safely combine rows produced by the canonical projection.
       def query(metric:, filters: {}, group_by: [])
         normalized_metric = RubyRouting::Enum.normalize(
           metric,
-          QUERY_METRICS.keys,
+          QUERY_METRICS.keys + OUTCOME_QUERY_METRICS.keys,
           "analytics query metric"
         )
-        normalized_filters = normalize_query_filters(filters)
-        normalized_group_by = normalize_query_group_by(group_by)
+        if OUTCOME_QUERY_METRICS.key?(normalized_metric)
+          return outcome_query(
+            normalized_metric,
+            filters: filters,
+            group_by: group_by
+          )
+        end
+
+        normalized_filters = normalize_query_filters(filters, fields: AnalyticsDimension::FIELDS)
+        normalized_group_by = normalize_query_group_by(group_by, fields: AnalyticsDimension::FIELDS)
         dimensioned = public_send(QUERY_METRICS.fetch(normalized_metric))
         selected = dimensioned.select do |dimension, _value|
           normalized_filters.all? do |field, expected|
@@ -330,25 +486,63 @@ module RubyRouting
         )
       end
 
+      def outcome_query(metric, filters: {}, group_by: [])
+        outcome_class = OUTCOME_QUERY_METRICS.fetch(metric)
+        normalized_filters = normalize_query_filters(filters, fields: OutcomeDimension::FIELDS)
+        if normalized_filters.key?(:outcome_class) &&
+           normalized_filters.fetch(:outcome_class) != outcome_class
+          raise ArgumentError, "analytics outcome metric and outcome_class filter disagree"
+        end
+        normalized_group_by = normalize_query_group_by(group_by, fields: OutcomeDimension::FIELDS)
+        dimensioned = outcome_count_by_dimension.select do |dimension, _value|
+          dimension.outcome_class == outcome_class
+        end
+        selected = dimensioned.select do |dimension, _value|
+          normalized_filters.all? do |field, expected|
+            dimension.public_send(field) == expected
+          end
+        end
+        validate_query_grouping!(selected.map(&:first), normalized_group_by, fields: OutcomeDimension::FIELDS)
+        grouped = selected.group_by do |dimension, _value|
+          normalized_group_by.map { |field| dimension.public_send(field) }
+        end
+        rows = grouped.sort_by { |key, _values| key.map { |value| query_sort_token(value) } }.map do |key, values|
+          group = normalized_group_by.each_with_index.each_with_object({}) do |(field, index), result|
+            result[field] = key.fetch(index)
+          end
+          AnalyticsQueryRow.new(group: group, value: values.sum { |_dimension, value| value })
+        end
+
+        OutcomeAnalyticsQueryResult.new(
+          metric: metric,
+          population: OUTCOME_POPULATIONS.fetch(outcome_class),
+          filters: normalized_filters,
+          group_by: normalized_group_by,
+          rows: rows
+        )
+      end
+
       private
 
-      def normalize_query_filters(filters)
+      def normalize_query_filters(filters, fields:)
         unless filters.is_a?(Hash)
           raise ArgumentError, "analytics query filters must be a Hash"
         end
 
         normalized = RubyRouting::HashKeys.symbolize(
           filters,
-          RubyRouting::Projections::AnalyticsDimension::FIELDS,
+          fields,
           "analytics query filters"
         ).each_with_object({}) do |(field, value), result|
-          result[field] = normalize_query_filter_value(field, value)
+          result[field] = normalize_query_filter_value(field, value, fields: fields)
         end
-        validate_query_filter_shape!(normalized)
+        validate_query_filter_shape!(normalized) if fields == AnalyticsDimension::FIELDS
         normalized.freeze
       end
 
-      def normalize_query_filter_value(field, value)
+      def normalize_query_filter_value(field, value, fields:)
+        return normalize_outcome_query_filter_value(field, value) if fields == OutcomeDimension::FIELDS
+
         case field
         when :policy_id, :policy_epoch, :policy_scope, :provider_id
           normalize_identity(value, "analytics query #{field}")
@@ -369,12 +563,40 @@ module RubyRouting
         end
       end
 
-      def normalize_query_group_by(group_by)
+      def normalize_outcome_query_filter_value(field, value)
+        case field
+        when :policy_id, :policy_epoch, :policy_scope, :provider_id
+          normalize_identity(value, "analytics outcome query #{field}")
+        when :currency
+          normalized = normalize_query_currency(value)
+          raise ArgumentError, "analytics outcome query currency is required" if normalized.nil?
+
+          normalized
+        when :role
+          RubyRouting::Enum.normalize(value, OutcomeDimension::ROLES, "analytics outcome query role")
+        when :outcome_class
+          RubyRouting::Enum.normalize(
+            value,
+            OutcomeDimension::OUTCOME_CLASSES,
+            "analytics outcome query outcome class"
+          )
+        when :attribution
+          RubyRouting::Enum.normalize(
+            value,
+            RubyRouting::NormalizedOutcome::ATTRIBUTIONS,
+            "analytics outcome query attribution"
+          )
+        else
+          raise ArgumentError, "unsupported analytics outcome query filter"
+        end
+      end
+
+      def normalize_query_group_by(group_by, fields:)
         RubyRouting::Collection.to_array(group_by, "analytics query group_by")
           .each_with_object([]) do |field, result|
             normalized = RubyRouting::Enum.normalize(
               field,
-              RubyRouting::Projections::AnalyticsDimension::FIELDS,
+              fields,
               "analytics query group dimension"
             )
             raise ArgumentError, "analytics query group_by contains a duplicate dimension" if result.include?(normalized)
@@ -417,10 +639,10 @@ module RubyRouting
           .uniq.sort.freeze
       end
 
-      def validate_query_grouping!(dimensions, group_by)
+      def validate_query_grouping!(dimensions, group_by, fields: AnalyticsDimension::FIELDS)
         return if dimensions.empty?
 
-        (RubyRouting::Projections::AnalyticsDimension::FIELDS - group_by).each do |field|
+        (fields - group_by).each do |field|
           values = dimensions.map { |dimension| dimension.public_send(field) }.uniq
           next if values.length <= 1
 
@@ -444,6 +666,13 @@ module RubyRouting
         policies_by_scope = {}
         allocation_context_by_payout = {}
         operation_dimensions = {}
+        operation_context_by_id = {}
+        policy_identity_by_payout = {}
+        payout_currency_by_id = {}
+        current_operation_by_payout = {}
+        first_attempt_success_payouts = {}
+        settled_payouts = {}
+        current_attribution_by_payout = {}
         primary_allocations = []
         status_by_payout = Hash.new(:new)
         attempt_providers_by_payout = Hash.new { |hash, payout_id| hash[payout_id] = [] }
@@ -455,8 +684,18 @@ module RubyRouting
           payload = fact.payload
           status_by_payout[fact.payout_id] = :new unless status_by_payout.key?(fact.payout_id)
           case fact.type
+          when :intent_registered
+            money = payload[:money]
+            payout_currency_by_id[fact.payout_id] = money.currency if money.is_a?(RubyRouting::Money)
           when :policy_registered
             policies_by_scope[policy_scope_key(payload)] = payload[:definition]
+            if payload[:policy_id] && payload[:policy_epoch] && payload[:policy_scope]
+              policy_identity_by_payout[fact.payout_id] = [
+                normalize_identity(payload[:policy_id], "policy id"),
+                normalize_identity(payload[:policy_epoch], "policy epoch"),
+                normalize_identity(payload[:policy_scope], "policy scope")
+              ].freeze
+            end
           when :opportunity_evaluated
             allocation_context_by_payout[fact.payout_id] = payload
             collection_or_empty(payload[:opportunities], "opportunity provider ids").each do |provider_id|
@@ -505,6 +744,18 @@ module RubyRouting
             money_moving_operation_count_by_provider[provider_id] += 1
             operation_id = normalize_identity(payload.fetch(:operation_id), "operation id")
             operation_dimensions[operation_id] = dimension
+            policy_identity = policy_identity_by_payout[fact.payout_id] || [
+              payload[:policy_id], payload[:policy_epoch], payload[:policy_scope]
+            ]
+            operation_context_by_id[operation_id] = {
+              provider_id: provider_id,
+              role: RubyRouting::Enum.normalize(payload.fetch(:role), %i[primary recovery], "allocation role"),
+              policy_id: policy_identity[0],
+              policy_epoch: policy_identity[1],
+              policy_scope: policy_identity[2],
+              currency: payout_currency_by_id[fact.payout_id]
+            }
+            current_operation_by_payout[fact.payout_id] = operation_id
             attempt_providers_by_payout[fact.payout_id] << provider_id
             if payload[:role] == :primary
               primary_assignment_measure_by_dimension[dimension] += measure
@@ -549,6 +800,7 @@ module RubyRouting
               "outcome attribution"
             )
             status_by_payout[fact.payout_id] = reduced_status(status, payload[:safe_to_release])
+            current_attribution_by_payout[fact.payout_id] = attribution
             if %i[pending unknown].include?(status_by_payout[fact.payout_id])
               unresolved_since_by_payout[fact.payout_id] ||= payload[:observed_at]
             else
@@ -559,14 +811,46 @@ module RubyRouting
               @failure_count_by_attribution[attribution] += 1
               @provider_failure_count[provider_id] += 1 if attribution == :provider &&
                 %i[safe_route_failure temporary_provider_failure].include?(status)
+              if attribution == :provider && %i[safe_route_failure temporary_provider_failure].include?(status)
+                record_outcome_event(
+                  operation_context_by_id.fetch(operation_id, nil),
+                  payout_currency_by_id[fact.payout_id],
+                  payout_id: fact.payout_id,
+                  outcome_class: :provider_failure,
+                  attribution: attribution,
+                  strict: payout_currency_by_id.key?(fact.payout_id)
+                )
+              end
             end
             if status == :success
               successful_payouts[fact.payout_id] = true
               if roles_by_operation[operation_id] == :recovery
                 successful_fallback_payouts[fact.payout_id] = true
+                record_outcome_event(
+                  operation_context_by_id.fetch(operation_id, nil),
+                  payout_currency_by_id[fact.payout_id],
+                  payout_id: fact.payout_id,
+                  outcome_class: :successful_fallback_recovery,
+                  attribution: attribution,
+                  deduplication: :payout,
+                  strict: payout_currency_by_id.key?(fact.payout_id)
+                )
               end
-              @first_attempt_success_count += 1 if roles_by_operation[operation_id] == :primary &&
-                first_operation_by_payout[fact.payout_id] == operation_id
+              if roles_by_operation[operation_id] == :primary &&
+                 first_operation_by_payout[fact.payout_id] == operation_id &&
+                 first_attempt_success_payouts[fact.payout_id].nil?
+                first_attempt_success_payouts[fact.payout_id] = true
+                @first_attempt_success_count += 1
+                record_outcome_event(
+                  operation_context_by_id.fetch(operation_id, nil),
+                  payout_currency_by_id[fact.payout_id],
+                  payout_id: fact.payout_id,
+                  outcome_class: :first_attempt_success,
+                  attribution: attribution,
+                  deduplication: :payout,
+                  strict: payout_currency_by_id.key?(fact.payout_id)
+                )
+              end
             elsif status == :terminal_payout_failure
               terminal_payouts[fact.payout_id] = true
             end
@@ -584,6 +868,24 @@ module RubyRouting
             end
             settlement_measure_by_dimension[dimension] += payload.fetch(:measure)
             status_by_payout[fact.payout_id] = :success
+            settlement_context = operation_context_by_id.fetch(operation_id, nil)
+            if settled_payouts.key?(fact.payout_id)
+              unless settled_payouts.fetch(fact.payout_id) == [settlement_context, payout_currency_by_id[fact.payout_id]]
+                raise RubyRouting::State::DurableCorruptionError,
+                  "conflicting duplicate settlement for #{fact.payout_id}"
+              end
+            else
+              settled_payouts[fact.payout_id] = [settlement_context, payout_currency_by_id[fact.payout_id]]
+              record_outcome_event(
+                settlement_context,
+                payout_currency_by_id[fact.payout_id],
+                payout_id: fact.payout_id,
+                outcome_class: :eventual_settlement,
+                attribution: :provider,
+                deduplication: :payout,
+                strict: payout_currency_by_id.key?(fact.payout_id)
+              )
+            end
           when :reversal_recorded
             @reversal_count += 1
             amount = payload.fetch(:amount)
@@ -592,6 +894,10 @@ module RubyRouting
             @economic_conflict_count += 1
           when :reconciliation_blocked
             status_by_payout[fact.payout_id] = :reconciliation_blocked
+            current_operation_by_payout[fact.payout_id] = normalize_identity(
+              payload.fetch(:operation_id),
+              "operation id"
+            )
             blocked_age_by_payout[fact.payout_id] = payload[:elapsed] if payload[:elapsed]
           end
         end
@@ -599,6 +905,13 @@ module RubyRouting
         project_primary_targets(primary_allocations, policies_by_scope)
         finalize_safe_provider_rollups
         finalize_safe_deviation_rollups
+        project_outcome_statuses(
+          status_by_payout,
+          current_operation_by_payout,
+          operation_context_by_id,
+          payout_currency_by_id,
+          current_attribution_by_payout
+        )
         project_lifecycle_metrics(
           status_by_payout,
           attempt_providers_by_payout,
@@ -610,6 +923,69 @@ module RubyRouting
         @successful_fallback_recovery_count = successful_fallback_payouts.length
         @fallback_recovery_count = fallback_payouts.length
         @terminal_failure_count = terminal_payouts.length
+      end
+
+      def record_outcome_event(
+        operation_context,
+        currency,
+        payout_id:,
+        outcome_class:,
+        attribution:,
+        deduplication: nil,
+        strict: false
+      )
+        missing_context = operation_context.nil? || currency.nil? ||
+          %i[policy_id policy_epoch policy_scope provider_id role].any? do |field|
+            operation_context.nil? || operation_context[field].nil?
+          end
+        if missing_context
+          raise RubyRouting::State::DurableCorruptionError,
+            "outcome analytics is missing policy, operation or payout currency context" if strict
+
+          return
+        end
+
+        dimension = OutcomeDimension.new(
+          policy_id: operation_context.fetch(:policy_id),
+          policy_epoch: operation_context.fetch(:policy_epoch),
+          policy_scope: operation_context.fetch(:policy_scope),
+          currency: currency,
+          provider_id: operation_context.fetch(:provider_id),
+          role: operation_context.fetch(:role),
+          outcome_class: outcome_class,
+          attribution: attribution
+        )
+        return if deduplication == :payout && @outcome_payout_ids[[dimension, payout_id]]
+
+        @outcome_count_by_dimension[dimension] += 1
+        @outcome_payout_ids[[dimension, payout_id]] = true if deduplication == :payout
+      end
+
+      def project_outcome_statuses(
+        status_by_payout,
+        current_operation_by_payout,
+        operation_context_by_id,
+        payout_currency_by_id,
+        current_attribution_by_payout
+      )
+        status_by_payout.each do |payout_id, status|
+          outcome_class = case status
+          when :pending, :unknown then :unresolved
+          when :reconciliation_blocked then :reconciliation_blocked
+          when :terminal_payout_failure then :terminal_failure
+          end
+          next unless outcome_class
+
+          record_outcome_event(
+            operation_context_by_id.fetch(current_operation_by_payout[payout_id], nil),
+            payout_currency_by_id[payout_id],
+            payout_id: payout_id,
+            outcome_class: outcome_class,
+            attribution: current_attribution_by_payout.fetch(payout_id, :unknown),
+            deduplication: :payout,
+            strict: payout_currency_by_id.key?(payout_id)
+          )
+        end
       end
 
       def record_exclusions(exclusion_codes)
@@ -901,6 +1277,11 @@ module RubyRouting
           unresolved_count_by_status[status] += 1 if %i[pending unknown reconciliation_blocked].include?(status)
           next unless %i[pending unknown reconciliation_blocked].include?(status)
 
+          @unresolved_age_sources[payout_id] = [
+            unresolved_since_by_payout[payout_id],
+            blocked_age_by_payout[payout_id]
+          ].freeze
+
           age = unresolved_age(
             payout_id,
             unresolved_since_by_payout[payout_id],
@@ -910,11 +1291,23 @@ module RubyRouting
         end
       end
 
-      def unresolved_age(payout_id, started_at, blocked_age)
-        return blocked_age if @as_of.nil?
+      def unresolved_ages_for(as_of)
+        @unresolved_age_sources.each_with_object({}) do |(payout_id, source), ages|
+          age = unresolved_age(
+            payout_id,
+            source.fetch(0),
+            source.fetch(1),
+            as_of: as_of
+          )
+          ages[payout_id] = age unless age.nil?
+        end.freeze
+      end
+
+      def unresolved_age(payout_id, started_at, blocked_age, as_of: @as_of)
+        return blocked_age if as_of.nil?
         return blocked_age if started_at.nil?
 
-        elapsed = @as_of - started_at
+        elapsed = as_of - started_at
         raise ArgumentError, "analytics as_of cannot precede unresolved start for #{payout_id}" if elapsed.negative?
 
         elapsed
@@ -991,6 +1384,7 @@ module RubyRouting
           :@money_moving_operation_count_by_provider,
           :@settlement_measure_by_provider,
           :@settlement_measure_by_dimension,
+          :@outcome_count_by_dimension,
           :@provider_failure_count,
           :@reversal_measure_by_currency,
           :@failure_count_by_attribution,
@@ -1008,6 +1402,8 @@ module RubyRouting
         hash_names.each do |name|
           instance_variable_set(name, instance_variable_get(name).dup.freeze)
         end
+        @outcome_payout_ids = @outcome_payout_ids.dup.freeze
+        @unresolved_age_sources = @unresolved_age_sources.dup.freeze
         @deviation_by_cause = @deviation_by_cause.each_with_object({}) do |(cause, value), copy|
           copy[cause] = value.dup.freeze
         end.freeze

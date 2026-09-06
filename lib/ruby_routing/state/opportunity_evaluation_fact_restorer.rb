@@ -155,7 +155,10 @@ module RubyRouting
             "opportunity evaluation has malformed health trace"
         end
         opportunity_ids.each do |provider_id|
-          unless health.fetch(provider_id) == @health_controller.call.snapshot(provider_id).to_h
+          unless health.fetch(provider_id) == @health_controller.call.snapshot(
+            provider_id,
+            routing_context: state.intent.routing_context
+          ).to_h
             raise RubyRouting::State::DurableCorruptionError,
               "opportunity evaluation health trace does not match #{provider_id}"
           end
@@ -165,6 +168,7 @@ module RubyRouting
           opportunity_ids,
           context: state.intent.routing_context,
           routing_context: state.intent.routing_context,
+          currency: state.intent.money.currency,
           as_of: evaluated_at
         ).transform_values(&:to_h)
         unless payload.fetch(:quality) == expected_quality
@@ -204,7 +208,10 @@ module RubyRouting
             opportunity: opportunity,
             available_provider_ids: available_provider_ids,
             capacity_available: @admission_ledger.call.capacity_available?(opportunity, state.intent),
-            health_available: @health_controller.call.snapshot(provider_id).exposed?,
+            health_available: @health_controller.call.snapshot(
+              provider_id,
+              routing_context: state.intent.routing_context
+            ).exposed?,
             throughput_available: throughput_available
           )
         end

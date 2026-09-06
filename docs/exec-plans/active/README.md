@@ -1,11 +1,9 @@
-# Current ExecPlan / Closure Records
+# Current ExecPlan
 
-Current pre-TZ implementation and closure record:
+Current pre-TZ execution authority:
 
-- `pre-tz-semantic-control-plane.md` — v0.3.2 Semantic Control Plane & Recovery Readiness, `VERSION_COMPLETE`.
+- `pre-tz-economic-effect-safety.md` — **v0.3.5 Pre-TZ Economic Effect Safety & Adapter Readiness — ACTIVE**.
 
-Only the current execution/closure record belongs in this directory. A new
-authoritative plan is created only after `docs/TZ_RECONCILIATION.md`; completed
-plans remain available through Git history and historical references.
+Only the current execution plan belongs in this directory. The completed v0.3.4 plan is archived under `../completed/pre-tz-adversarial-edge-hardening.md` and must not act as a competing stop condition.
 
-Fresh agents should follow the read order in `AGENTS.md` and should not ingest historical plans unless a current regression or rationale question requires them.
+Fresh agents follow the read order in `AGENTS.md`, inspect exact `main` before coding, start every v0.3.5 slice from a falsifiable hypothesis/measurement, and use the independent skeptical closure rule in `docs/COMPLETION_POLICY.md` before any completion claim.

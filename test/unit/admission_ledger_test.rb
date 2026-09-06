@@ -67,6 +67,10 @@ class AdmissionLedgerTest < Minitest::Test
       )
     end
     assert_raises(ArgumentError) do
+      ledger = RubyRouting::State::AdmissionLedger.new(clock: TestSupport::ControlledClock.new)
+      ledger.capacity_snapshot("A", budget: Object.new)
+    end
+    assert_raises(ArgumentError) do
       RubyRouting::State::ThroughputSnapshot.new(provider_id: " ", budget: nil, consumed_at: [])
     end
     assert_raises(ArgumentError) do
@@ -91,6 +95,35 @@ class AdmissionLedgerTest < Minitest::Test
     assert_raises(ArgumentError) do
       ledger.restore_throughput!("A", Time.at(1), consumed_monotonic_at: 0.5)
     end
+  end
+
+  def test_capacity_release_underflow_does_not_mutate_usage
+    ledger = RubyRouting::State::AdmissionLedger.new(clock: TestSupport::ControlledClock.new)
+    reserved = RubyRouting::Money.new(100, "RUB")
+    capacity = RubyRouting::CapacityBudget.new(max_slots: 2, max_amount_minor: 200, currency: "RUB")
+
+    ledger.restore_capacity_reservation!("A", reserved)
+
+    assert_raises(ArgumentError) do
+      ledger.release_capacity!("A", RubyRouting::Money.new(1, "USD"))
+    end
+    assert_equal 1, ledger.capacity_snapshot("A", budget: capacity).used_slots
+    assert_equal 100, ledger.capacity_snapshot("A", budget: capacity).used_amount_minor
+
+    assert_raises(ArgumentError) do
+      ledger.release_capacity!("A", RubyRouting::Money.new(101, "RUB"))
+    end
+    assert_equal 1, ledger.capacity_snapshot("A", budget: capacity).used_slots
+    assert_equal 100, ledger.capacity_snapshot("A", budget: capacity).used_amount_minor
+
+    ledger.release_capacity!("A", reserved)
+    snapshot = ledger.capacity_snapshot("A", budget: capacity)
+    assert_equal 0, snapshot.used_slots
+    assert_equal 0, snapshot.used_amount_minor
+
+    assert_raises(ArgumentError) { ledger.release_capacity!("A", reserved) }
+    assert_equal 0, ledger.capacity_snapshot("A", budget: capacity).used_slots
+    assert_equal 0, ledger.capacity_snapshot("A", budget: capacity).used_amount_minor
   end
 
   def test_capacity_trace_rejects_inexact_supplied_monotonic_time

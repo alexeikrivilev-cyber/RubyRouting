@@ -66,6 +66,58 @@ class RoutingContextTest < Minitest::Test
     end
   end
 
+  def test_malformed_routing_context_shapes_fail_closed
+    assert RubyRouting::RoutingContext.from(nil).empty?
+    [false, true, 7, [], Object.new].each do |malformed|
+      assert_raises(ArgumentError) { RubyRouting::RoutingContext.from(malformed) }
+      assert_raises(ArgumentError) do
+        RubyRouting::PayoutIntent.new(
+          id: "malformed-context-#{malformed.class}",
+          money: RubyRouting::Money.new(1, "RUB"),
+          context: malformed
+        )
+      end
+    end
+  end
+
+  def test_false_explicit_routing_context_is_not_treated_as_absent
+    assert_raises(ArgumentError) do
+      RubyRouting::PayoutIntent.new(
+        id: "false-routing-context",
+        money: RubyRouting::Money.new(1, "RUB"),
+        routing_context: false
+      )
+    end
+  end
+
+  def test_explicit_canonical_routing_context_rejects_unknown_keys
+    assert_raises(ArgumentError) do
+      RubyRouting::RoutingContext.from({ payment_methd: "card" })
+    end
+    assert_raises(ArgumentError) do
+      RubyRouting::PayoutIntent.new(
+        id: "unknown-routing-context-key",
+        money: RubyRouting::Money.new(1, "RUB"),
+        routing_context: { payment_methd: "card" }
+      )
+    end
+
+    assert_raises(ArgumentError) do
+      RubyRouting::RoutingContext.from({ 7 => "card" }, strict: true)
+    end
+  end
+
+  def test_raw_context_may_keep_provider_metadata_keys
+    intent = RubyRouting::PayoutIntent.new(
+      id: "raw-provider-metadata",
+      money: RubyRouting::Money.new(1, "RUB"),
+      context: { provider_metadata: { payment_methd: "card" } }
+    )
+
+    assert_empty intent.routing_context.to_h[:labels]
+    assert_equal({ provider_metadata: { payment_methd: "card" } }, intent.context)
+  end
+
   def test_policy_provider_and_quality_use_the_same_canonical_labels
     intent = RubyRouting::PayoutIntent.new(
       id: "routing-context-consumers",

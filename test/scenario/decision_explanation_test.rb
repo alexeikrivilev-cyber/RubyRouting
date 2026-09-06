@@ -35,6 +35,7 @@ class DecisionExplanationTest < Minitest::Test
     explanation = service.queries.explanation(intent.id)
     entry = explanation.decisions.fetch(0)
     assert_equal :success, result.status
+    assert_equal 1, entry.configuration_revision
     assert_equal "explanation-policy", entry.policy.fetch(:id)
     assert_equal ["A"], entry.opportunities.fetch(:provider_ids)
     assert_equal ["A"], entry.opportunities.fetch(:feasible_provider_ids)

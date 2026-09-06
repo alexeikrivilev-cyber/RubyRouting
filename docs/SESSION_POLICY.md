@@ -1,82 +1,75 @@
 # Long-Session Goal Mode Policy
 
-Current Version Goal: **v0.3.2 — Semantic Control Plane & Recovery Readiness**.
+Current Version Goal: **v0.3.4 — Pre-TZ Adversarial Case Fidelity & Edge Hardening — ACTIVE (REOPENED)**.
 
-A long Goal Mode session continues until the current Version Goal is legitimately complete, the authoritative TZ arrives and forces reconciliation mode, or every remaining required path is genuinely externally blocked.
+A long Goal Mode session continues until the current session Goal and required verification are satisfied, the authoritative TZ forces reconciliation mode, or every remaining mandatory path is genuinely externally blocked.
 
 ## Continuous execution rule
 
 Repeat:
 
-`orient -> inspect actual code -> choose highest-value unblocked slice -> establish acceptance -> implement -> verify -> skeptical review -> update plan/backlog -> discover next gap -> continue`
+`orient -> inspect exact code -> choose highest-risk hypothesis -> deterministic reproduce/falsify -> implement minimal fix if needed -> focused verify -> broad verify -> skeptical adjacent review -> update plan/backlog -> continue`
 
-Do not stop after a file, issue, commit, milestone, phase, refactor, green suite, benchmark or demo.
+Do not stop after a file, test, commit, phase, green suite or one closed hypothesis.
 
-## What is not a blocker
+## Current session priority
 
-Do not stop for:
+The next coding session has one P0 Goal:
 
-- missing official TZ;
-- failing tests;
-- difficult bugs/refactors;
-- a reversible design choice;
-- dependency selection that can be evaluated locally;
-- completion of the original checklist;
-- green CI;
-- uncertainty resolvable through repository/code/tests/research;
-- one blocked subtask while independent current-version work remains.
+**Prove and enforce single-live-provider-interaction ownership for one committed recovery operation across concurrent workers and concurrent duplicate/stale observations, without weakening UNKNOWN/fallback/restart safety.**
 
-## Current priority discipline
+Order:
 
-Prefer work in this order unless actual dependencies prove otherwise:
+1. deterministic blocked `resolve` + duplicate observation + second `resume` reproducer;
+2. equivalent idempotent retry/stale-observation cases;
+3. minimal invocation-owned token/generation fix only if reproduced;
+4. adapter-failure/completion/restart regressions;
+5. focused concurrency/recovery/fault/restart verification;
+6. full test/property/model/concurrency/fault matrix;
+7. fresh skeptical review of the changed token lifecycle;
+8. documentation/evidence reconciliation;
+9. `VERSION_CANDIDATE` only if no material P0/P1 remains.
 
-1. preserve financial/economic safety;
-2. canonical typed route context;
-3. provider route compatibility and deterministic policy resolution;
-4. recovery legality plus due-time scheduling;
-5. active configuration versus pinned historical semantics;
-6. route-aware/time-stale deterministic quality and fast-health telemetry;
-7. one prepared-evaluation/live-restore semantic source;
-8. admission semantic clarity;
-9. dimension-safe analytics/configuration/due-work product queries;
-10. deep verification and exact-revision closure;
-11. demo polish only after semantic acceptance is green.
+Do not add broad speculative features while this P0 is unresolved.
 
-Do not add broad new features while a higher-priority semantic layer is inconsistent.
+## Evidence-first rule
+
+A backlog item closes only when the adversarial test either falsifies current behavior and the fix is verified, or proves the current implementation already satisfies the requirement. Do not manufacture production changes for a falsified hypothesis.
 
 ## After every verified slice
 
-1. record current evidence;
-2. inspect actual code for new coupling/gaps;
-3. reconcile `docs/PRE_TZ_BACKLOG.md` and the active ExecPlan;
+1. record exact evidence and revision;
+2. inspect adjacent production paths for newly exposed coupling;
+3. reconcile backlog/ExecPlan/decisions;
 4. run broader risk-appropriate verification;
-5. keep only a small set of rolling next actions;
-6. select the next required slice and continue without asking for confirmation when it is derivable.
+5. continue to the next requirement without routine confirmation.
 
-If all required phases look green, enter `VERSION_CANDIDATE` and execute `docs/COMPLETION_POLICY.md`; do not stop at the checklist.
+## Mandatory candidate stage
+
+When all known P0/P1 appear green, set `VERSION_CANDIDATE`, not complete.
+
+Run the independent skeptical protocol against the changed implementation. Specifically challenge interaction token ownership/release, duplicate recovery workers, restart, UNKNOWN/fallback, stale observations, config crash, analytics/cache parity and exact-case composition.
+
+Any material locally solvable finding returns v0.3.4 to ACTIVE, even after an earlier closure publication.
+
+## What is not a blocker
+
+Do not stop for missing official TZ, failing tests, difficult bugs, reversible design choices, green CI, one blocked subtask while independent work remains, or the need to reopen a phase after new evidence.
 
 ## Genuine external blocker
 
-A blocker is external only if:
-
-1. a required capability depends on unavailable authoritative information/access/service;
-2. ordinary engineering or reversible generic configuration cannot resolve it safely;
-3. continuing would invent an incompatible external contract;
-4. all independent required work is exhausted;
-5. the blocker and affected exit criterion are documented precisely.
-
-If the authoritative TZ arrives, that is not a blocker: switch immediately to `docs/TZ_RECONCILIATION.md` and continue under the new authority.
+A blocker is external only if a mandatory capability depends on unavailable authoritative information/access/service, ordinary engineering cannot resolve it safely, proceeding would invent an incompatible contract, all independent mandatory work is exhausted, and the exact blocker is documented.
 
 ## Anti-loop
 
-- after two similar failed approaches, change tactic;
+- after two similar failed approaches, change tactic/hypothesis;
 - after three materially different failed approaches, reduce to a minimal reproducer and re-plan;
 - never repeatedly patch symptoms without revisiting the semantic model;
 - do not replace required product work with aesthetic cleanup;
-- if one path is blocked, move to another independent current-version slice.
+- if one path is blocked, move to another independent required slice.
 
 ## Status discipline
 
 Use `SLICE_IMPLEMENTED`, `SLICE_VERIFIED`, `PHASE_VERIFIED`, `VERSION_CANDIDATE`, `VERSION_COMPLETE`, `EXTERNALLY_BLOCKED`.
 
-The phrase “wait for TZ” is invalid while SPEC-006 contains locally solvable required work.
+`VERSION_COMPLETE` is forbidden while any material locally solvable finding remains or active normative docs disagree.

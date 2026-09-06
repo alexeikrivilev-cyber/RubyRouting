@@ -9,6 +9,7 @@ module RubyRouting
       Entry = Data.define(
         :sequence,
         :evaluation_sequence,
+        :configuration_revision,
         :policy,
         :opportunities,
         :admission,
@@ -17,11 +18,12 @@ module RubyRouting
         :decision,
         :recovery
       ) do
-        def initialize(sequence:, evaluation_sequence:, policy:, opportunities:, admission:,
+        def initialize(sequence:, evaluation_sequence:, configuration_revision:, policy:, opportunities:, admission:,
                        allocation:, optimization:, decision:, recovery:)
           super(
             sequence: sequence,
             evaluation_sequence: evaluation_sequence,
+            configuration_revision: configuration_revision,
             policy: RubyRouting::ImmutableData.deep_freeze(policy),
             opportunities: RubyRouting::ImmutableData.deep_freeze(opportunities),
             admission: RubyRouting::ImmutableData.deep_freeze(admission),
@@ -36,6 +38,7 @@ module RubyRouting
           {
             sequence: sequence,
             evaluation_sequence: evaluation_sequence,
+            configuration_revision: configuration_revision,
             policy: policy,
             opportunities: opportunities,
             admission: admission,
@@ -180,6 +183,11 @@ module RubyRouting
           Entry.new(
             sequence: fact.sequence,
             evaluation_sequence: evaluation&.sequence,
+            configuration_revision: if decision_payload.key?(:configuration_revision)
+              decision_payload[:configuration_revision]
+            else
+              evaluation_payload[:configuration_revision]
+            end,
             policy: {
               id: decision_payload[:policy_id] || evaluation_payload[:policy_id],
               epoch: decision_payload[:policy_epoch] || evaluation_payload[:policy_epoch],

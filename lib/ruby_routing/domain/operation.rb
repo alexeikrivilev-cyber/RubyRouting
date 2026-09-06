@@ -57,6 +57,10 @@ module RubyRouting
     private
 
     def normalize_id(value, label)
+      unless value.is_a?(String) || value.is_a?(Symbol)
+        raise ArgumentError, "#{label} must be a non-empty String or Symbol"
+      end
+
       normalized = value.to_s.strip
       raise ArgumentError, "#{label} must be non-empty" if normalized.empty?
 
@@ -162,8 +166,12 @@ module RubyRouting
 
       @destination = destination
       @context = RubyRouting::ImmutableData.deep_freeze(context)
-      derived_routing_context = RubyRouting::RoutingContext.from(@context)
-      @routing_context = RubyRouting::RoutingContext.from(routing_context || derived_routing_context)
+      derived_routing_context = RubyRouting::RoutingContext.from(@context, strict: false)
+      @routing_context = if routing_context.nil?
+        derived_routing_context
+      else
+        RubyRouting::RoutingContext.from(routing_context, strict: true)
+      end
       unless derived_routing_context.empty? || @routing_context == derived_routing_context
         raise ArgumentError, "routing_context does not match provider operation context"
       end
@@ -238,6 +246,10 @@ module RubyRouting
     private
 
     def normalize_id(value, label)
+      unless value.is_a?(String) || value.is_a?(Symbol)
+        raise ArgumentError, "#{label} must be a non-empty String or Symbol"
+      end
+
       normalized = value.to_s.strip
       raise ArgumentError, "#{label} must be non-empty" if normalized.empty?
 
@@ -260,19 +272,44 @@ module RubyRouting
       unless money.is_a?(RubyRouting::Money)
         raise ArgumentError, "money must be RubyRouting::Money"
       end
+      unless contract.nil? || contract.is_a?(RubyRouting::ProviderOperationContract)
+        raise ArgumentError, "contract must be ProviderOperationContract or nil"
+      end
 
       @money = money
       @idempotency_key = "#{@payout_id}:#{@operation_id}".freeze
-      @payload = payload || RubyRouting::ProviderOperationPayload.new(
-        destination: destination,
-        context: context,
-        routing_context: routing_context,
-        payment_method: payment_method,
-        rail: rail,
-        contract: contract
-      )
-      unless @payload.is_a?(RubyRouting::ProviderOperationPayload)
-        raise ArgumentError, "payload must be ProviderOperationPayload"
+      @payload = if payload.nil?
+        RubyRouting::ProviderOperationPayload.new(
+          destination: destination,
+          context: context,
+          routing_context: routing_context,
+          payment_method: payment_method,
+          rail: rail,
+          contract: contract
+        )
+      else
+        unless destination == {} && context == {} && routing_context.nil? &&
+               payment_method.nil? && rail.nil?
+          raise ArgumentError, "payload cannot be combined with legacy operation fields"
+        end
+        unless payload.is_a?(RubyRouting::ProviderOperationPayload)
+          raise ArgumentError, "payload must be ProviderOperationPayload"
+        end
+        if contract && payload.contract && payload.contract.to_h != contract.to_h
+          raise ArgumentError, "contract does not match supplied payload"
+        end
+        if contract && payload.contract.nil?
+          RubyRouting::ProviderOperationPayload.new(
+            destination: payload.destination,
+            context: payload.context,
+            routing_context: payload.routing_context,
+            payment_method: payload.payment_method,
+            rail: payload.rail,
+            contract: contract
+          )
+        else
+          payload
+        end
       end
       if @payload.contract &&
          (@payload.contract.provider_id != @provider_id ||
@@ -336,6 +373,10 @@ module RubyRouting
     private
 
     def normalize_id(value, label)
+      unless value.is_a?(String) || value.is_a?(Symbol)
+        raise ArgumentError, "#{label} must be a non-empty String or Symbol"
+      end
+
       normalized = value.to_s.strip
       raise ArgumentError, "#{label} must be non-empty" if normalized.empty?
 

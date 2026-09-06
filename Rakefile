@@ -48,4 +48,8 @@ task :history_profile do
   ruby "-Ilib", "benchmark/history_profile.rb"
 end
 
+task :read_path_profile do
+  ruby "-Ilib", "benchmark/read_path_profile.rb"
+end
+
 task default: :test

@@ -100,10 +100,7 @@ module RubyRouting
     end
 
     def normalize_id(value, label)
-      normalized = value.to_s.strip
-      raise ArgumentError, "#{label} must be non-empty" if normalized.empty?
-
-      normalized.freeze
+      RubyRouting::Identity.normalize(value, label)
     end
 
     def normalize(value, allowed, label)
@@ -183,10 +180,7 @@ module RubyRouting
     end
 
     def normalize_id(value, label)
-      normalized = value.to_s.strip
-      raise ArgumentError, "#{label} must be non-empty" if normalized.empty?
-
-      normalized.freeze
+      RubyRouting::Identity.normalize(value, label)
     end
 
     def freeze_nested(value)

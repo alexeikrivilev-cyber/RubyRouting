@@ -13,9 +13,9 @@ module RubyRouting
       @money = money
       @recipient = freeze_nested(recipient)
       @context = freeze_nested(context)
-      derived_routing_context = RubyRouting::RoutingContext.from(@context)
-      if routing_context
-        @routing_context = RubyRouting::RoutingContext.from(routing_context)
+      derived_routing_context = RubyRouting::RoutingContext.from(@context, strict: false)
+      unless routing_context.nil?
+        @routing_context = RubyRouting::RoutingContext.from(routing_context, strict: true)
         unless derived_routing_context.empty? || @routing_context == derived_routing_context
           raise ArgumentError, "routing_context does not match payout context"
         end

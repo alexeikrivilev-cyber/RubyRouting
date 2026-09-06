@@ -142,29 +142,14 @@ module RubyRouting
           runtime_feasibility = prepared.runtime_feasibility
         end
 
-        candidates = eligibility.feasible_provider_ids - attempted_provider_ids
-
-        allocation = if payout_state.attempt_count.positive?
-          # Recovery has its own legal candidate boundary, then intentionally
-          # reuses the canonical primary allocation authority. This does not
-          # advance the primary ledger; commit role controls that boundary.
-          RubyRouting::Routing::RecoverySelection.choose(
-            policy: policy,
-            candidates: eligibility.feasible_provider_ids,
-            attempted_provider_ids: attempted_provider_ids,
-            snapshot: allocation_snapshot,
-            incoming_measure: policy.measure_for(intent.money),
-            accounting_provider_ids: eligibility.functional_provider_ids
-          )
-        else
-          RubyRouting::Routing::Allocation.choose(
-            policy: policy,
-            candidates: candidates,
-            snapshot: allocation_snapshot,
-            incoming_measure: policy.measure_for(intent.money),
-            accounting_provider_ids: eligibility.functional_provider_ids
-          )
-        end
+        allocation = RubyRouting::Routing::AllocationAuthority.choose(
+          policy: policy,
+          candidates: eligibility.feasible_provider_ids,
+          attempted_provider_ids: attempted_provider_ids,
+          snapshot: allocation_snapshot,
+          incoming_measure: policy.measure_for(intent.money),
+          accounting_provider_ids: eligibility.functional_provider_ids
+        )
         if allocation.no_route?
           deviation = no_route_deviation(
             eligibility: eligibility,
@@ -321,10 +306,7 @@ module RubyRouting
 
       def normalize_provider_ids(provider_ids, label)
         RubyRouting::Collection.to_array(provider_ids, label).map do |provider_id|
-          normalized = provider_id.to_s.strip
-          raise ArgumentError, "provider id must be non-empty" if normalized.empty?
-
-          normalized
+          RubyRouting::Identity.normalize(provider_id, "provider id")
         end.uniq.sort
       end
       private_class_method :normalize_provider_ids

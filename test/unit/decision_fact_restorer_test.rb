@@ -26,6 +26,7 @@ class DecisionFactRestorerTest < Minitest::Test
 
   class TraceValidator
     def validate_policy_binding(_state, _payload); end
+    def validate_configuration_revision_binding(_state, _payload); end
     def validate_non_operation_decision(state:, action:, payload:); end
     def validate_assignment_trace(state:, payload:, provider_id:); end
     def validate_assignment(fact:, state:, provider_id:, operation_id:, attempt_id:, role:, measure:, contract:); end

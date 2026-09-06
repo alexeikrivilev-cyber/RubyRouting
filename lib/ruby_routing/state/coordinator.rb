@@ -3,6 +3,8 @@
 module RubyRouting
   module State
     class Coordinator
+      ProviderInteractionToken = Data.define(:payout_id, :operation_id, :generation)
+
       def self.from_facts(facts:, opportunities: [], health_policy: nil, quality_policy: nil, clock: nil, journal: nil)
         new(
           opportunities: opportunities,
@@ -32,6 +34,11 @@ module RubyRouting
         @restored_quality_signal_sources = {}
         @restored_transport_sources = {}
         @pending_health_transitions = {}
+        # Process-local only: durable attempt phase describes crash recovery,
+        # while this marker closes the live interval after token consumption
+        # and before the provider observation is accepted.
+        @provider_interaction_in_flight = {}
+        @provider_interaction_generation = 0
         @policies = {}
         source_facts = facts || (journal.respond_to?(:facts) ? journal.facts : [])
         @fact_store = RubyRouting::State::FactStore.new(journal: journal, facts: source_facts)
@@ -170,7 +177,8 @@ module RubyRouting
 
       # The returned commit is complete before the caller is allowed to invoke
       # a provider. No provider object is called from this method or its lock.
-      def prepare_and_commit_decision(intent:, policy:, available_provider_ids: nil)
+      def prepare_and_commit_decision(intent:, policy:, available_provider_ids: nil, provider_opportunities: nil,
+                                      configuration_revision: nil)
         unless intent.is_a?(RubyRouting::PayoutIntent)
           raise ArgumentError, "intent must be PayoutIntent"
         end
@@ -193,8 +201,16 @@ module RubyRouting
             .uniq
             .freeze
         end
+        normalized_provider_opportunities = normalize_provider_opportunities_for_evaluation(provider_opportunities)
+        normalized_configuration_revision = normalize_configuration_revision(configuration_revision)
 
         atomic_synchronize do
+          effective_provider_opportunities = if normalized_provider_opportunities.nil?
+            nil
+          else
+            validate_provider_configuration_current!(normalized_provider_opportunities)
+            provider_opportunities_with_current_runtime(normalized_provider_opportunities)
+          end
           state = @payouts[intent.id]
           if state
             unless same_intent?(state.intent, intent)
@@ -250,7 +266,8 @@ module RubyRouting
             intent: intent,
             policy: policy,
             payout_state: snapshot_for(state),
-            available_provider_ids: normalized_available_provider_ids
+            available_provider_ids: normalized_available_provider_ids,
+            provider_opportunities: effective_provider_opportunities
           )
           eligibility = evaluation.eligibility
           allocation_exclusions = evaluation.allocation_exclusions
@@ -266,6 +283,7 @@ module RubyRouting
             policy_epoch: policy.epoch,
             policy_scope: policy.scope,
             policy_fingerprint: policy.fingerprint,
+            configuration_revision: normalized_configuration_revision,
             measure_kind: policy.measure,
             currency: policy.currency,
             opportunities: eligibility.opportunity_provider_ids,
@@ -294,7 +312,13 @@ module RubyRouting
               [opportunity.provider_id, opportunity.throughput&.to_h]
             end,
             health: eligibility.opportunities.to_h do |opportunity|
-              [opportunity.provider_id, @health_controller.snapshot(opportunity.provider_id).to_h]
+              [
+                opportunity.provider_id,
+                @health_controller.snapshot(
+                  opportunity.provider_id,
+                  routing_context: state.intent.routing_context
+                ).to_h
+              ]
             end,
             quality: evaluation.quality_snapshots.transform_values(&:to_h),
             ranking: policy.ranking.to_h,
@@ -308,9 +332,23 @@ module RubyRouting
 
           case proposal.action
           when :assign
-            commit_assignment(state, intent, policy, proposal, eligibility, allocation_snapshot)
+            commit_assignment(
+              state,
+              intent,
+              policy,
+              proposal,
+              eligibility,
+              allocation_snapshot,
+              configuration_revision: normalized_configuration_revision
+            )
           when :resolve, :retry_same
-            commit_resolution(state, intent, policy, proposal)
+            commit_resolution(
+              state,
+              intent,
+              policy,
+              proposal,
+              configuration_revision: normalized_configuration_revision
+            )
           else
             append_fact(
               :decision_committed,
@@ -320,6 +358,7 @@ module RubyRouting
               policy_epoch: policy.epoch,
               policy_id: policy.id,
               policy_scope: policy.scope,
+              configuration_revision: normalized_configuration_revision,
               measure_kind: policy.measure,
               currency: policy.currency,
               allocation_key: allocation_key,
@@ -381,7 +420,7 @@ module RubyRouting
             action: decision_commit.proposal.action,
             started_at: current_time
           )
-          snapshot_for(state)
+          mark_provider_interaction_in_flight!(payout_id, operation_id)
         end
       end
 
@@ -389,24 +428,30 @@ module RubyRouting
       # The original operation identity is reused; no new economic ownership
       # or allocation is created. A dispatch that was already started before
       # the crash is resumed through status lookup or idempotent retry only.
-      def resume_operation(payout_id)
+      def resume_operation(payout_id, provider_opportunities: nil, configuration_revision: nil)
         canonical_payout_id = normalized_payout_id(payout_id)
+        normalized_provider_opportunities = normalize_provider_opportunities_for_evaluation(provider_opportunities)
+        normalized_configuration_revision = normalize_configuration_revision(configuration_revision)
         atomic_synchronize do
+          validate_provider_configuration_current!(normalized_provider_opportunities) unless normalized_provider_opportunities.nil?
           state = @payouts.fetch(canonical_payout_id) do
             raise ArgumentError, "unknown payout"
           end
+          ownership = state.ownership
+          return nil unless ownership
+          attempt = state.operations.fetch(ownership.operation_id)
+          return nil if provider_interaction_in_flight?(canonical_payout_id, attempt.operation_id)
+
           # Resume is itself a state-changing entry point. Expiry must be
           # evaluated before rebuilding a dispatch proposal, otherwise a
           # process restart can bypass the operation contract TTL/deadline.
           expire_unresolved_operation!(state)
-          ownership = state.ownership
-          return nil unless ownership
+
           return nil if state.recovery_schedule && !state.recovery_schedule.due?(
             as_of: current_time,
             as_of_monotonic: current_monotonic
           )
 
-          attempt = state.operations.fetch(ownership.operation_id)
           pending = state.dispatch_pending[attempt.operation_id]
           proposal = restart_proposal_for(state, attempt, pending)
           return nil unless proposal
@@ -421,6 +466,7 @@ module RubyRouting
               attempt_id: proposal.attempt_id,
               role: proposal.role,
               policy_epoch: proposal.policy_epoch,
+              configuration_revision: normalized_configuration_revision,
               reasons: proposal.reasons,
               reason_codes: proposal.reason_codes
             )
@@ -482,11 +528,21 @@ module RubyRouting
             action: decision_commit.proposal.action,
             started_at: current_time
           )
-          true
+          mark_provider_interaction_in_flight!(payout_id, operation_id)
         end
       end
 
-      def apply_observation(observation)
+      # An adapter exception is not a durable provider observation. Release
+      # only the process-local guard so the pinned operation can recover by
+      # its existing status-lookup/idempotent-retry contract.
+      def provider_interaction_failed(interaction_token:)
+        synchronize do
+          release_provider_interaction!(interaction_token)
+        end
+        nil
+      end
+
+      def apply_observation(observation, interaction_token: nil)
         unless observation.is_a?(RubyRouting::ProviderObservation)
           raise ArgumentError, "observation must be ProviderObservation"
         end
@@ -501,7 +557,6 @@ module RubyRouting
           unless attempt.provider_id == observation.provider_id && attempt.attempt_id == observation.attempt_id
             raise ArgumentError, "observation operation linkage does not match"
           end
-
           observation_decision = @observation_ledger.observe(
             seen_observations: state.seen_observations,
             current_operation_id: state.ownership&.operation_id,
@@ -509,6 +564,7 @@ module RubyRouting
             observation: observation
           )
           if observation_decision.duplicate?
+            release_provider_interaction!(interaction_token)
             return ObservationApplication.new(
               payout: snapshot_for(state),
               next_action: next_action_for(state),
@@ -558,12 +614,14 @@ module RubyRouting
           if conflict
             record_conflict(state, attempt, observation)
           end
-          record_health_from_observation(observation)
+          record_health_from_observation(observation, routing_context: state.intent.routing_context)
           record_quality_from_observation(
             observation,
             context: state.intent.routing_context,
+            currency: state.intent.money.currency,
             observed_at: observed_at
           ) if applies
+          release_provider_interaction!(interaction_token)
           return ObservationApplication.new(
             payout: snapshot_for(state),
             next_action: next_action_for(state),
@@ -600,7 +658,8 @@ module RubyRouting
 
         normalized_as_of = as_of.utc.freeze
         synchronize do
-          @payouts.values.sort_by { |state| state.intent.id }.each_with_object([]) do |state, work|
+          work = []
+          @payouts.each_value do |state|
             if state.ownership && operation_contract_expired_at?(state, normalized_as_of)
               ownership = state.ownership
               work << RubyRouting::RecoveryWorkItem.new(
@@ -637,7 +696,9 @@ module RubyRouting
                 status: state.status
               )
             end
-          end.freeze
+          end
+          work.sort_by!(&:payout_id)
+          work.freeze
         end
       end
 
@@ -647,6 +708,7 @@ module RubyRouting
         canonical_payout_id = normalized_payout_id(payout_id)
         canonical_provider_id = normalized_provider_id(provider_id)
         canonical_operation_id = normalized_operation_id(operation_id)
+        canonical_reversal_id = RubyRouting::Identity.normalize(reversal_id, "reversal id")
         atomic_synchronize do
           state = @payouts.fetch(canonical_payout_id) do
             raise ArgumentError, "reversal references unknown payout"
@@ -666,8 +728,7 @@ module RubyRouting
             raise ArgumentError, "reversal currency does not match payout"
           end
 
-          normalized_reversal_id = reversal_id.to_s.strip
-          existing = state.reversals.find { |reversal| reversal.reversal_id == normalized_reversal_id }
+          existing = state.reversals.find { |reversal| reversal.reversal_id == canonical_reversal_id }
           if existing
             unless existing.provider_id == canonical_provider_id &&
                    existing.operation_id == canonical_operation_id &&
@@ -760,28 +821,39 @@ module RubyRouting
         end
       end
 
-      def health_snapshot(provider_id)
-        synchronize { @health_controller.snapshot(provider_id) }
+      def health_snapshot(provider_id, routing_context: nil)
+        synchronize do
+          @health_controller.snapshot(provider_id, routing_context: routing_context)
+        end
       end
 
-      def health_projection
-        RubyRouting::Projections::Replay.health(facts)
+      def health_projection(routing_context: nil)
+        RubyRouting::Projections::Replay.health(facts, routing_context: routing_context)
       end
 
-      def quality_snapshot(provider_id, context: nil, context_key: nil, routing_context: nil, as_of: current_time)
+      def quality_snapshot(provider_id, context: nil, context_key: nil, routing_context: nil, currency: nil, as_of: current_time)
         synchronize do
           @quality_controller.snapshot(
             provider_id,
             context: context,
             context_key: context_key,
             routing_context: routing_context,
+            currency: currency,
             as_of: as_of
           )
         end
       end
 
-      def quality_projection
-        RubyRouting::Projections::Replay.quality(facts)
+      def quality_projection(as_of: current_time, context: nil, context_key: nil,
+                            routing_context: nil, currency: nil)
+        RubyRouting::Projections::Replay.quality(
+          facts,
+          as_of: as_of,
+          context: context,
+          context_key: context_key,
+          routing_context: routing_context,
+          currency: currency
+        )
       end
 
       def record_health_signal(provider_id:, signal:, attribution: :unknown)
@@ -901,6 +973,32 @@ module RubyRouting
         )
       end
 
+      def provider_interaction_in_flight?(payout_id, operation_id)
+        @provider_interaction_in_flight.key?([payout_id, operation_id])
+      end
+
+      def mark_provider_interaction_in_flight!(payout_id, operation_id)
+        @provider_interaction_generation += 1
+        token = ProviderInteractionToken.new(
+          payout_id: payout_id,
+          operation_id: operation_id,
+          generation: @provider_interaction_generation
+        )
+        @provider_interaction_in_flight[[payout_id, operation_id]] = token
+        token
+      end
+
+      def release_provider_interaction!(interaction_token)
+        return false unless interaction_token.is_a?(ProviderInteractionToken)
+
+        interaction_key = [interaction_token.payout_id, interaction_token.operation_id]
+        current = @provider_interaction_in_flight[interaction_key]
+        return false unless current&.equal?(interaction_token)
+
+        @provider_interaction_in_flight.delete(interaction_key)
+        true
+      end
+
       def restart_reason_for(action, pending)
         return "resumed committed provider operation" if action == :assign
         return "resumed pending provider resolution" if pending == :resolution
@@ -966,6 +1064,14 @@ module RubyRouting
             "fact #{fact.sequence} payload must be a Hash"
         end
 
+        if payload.key?(:configuration_revision)
+          revision = payload[:configuration_revision]
+          unless revision.nil? || (revision.is_a?(Integer) && revision >= 0)
+            raise RubyRouting::State::DurableCorruptionError,
+              "fact #{fact.sequence} configuration revision must be a non-negative Integer"
+          end
+        end
+
         if payload.key?(:provider_id)
           provider_id = payload[:provider_id]
           unless provider_id.nil?
@@ -993,7 +1099,7 @@ module RubyRouting
       end
 
       def payout_state_for!(payout_id)
-        @payouts.fetch(payout_id.to_s) do
+        @payouts.fetch(RubyRouting::Identity.normalize(payout_id, "payout id")) do
           raise RubyRouting::State::DurableCorruptionError, "fact references unknown payout #{payout_id}"
         end
       end
@@ -1083,8 +1189,11 @@ module RubyRouting
 
       def validate_health_transition_order!(fact)
         return if @pending_health_transitions.empty?
+        routing_context = canonical_health_context(fact.payload[:routing_context])
+        transition_key = routing_context ?
+          [fact.payload[:provider_id], routing_context.to_h].freeze : fact.payload[:provider_id]
         return if fact.type == :health_state_changed &&
-          @pending_health_transitions.key?(fact.payload[:provider_id])
+          @pending_health_transitions.key?(transition_key)
 
         raise RubyRouting::State::DurableCorruptionError,
           "health state transition is missing after preceding signal"
@@ -1185,7 +1294,7 @@ module RubyRouting
 
         values = RubyRouting::HashKeys.symbolize(
           payload,
-          %i[minimum_samples prior_successes prior_failures evidence_window max_evidence_age_seconds],
+          %i[minimum_samples prior_successes prior_failures evidence_window max_evidence_age_seconds route_minimum_samples],
           "quality policy"
         )
         RubyRouting::Routing::QualityPolicy.new(**values)
@@ -1350,7 +1459,8 @@ module RubyRouting
               raise RubyRouting::State::DurableCorruptionError,
                 "recovery schedule references missing policy"
             end
-          end
+          end,
+          monotonic_reference: ->(value) { monotonic_reference_for(value) }
         )
       end
 
@@ -1547,24 +1657,61 @@ module RubyRouting
       end
 
       def normalized_provider_id(provider_id)
-        normalized = provider_id.to_s.strip
-        raise ArgumentError, "provider id must be non-empty" if normalized.empty?
-
-        normalized
+        RubyRouting::Identity.normalize(provider_id, "provider id")
       end
 
       def normalized_payout_id(payout_id)
-        normalized = payout_id.to_s.strip
-        raise ArgumentError, "payout id must be non-empty" if normalized.empty?
-
-        normalized
+        RubyRouting::Identity.normalize(payout_id, "payout id")
       end
 
       def normalized_operation_id(operation_id)
-        normalized = operation_id.to_s.strip
-        raise ArgumentError, "operation id must be non-empty" if normalized.empty?
+        RubyRouting::Identity.normalize(operation_id, "operation id")
+      end
 
-        normalized
+      def canonical_health_context(value)
+        RubyRouting::Routing::HealthController.canonical_routing_context(value)
+      end
+
+      def normalize_provider_opportunities_for_evaluation(opportunities)
+        return nil if opportunities.nil?
+
+        values = RubyRouting::Collection.to_array(opportunities, "provider opportunities")
+        unless values.all? { |opportunity| opportunity.is_a?(RubyRouting::ProviderOpportunity) }
+          raise ArgumentError, "provider opportunities must contain ProviderOpportunity values"
+        end
+
+        ids = values.map(&:provider_id)
+        unless ids.uniq.length == ids.length
+          raise ArgumentError, "provider opportunities must have unique ids"
+        end
+
+        values.sort_by(&:provider_id).freeze
+      end
+
+      def validate_provider_configuration_current!(opportunities)
+        return if RubyRouting::Application::RoutingConfiguration.same_provider_definition_set?(
+          @provider_catalog.current,
+          opportunities
+        )
+
+        raise RubyRouting::ConfigurationDriftError,
+          "active provider configuration does not match the Coordinator catalog"
+      end
+
+      def provider_opportunities_with_current_runtime(opportunities)
+        current_by_id = @provider_catalog.current.to_h do |opportunity|
+          [opportunity.provider_id, opportunity]
+        end
+        opportunities.map do |opportunity|
+          current = current_by_id.fetch(opportunity.provider_id)
+          opportunity.with_runtime(
+            available: current.available,
+            capacity_available: current.capacity_available,
+            enabled: current.enabled,
+            health_available: current.health_available,
+            throughput_available: current.throughput_available
+          )
+        end.sort_by(&:provider_id).freeze
       end
 
       def policy_measure_exclusions(eligibility:, policy:, incoming_measure:)
@@ -1608,6 +1755,10 @@ module RubyRouting
             "#{key} must be an exact monotonic value"
         end
 
+        wall_key = "#{key.to_s.delete_suffix("_monotonic_at")}_at".to_sym
+        wall_time = payload[wall_key]
+        return monotonic_reference_for(wall_time) if wall_time.is_a?(Time)
+
         value
       end
 
@@ -1624,19 +1775,36 @@ module RubyRouting
         durable_operation_identity_value!(payload, key)
       end
 
-      def commit_assignment(state, intent, policy, proposal, eligibility, allocation_snapshot)
+      def normalize_configuration_revision(value)
+        return nil if value.nil?
+        unless value.is_a?(Integer) && value >= 0
+          raise ArgumentError, "configuration revision must be a non-negative Integer"
+        end
+
+        value
+      end
+
+      def commit_assignment(state, intent, policy, proposal, eligibility, allocation_snapshot,
+                            configuration_revision: nil)
         @operation_committer.commit_assignment(
           state,
           intent,
           policy,
           proposal,
           eligibility,
-          allocation_snapshot
+          allocation_snapshot,
+          configuration_revision: configuration_revision
         )
       end
 
-      def commit_resolution(state, intent, policy, proposal)
-        @operation_committer.commit_resolution(state, intent, policy, proposal)
+      def commit_resolution(state, intent, policy, proposal, configuration_revision: nil)
+        @operation_committer.commit_resolution(
+          state,
+          intent,
+          policy,
+          proposal,
+          configuration_revision: configuration_revision
+        )
       end
 
       def apply_current_outcome(state, attempt, outcome)
@@ -1839,7 +2007,7 @@ module RubyRouting
         )
       end
 
-      def record_health_from_observation(observation)
+      def record_health_from_observation(observation, routing_context: nil)
         outcome = observation.outcome
         # A transport classification is provider operational evidence even
         # when the normalized payout attribution remains unknown. Health may
@@ -1868,7 +2036,8 @@ module RubyRouting
           signal: signal,
           attribution: attribution,
           source: observation.observation_id,
-          source_payout_id: observation.payout_id
+          source_payout_id: observation.payout_id,
+          routing_context: routing_context
         )
       end
 
@@ -1879,19 +2048,21 @@ module RubyRouting
           observation.outcome.attribution == :provider
       end
 
-      def record_quality_from_observation(observation, context: nil, observed_at: nil)
+      def record_quality_from_observation(observation, context: nil, currency: nil, observed_at: nil)
         @quality_controller.observe(
           provider_id: observation.provider_id,
           outcome: observation.outcome,
           context: context,
           routing_context: context,
+          currency: currency,
           observed_at: observed_at
         )
         return unless quality_evidence_outcome?(observation.outcome)
         after = @quality_controller.evidence_snapshot(
           observation.provider_id,
           context: context,
-          routing_context: context
+          routing_context: context,
+          currency: currency
         )
 
         append_fact(
@@ -1914,6 +2085,7 @@ module RubyRouting
           context_key: after.context_key,
           evidence_scope: after.evidence_scope,
           routing_context: after.routing_context&.to_h,
+          currency: after.currency,
           observed_at: observed_at,
           last_observed_at: after.last_observed_at,
           max_evidence_age_seconds: after.max_evidence_age_seconds
@@ -1925,7 +2097,8 @@ module RubyRouting
           outcome.attribution == :provider && (outcome.success? || outcome.provider_failure?)
       end
 
-      def record_health_signal_locked(provider_id:, signal:, attribution:, source: nil, source_payout_id: nil)
+      def record_health_signal_locked(provider_id:, signal:, attribution:, source: nil, source_payout_id: nil,
+                                      routing_context: nil)
         release_exposure = source.nil?
         provider_id = normalized_provider_id(provider_id)
         normalized_signal = RubyRouting::Enum.normalize(
@@ -1941,15 +2114,16 @@ module RubyRouting
         if source.nil? && !@provider_catalog.key?(provider_id)
           raise ArgumentError, "unknown provider opportunity"
         end
+        canonical_context = canonical_health_context(routing_context)
         before, after = @health_controller.observe(
           provider_id: provider_id,
           signal: normalized_signal,
           attribution: normalized_attribution,
-          release_exposure: release_exposure
+          release_exposure: release_exposure,
+          routing_context: canonical_context
         )
-        append_fact(
-          :health_signal,
-          "system:provider:#{provider_id}",
+        normalized_context = canonical_context || RubyRouting::RoutingContext.new
+        health_payload = {
           provider_id: provider_id.to_s,
           signal: normalized_signal,
           attribution: normalized_attribution,
@@ -1958,14 +2132,24 @@ module RubyRouting
           source_payout_id: source_payout_id,
           release_exposure: release_exposure,
           policy: @health_controller.policy.to_h
+        }
+        health_payload[:routing_context] = normalized_context.to_h unless normalized_context.empty?
+        append_fact(
+          :health_signal,
+          "system:provider:#{provider_id}",
+          **health_payload
         )
         if before.state != after.state
-          append_fact(
-            :health_state_changed,
-            "system:provider:#{provider_id}",
+          transition_payload = {
             provider_id: provider_id.to_s,
             from: before.state,
             to: after.state
+          }
+          transition_payload[:routing_context] = normalized_context.to_h unless normalized_context.empty?
+          append_fact(
+            :health_state_changed,
+            "system:provider:#{provider_id}",
+            **transition_payload
           )
         end
         after

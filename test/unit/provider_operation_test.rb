@@ -85,6 +85,74 @@ class ProviderOperationTest < Minitest::Test
     end
   end
 
+  def test_payload_constructor_preserves_or_rejects_an_explicit_contract
+    contract = RubyRouting::ProviderOperationContract.new(
+      provider_id: "A",
+      status_lookup: true,
+      idempotency_key: "payout:operation"
+    )
+    payload = RubyRouting::ProviderOperationPayload.new(
+      destination: {},
+      context: {}
+    )
+
+    request = RubyRouting::ProviderOperationRequest.new(
+      payout_id: "payout",
+      provider_id: "A",
+      operation_id: "operation",
+      attempt_id: "attempt",
+      money: RubyRouting::Money.new(1, "RUB"),
+      payload: payload,
+      contract: contract
+    )
+
+    assert_equal contract.to_h, request.contract.to_h
+    refute_same payload, request.payload
+
+    conflicting = RubyRouting::ProviderOperationContract.new(
+      provider_id: "A",
+      idempotency_key: "payout:operation",
+      version: "other"
+    )
+    payload_with_contract = RubyRouting::ProviderOperationPayload.new(
+      destination: {},
+      context: {},
+      contract: contract
+    )
+
+    assert_raises(ArgumentError) do
+      RubyRouting::ProviderOperationRequest.new(
+        payout_id: "payout",
+        provider_id: "A",
+        operation_id: "operation",
+        attempt_id: "attempt",
+        money: RubyRouting::Money.new(1, "RUB"),
+        payload: payload_with_contract,
+        contract: conflicting
+      )
+    end
+  end
+
+  def test_payload_constructor_rejects_duplicate_legacy_route_fields
+    payload = RubyRouting::ProviderOperationPayload.new(
+      destination: {},
+      context: {},
+      routing_context: { payment_method: "card" }
+    )
+
+    assert_raises(ArgumentError) do
+      RubyRouting::ProviderOperationRequest.new(
+        payout_id: "payout",
+        provider_id: "A",
+        operation_id: "operation",
+        attempt_id: "attempt",
+        money: RubyRouting::Money.new(1, "RUB"),
+        payload: payload,
+        routing_context: { payment_method: "bank_transfer" }
+      )
+    end
+  end
+
   def test_direct_payload_rejects_a_second_route_context_interpretation
     assert_raises(ArgumentError) do
       RubyRouting::ProviderOperationPayload.new(
@@ -100,6 +168,16 @@ class ProviderOperationTest < Minitest::Test
         context: {},
         routing_context: { payment_method: "card" },
         payment_method: "bank_transfer"
+      )
+    end
+  end
+
+  def test_direct_payload_rejects_unknown_explicit_route_keys
+    assert_raises(ArgumentError) do
+      RubyRouting::ProviderOperationPayload.new(
+        destination: {},
+        context: {},
+        routing_context: { payment_methd: "card" }
       )
     end
   end
@@ -132,5 +210,47 @@ class ProviderOperationTest < Minitest::Test
     assert_nil request.contract
     assert_equal({}, request.destination.data)
     assert_equal({}, request.context)
+  end
+
+  def test_executable_operation_identities_reject_non_scalar_values
+    invalid_values = [[], Object.new]
+    invalid_values.each do |invalid|
+      assert_raises(ArgumentError) do
+        RubyRouting::ProviderOperationContract.new(
+          provider_id: invalid,
+          idempotency_key: "payout:operation"
+        )
+      end
+      assert_raises(ArgumentError) do
+        RubyRouting::ProviderOperationContract.new(
+          provider_id: "A",
+          idempotency_key: invalid
+        )
+      end
+      assert_raises(ArgumentError) do
+        RubyRouting::ProviderOperationContract.new(
+          provider_id: "A",
+          idempotency_key: "payout:operation",
+          version: invalid
+        )
+      end
+    end
+
+    request_attributes = {
+      payout_id: "payout",
+      provider_id: "A",
+      operation_id: "operation",
+      attempt_id: "attempt",
+      money: RubyRouting::Money.new(1, "RUB")
+    }
+    %i[payout_id provider_id operation_id attempt_id].each do |field|
+      invalid_values.each do |invalid|
+        assert_raises(ArgumentError, field: field, invalid: invalid) do
+          RubyRouting::ProviderOperationRequest.new(
+            **request_attributes.merge(field => invalid)
+          )
+        end
+      end
+    end
   end
 end

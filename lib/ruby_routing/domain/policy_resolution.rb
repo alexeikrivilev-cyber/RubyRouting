@@ -35,6 +35,10 @@ module RubyRouting
       @status = status
       @policy = policy
       @candidates = candidates.sort_by(&:scope_key).freeze
+      unless scope.is_a?(String) || scope.is_a?(Symbol)
+        raise ArgumentError, "policy resolution scope must be a String or Symbol"
+      end
+
       @scope = scope.to_s.strip.freeze
       raise ArgumentError, "policy resolution scope must be non-empty" if @scope.empty?
       freeze
@@ -69,6 +73,7 @@ module RubyRouting
         epoch: policy.epoch,
         scope: policy.scope,
         fingerprint: policy.fingerprint,
+        currency: policy.currency,
         selector: policy.selector.to_h
       }.freeze
     end
