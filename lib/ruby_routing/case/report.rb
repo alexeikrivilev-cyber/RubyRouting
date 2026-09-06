@@ -284,6 +284,12 @@ module RubyRouting
       def hard_forced?(decision)
         assigned = assignment_attempt(decision)
         return false unless assigned&.selection
+        # Hard-forced attribution belongs to the provider that kept the
+        # assignment.  A rejected/expired primary may have been the only
+        # eligible provider at selection time, but a later fallback (most
+        # notably the terminal provider) must not inherit that cause in the
+        # final-provider report coordinate.
+        return false unless decision.selected_provider == assigned.provider
         return false unless assigned.selection_reason == "only_eligible_provider"
 
         decision.attempts.any?(&:hard_skipped?)

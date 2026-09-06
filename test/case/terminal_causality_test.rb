@@ -73,4 +73,33 @@ class AuthoritativeCaseTerminalCausalityTest < Minitest::Test
     assert_equal 1, report.fetch(:deviation_causes).fetch("zero-provider").fetch(:terminal_fallback_assignments)
     assert_equal 1, report.fetch(:distribution).fetch("zero-provider").fetch(:count)
   end
+
+  def test_terminal_fallback_does_not_inherit_primary_hard_forced_attribution
+    dataset = RubyRouting::Case::Dataset.new(
+      snapshot_at: Time.utc(2026, 7, 30, 8), gateway: "gateway", merchant: "merchant",
+      providers: [
+        provider("a", traffic: 100, priority: 1, banks: ["bank"]),
+        provider("b", traffic: 0, priority: 2, banks: ["other"]),
+        provider("spacepayments", traffic: 0, priority: 99)
+      ],
+      history: [], operations: [operation]
+    )
+    configuration = RubyRouting::Case::CaseConfiguration.new(
+      provider_ids: dataset.providers.map(&:payment_system), weights: { priority: 1 },
+      terminal_provider_id: "spacepayments"
+    )
+    simulator = RubyRouting::Case::DeterministicSimulator.new(
+      outcomes: { ["terminal-probe", "a"] => :rejected }
+    )
+    router = RubyRouting::Case::Router.new(dataset, configuration: configuration, simulator: simulator)
+    decisions = router.run
+    report = RubyRouting::Case::ReportBuilder.new(
+      dataset, router.state, router.traffic, router.configuration, decisions,
+      attempt_ledger: router.attempt_ledger, settlement_ledger: router.settlement_ledger
+    ).call.to_h
+
+    causes = report.fetch(:deviation_causes).fetch("spacepayments")
+    assert_equal 0, causes.fetch(:hard_forced_assignments)
+    assert_equal 1, causes.fetch(:terminal_fallback_assignments)
+  end
 end
