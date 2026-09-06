@@ -1,81 +1,71 @@
 # Completion Policy — no premature done
 
-Current version: **v0.4.2 / SPEC-018 — VERSION_COMPLETE**.
+Current version: **v0.4.3 / SPEC-019 — VERSION_COMPLETE**.
 
-Completed baseline: **v0.4.1 / SPEC-017**.
+Completed compatible baseline: **v0.4.2 / SPEC-018** at opening SHA `277d6b68d568eceb88ece3b3e466987535ff75bd`.
 
-Completion is an evidence claim about the exact hidden-queue submission path and generated artifacts under the authoritative TZ, not feature count, self-consistent validators or green unit tests.
+Completion is an evidence claim about the exact hidden-queue submission path and generated artifacts under the authoritative TZ. Green unit tests, self-consistent replay and shape-valid JSON are not enough.
 
-Stages: `SLICE_IMPLEMENTED -> SLICE_VERIFIED -> VERSION_CANDIDATE -> VERSION_COMPLETE`.
+Stages: `ACTIVE -> SLICE_VERIFIED -> VERSION_CANDIDATE -> independent blind pass -> VERSION_COMPLETE`.
 
-## Mandatory v0.4.2 gates before candidate
+## Mandatory v0.4.3 gates before candidate
 
-1. serialized `routing_report` preserves the TZ base schema while retaining rich additive analytics;
-2. an independently encoded organizer/TZ report validator passes on fresh serialized output;
-3. public organizer decisions validator remains green;
-4. bounded Case eligibility treats only literal `active` status as active;
-5. primary assignment remains exactly once and fallback ranking cannot add a phantom count/volume counterfactual;
-6. an independent fallback ranking regression proves intended primary-vs-fallback semantics;
-7. assignment/attempt/settlement conservation stays exact;
-8. successful selection reasons are concrete and rubric-readable;
-9. canonical preferred amount bands can materially affect a finalization-equivalent conflict without changing hard eligibility;
-10. non-discriminating factors do not claim full causal contribution;
-11. recommendations contain evidence plus a concrete actionable parameter/rule/limit change and have judge-readable string projection;
-12. constrained-under-target feasibility evidence is covered without fabricating infeasibility;
-13. hidden-like deterministic/scale campaigns remain green;
-14. `TZ_REQUIREMENT_MATRIX.md` has no material P0/P1 release row left `PARTIAL/MISSING/CONFLICT`.
+1. organizer base distribution accounting point is supported by authoritative wording or a documented conservative ambiguity decision;
+2. fallback counterexample proves report/decision/accounting semantics are intentional;
+3. independent semantic report oracle recomputes total count, provider set, share_pct, target_pct, projected utilization and period without ReportBuilder expected values;
+4. report shape validator and semantic validator both pass real serialized finalization output;
+5. candidate-addition/removal normalization campaign either demonstrates and fixes a material defect or evidence-closes current normalization with concrete cases;
+6. hidden-queue daily temporal contract is established and current code is correct or fail-closed for cross-day input;
+7. a provider missing preferred amount configuration cannot obtain silent maximum soft preference;
+8. public organizer decisions validator remains green;
+9. assignment/attempt/settlement conservation stays exact;
+10. current matrix has no material P0/P1 PARTIAL/MISSING/CONFLICT.
 
-These gates produce `VERSION_CANDIDATE` only; the exact current release has also passed
-the independent closure gates below.
+Known-scope green gives VERSION_CANDIDATE only.
 
-## Blind skeptical stage
+## Independent blind stage
 
-After candidate, ignore backlog completion and attack actual entrypoints/artifacts:
+After candidate, ignore backlog completion and attack actual code/artifacts again for:
 
-- report base fields/types drift from TZ while rich internal validator stays green;
-- report validator is correlated with `ReportBuilder`;
-- fallback count/volume double-counterfactual;
-- assignment/attempt/settlement denominator mismatch;
-- Case status vocabulary broader than organizer semantics;
-- hard rules become score penalties or are bypassed at terminal/fallback;
-- selected reason says only `selected` despite no concrete rationale;
-- release factor enabled but non-discriminating;
-- equal-value factor claims causal contribution;
-- percentage JSON types/rounding surprise hidden parser;
-- volume target provenance is silently invented;
-- recommendation action does not address its evidence;
-- under-target feasibility is overclaimed/underexplained;
-- public data is overfit;
-- CLI/demo/finalization diverge;
-- hidden-like validation/runtime regresses.
+- builder/semantic-oracle correlation;
+- report distribution disagreement with decisions under fallback;
+- wrong denominator or percentage rounding at small counts;
+- provider-set omissions/extras;
+- target provenance drift;
+- utilization recomputation errors after rejection/fallback;
+- irrelevant-candidate normalization inversion;
+- missing optional factor config acting as positive preference;
+- cross-midnight daily-limit leakage;
+- direct terminal fallback causality gaps;
+- CLI/demo/finalization divergence and public-data overfit.
 
-Any material local P0/P1 returns ACTIVE. The current blind pass found and fixed two
-material local issues: hard-forced routes no longer receive misleading workload-size
-advice, and the independent report validator rejects empty provider projections and
-out-of-range utilization percentages.
+Any material P0/P1 returns ACTIVE.
 
 ## Exact evidence before VERSION_COMPLETE
 
-After final material code change, from a fresh tree run:
+After the final material code change run fresh:
 
 - `bundle check`;
 - `bundle exec rake test`;
-- property/model/concurrency/fault;
-- full case suite;
-- fresh public finalization;
+- property/model/concurrency/fault suites;
+- full Case suite;
+- all SPEC-019 adversarial campaigns;
+- canonical finalization;
 - public organizer decisions validator;
-- independent TZ report contract validator against serialized output;
-- strict in-memory + post-serialization validation;
-- hidden-like scale/determinism/rubric campaigns;
-- clean-checkout finalization with canonical profile;
-- requirement/rubric traceability;
-- exact pushed-HEAD GitHub Actions.
+- independent report shape validator;
+- independent report semantic validator;
+- strict in-memory + serialized validation;
+- clean-checkout finalization;
+- requirement/rubric traceability and docs consistency;
+- exact pushed-HEAD GitHub Actions success.
 
-Do not reuse stale CI or declare completion while exact-head CI is pending. Current
-exact pushed-head Actions is green.
+Never reuse stale CI and never declare completion while exact-head CI is pending.
 
-## Documentation gate
+## Closure evidence
 
-README, AGENTS, AUTHORITY, SPEC-018, completed ExecPlan state, POST_TZ_BACKLOG, TZ
-matrix, current decisions, roadmap/session/plans/workflow/testing and exact
-code/artifacts agree for v0.4.2.
+v0.4.3 completed on exact pushed HEAD
+`13efbeba48f1726b91b71b1677d3541dd4f9f433`. The fresh full matrix, Case and
+adversarial campaigns, canonical and clean-checkout finalization, public and
+independent validators, docs sync and exact-head Actions run `33852436704`
+passed with zero failures/errors. The independent blind stage found and closed
+TZ19-106/107 before the final matrix; no material local P0/P1 remained.

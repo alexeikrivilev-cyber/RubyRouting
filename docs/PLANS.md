@@ -1,36 +1,11 @@
-# Execution Plan Protocol
+# Plans
 
-Current active plan: none. The completed v0.4.2 closure plan is archived at
-`docs/exec-plans/completed/submission-contract-fidelity-scoring-semantics.md`.
+Current version: **v0.4.3 / SPEC-019 — VERSION_COMPLETE**.
 
-v0.4.1 / SPEC-017 and v0.4.0 / SPEC-016 are completed baseline evidence.
+The completed implementation plan is:
 
-## Planning rule
+`docs/exec-plans/completed/adversarial-evidence-contract-semantics.md`
 
-Plan behavior/invariant and external contract before class shape. Reproduce current code/output first. Keep one routing authority and one active plan. Prefer end-to-end submission slices over new abstractions.
+Completed v0.4.2/v0.4.1/v0.4.0 plans are compatible baseline evidence only. Do not create a new plan without a new authoritative goal or execute historical work because it remains in Git.
 
-## v0.4.2 priority
-
-1. TZ report base contract fidelity;
-2. independent report contract validator;
-3. exact active-status semantics;
-4. primary-vs-fallback scoring phase;
-5. selection reason clarity;
-6. amount strategy activation and factor honesty;
-7. recommendation/feasibility quality;
-8. evidence-gated volume/normalization/terminal cleanup;
-9. hidden-like rubric campaign;
-10. candidate -> blind audit -> exact closure.
-
-Every slice states:
-
-- authoritative TZ/rubric relevance;
-- exact opening behavior/reproducer;
-- semantic authority/invariant;
-- entrypoint/artifact affected;
-- independent oracle/validator where possible;
-- focused and adjacent tests;
-- compatibility risk;
-- matrix/backlog update.
-
-Known scope green -> candidate -> blind audit -> fresh exact verification -> exact-head CI -> completion. v0.4.2 has completed this sequence.
+Plan updates are evidence records: each phase must say what was reproduced, what invariant/authority was chosen, what changed (or why no change was justified), tests/artifacts run, commit SHA and remaining risk.

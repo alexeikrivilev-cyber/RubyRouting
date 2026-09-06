@@ -19,6 +19,7 @@ module RubyRouting
 
     class HardConstraintEvaluator
       def call(provider_state, operation, as_of:, terminal: false)
+        provider_state.ensure_day!(as_of)
         provider = provider_state.provider
         reason = if !provider.active?
           :inactive_provider
@@ -53,11 +54,12 @@ module RubyRouting
       attr_reader :provider, :daily_approved_amount, :transient_count,
                   :transient_amount, :available_requisites,
                   :routed_count, :routed_volume, :approved_count,
-                  :rejected_count, :expired_count
+                  :rejected_count, :expired_count, :daily_date
 
-      def initialize(provider, rpm_limit: nil, rpm_window_seconds: 60)
+      def initialize(provider, rpm_limit: nil, rpm_window_seconds: 60, daily_date: nil)
         @provider = provider
         @daily_approved_amount = provider.daily_approved_amount
+        @daily_date = daily_date.nil? ? nil : calendar_day(validate_time!(daily_date))
         @transient_count = 0
         @transient_amount = 0
         @reservations = {}
@@ -101,7 +103,7 @@ module RubyRouting
       end
 
       def reserve!(operation, as_of:)
-        validate_time!(as_of)
+        ensure_day!(as_of)
         if @reservations.key?(operation.operation_id)
           raise RubyRouting::Case::OutputError, "operation is already reserved"
         end
@@ -121,6 +123,7 @@ module RubyRouting
       end
 
       def record_outcome!(operation, status)
+        ensure_day!(operation.created_at)
         case status
         when :approved
           @approved_count += 1
@@ -140,6 +143,7 @@ module RubyRouting
       end
 
       def snapshot(as_of:)
+        ensure_day!(as_of)
         {
           provider: provider.payment_system,
           daily_approved_amount: daily_approved_amount,
@@ -159,10 +163,29 @@ module RubyRouting
         }.freeze
       end
 
+      def ensure_day!(as_of)
+        validate_time!(as_of)
+        day = calendar_day(as_of)
+        if @daily_date.nil?
+          @daily_date = day
+        elsif day < @daily_date
+          raise InputError, "case state time precedes the current daily state date"
+        elsif day > @daily_date
+          @daily_approved_amount = 0
+          @daily_date = day
+        end
+        nil
+      end
+
       private
+
+      def calendar_day(value)
+        value.utc.strftime("%Y-%m-%d")
+      end
 
       def validate_time!(value)
         raise InputError, "case state time must be a Time" unless value.is_a?(Time)
+        value
       end
     end
 
@@ -174,7 +197,8 @@ module RubyRouting
           states[provider.payment_system] = ProviderCaseState.new(
             provider,
             rpm_limit: rpm_limits[provider.payment_system],
-            rpm_window_seconds: rpm_window_seconds
+            rpm_window_seconds: rpm_window_seconds,
+            daily_date: dataset.snapshot_at
           )
         end
       end
@@ -189,25 +213,7 @@ module RubyRouting
       end
 
       def snapshots(as_of:)
-        providers.transform_values do |state|
-          {
-            provider: state.provider.payment_system,
-            daily_approved_amount: state.daily_approved_amount,
-            daily_amount_limit: state.provider.daily_amount_limit,
-            baseline_in_progress_count: state.provider.in_progress_count,
-            baseline_in_progress_amount: state.provider.in_progress_amount,
-            transient_in_progress_count: state.transient_count,
-            transient_in_progress_amount: state.transient_amount,
-            available_requisites: state.available_requisites,
-            rpm_count: state.rpm_count(as_of),
-            rpm_limit: state.rpm_limit,
-            routed_count: state.routed_count,
-            routed_volume: state.routed_volume,
-            approved_count: state.approved_count,
-            rejected_count: state.rejected_count,
-            expired_count: state.expired_count
-          }.freeze
-        end.freeze
+        providers.transform_values { |state| state.snapshot(as_of: as_of) }.freeze
       end
     end
   end

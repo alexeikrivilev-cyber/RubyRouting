@@ -6,84 +6,63 @@ Ruby baseline: **CRuby 4.0.6**.
 
 ## Current direction
 
-Current Version Goal: **v0.4.2 — Submission Contract Fidelity & Scoring Semantics Closure — VERSION_COMPLETE**.
+Current Version Goal: **v0.4.3 — Adversarial Evidence & Contract Semantics Closure — VERSION_COMPLETE**.
 
-Opening baseline: `e9a24923aebfdb1b01223a360b3f3f2b4e84ee45` — completed v0.4.1 submission-policy baseline.
+Opening baseline: `277d6b68d568eceb88ece3b3e466987535ff75bd` — completed v0.4.2 submission-fidelity baseline with exact-head Actions green.
 
-v0.4.1 materially closed the previous release-path gap: finalization now uses a typed smart `SubmissionProfile`, assignment/attempt/settlement are separated, fallback attempts are internally honest, amount preference is independently configurable, artifacts are reparsed after serialization, and hidden-like campaigns are green.
+v0.4.2 remains the compatible implementation baseline: TZ-compatible report shape, literal Case `active`, phase-correct fallback, concrete reasons, discriminating amount bands, neutral-factor honesty and stronger recommendations are preserved. v0.4.3 independently closed the five adversarial semantics, hardened validator boundaries, and passed fresh exact-HEAD verification.
 
-A fresh code-first audit reopened development because the remaining risks sat at the competition boundary and scoring semantics:
+## v0.4.3 objective
 
-1. report-contract compatibility and independent serialized validation;
-2. fallback scoring must remain phase-correct after primary assignment;
-3. Case and organizer status semantics must agree on literal `active`;
-4. selection reasons, amount preference and factor causality must be visible and meaningful;
-5. P2 evidence-gated questions are now recorded explicitly: volume-target provenance
-   and candidate-relative normalization remain evidence-closed without redesign; terminal
-   identity inference has been removed.
+Do not add architecture. Attack five adversarial questions in order:
 
-This is not another framework build. It is a submission-fidelity and scoring-quality closure cycle. The exact pushed release path is now `VERSION_COMPLETE` after an independent blind code/data/artifact pass and fresh closure verification.
+1. **report accounting point** — prove whether organizer-facing `distribution` must represent primary assignment, final selected provider, or approved settlement; do not change the ledger until authority/evidence resolves the contract;
+2. **independent semantic report oracle** — validate totals, provider sets, shares, targets, utilization and period semantics independently of `ReportBuilder`;
+3. **candidate-set normalization robustness** — test whether adding/removing an otherwise irrelevant eligible provider can materially change A-vs-B routing under supported factors/profile;
+4. **multi-day state semantics** — determine whether hidden queues can cross operational days; if yes, implement correct daily rollover, otherwise document and enforce the single-day contract;
+5. **missing amount preference** — a new provider without `preferred_amount_ranges` must not silently receive maximal soft preference.
+
+Only confirmed defects get production changes. A falsified hypothesis is closed by explicit evidence and documentation, not by speculative refactor.
 
 ## Current authority
 
-`direct current instruction > authoritative TZ/rubric > organizer data/sample/reference/validator > SPEC-018 > compatible SPEC-017/SPEC-016 baselines > active v0.4.2 ExecPlan > POST_TZ_BACKLOG > TZ_REQUIREMENT_MATRIX > current architecture/decisions/governance > protected production invariants > implementation/tests > historical docs`.
+`direct current instruction > authoritative TZ/rubric > organizer data/sample/reference/validator > SPEC-019 > compatible completed SPEC-018/SPEC-017/SPEC-016 > completed v0.4.3 ExecPlan > POST_TZ_BACKLOG > TZ_REQUIREMENT_MATRIX > current architecture/decisions/completion/testing/workflow > protected production invariants > implementation/tests > historical docs`.
 
-Public `scripts/validate_10.rb` is mandatory lower-bound evidence, not the full artifact/rubric contract.
-
-## v0.4.2 objective
-
-`official inputs`
-→ `hard eligibility`
-→ `canonical SubmissionProfile`
-→ `primary count+volume+business scoring`
-→ `one ConflictResolver`
-→ `primary assignment`
-→ `phase-correct fallback ranking`
-→ `attempt/settlement accounting`
-→ `TZ-compatible minimal decisions/report base projection`
-→ `rich extensions`
-→ `independent organizer-contract validation`
-→ `routing_decisions_test.json + routing_report_test.json`.
-
-## Immediate priorities
-
-1. **Done:** TZ base `routing_report` projection plus independent post-serialization validator.
-2. **Done:** strict Case `status == active`, phase-correct fallback, concrete reasons.
-3. **Done:** canonical discriminating amount bands and neutral-factor evidence.
-4. **Done:** quantitative recommendations and constrained-under-target feasibility evidence.
-5. **Evidence-closed:** volume target provenance and candidate-relative normalization remain explicit, tested decisions; terminal identity is explicit configuration only.
+The public decisions validator is a lower bound. Shape-valid output is not sufficient if its business meaning is wrong.
 
 ## Protected strengths
 
 Do not rewrite without a concrete failing counterexample:
 
-- official hard-constraint evaluator and sequential provider state;
+- official hard-constraint evaluator and sequential Case state;
 - assignment / attempt / settlement accounting split;
-- typed `SubmissionProfile`;
-- exact arithmetic;
+- typed canonical `SubmissionProfile`;
+- exact Integer/Rational arithmetic;
 - deterministic simulation;
-- one `ConflictResolver`;
-- terminal fallback boundary;
+- one `ConflictResolver` with primary/fallback phase;
+- TZ-compatible report base projection;
 - production UNKNOWN/economic-owner safety;
-- property/model/concurrency/fault suites.
+- inherited property/model/concurrency/fault evidence.
 
 ## Current read order
 
 1. `README.md`
 2. `AGENTS.md`
 3. `docs/AUTHORITY.md`
-4. `specifications/018-submission-contract-fidelity-scoring-semantics.md`
-5. compatible `specifications/017-submission-policy-activation-contract-closure.md`
+4. `specifications/019-adversarial-evidence-contract-semantics.md`
+5. compatible completed SPEC-018, SPEC-017 and SPEC-016
 6. `docs/TZ_REQUIREMENT_MATRIX.md`
-7. `docs/exec-plans/completed/submission-contract-fidelity-scoring-semantics.md` (after `VERSION_COMPLETE`)
+7. `docs/exec-plans/completed/adversarial-evidence-contract-semantics.md`
 8. `docs/POST_TZ_BACKLOG.md`
 9. `docs/CURRENT_ARCHITECTURE.md`
 10. `docs/DECISIONS_CURRENT.md`
 11. completion/session/planning/workflow/testing docs
-12. actual `data/`, `scripts/validate_10.rb`, case code/tests and exact-head CI.
+12. actual `data/`, `scripts/validate_10.rb`, Case code/tests, generated artifacts and exact-head CI.
 
 ## Completion discipline
 
-Known scope was advanced to `VERSION_CANDIDATE`, then subjected to a blind code/data/artifact audit. The audit findings were fixed with deterministic regressions; fresh full verification, finalization, validators, clean-checkout evidence and exact pushed-head GitHub Actions are green. No material local P0/P1 remains.
+Known v0.4.3 scope green required `VERSION_CANDIDATE`, an independent blind code/data/artifact pass, fresh full verification, finalization, public decisions validation, independent shape **and semantic** report validation, hidden-like adversarial campaigns, docs consistency and successful exact pushed-head Actions. Those gates passed on `13efbeba48f1726b91b71b1677d3541dd4f9f433`.
 
-Do not spend scoring-critical time on DB/Redis/queues/microservices/real PSPs/ML/general DSLs or generic recovery hardening while a v0.4.2 P0/P1 remains open.
+## Non-goals
+
+No Rails/ORM, DB, Redis/Sidekiq, queues, microservices, real PSP integrations, ML/bandits/neural networks, generic DSL/plugins, broad production refactor or generic recovery hardening without a direct SPEC-019 blocker.

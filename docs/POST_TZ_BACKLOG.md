@@ -1,96 +1,109 @@
-# Post-TZ Backlog — v0.4.2 Submission Contract Fidelity & Scoring Semantics Closure
+# Post-TZ Backlog — v0.4.3 Adversarial Evidence & Contract Semantics Closure
 
 Status: **VERSION_COMPLETE**
 
-Spec: `specifications/018-submission-contract-fidelity-scoring-semantics.md`
+Spec: `specifications/019-adversarial-evidence-contract-semantics.md`
 
-Opening baseline: `e9a24923aebfdb1b01223a360b3f3f2b4e84ee45`.
+Opening baseline: `277d6b68d568eceb88ece3b3e466987535ff75bd`.
 
-v0.4.1 capabilities remain baseline. This backlog contains only current material gaps and evidence-gated improvements.
+v0.4.2 / SPEC-018 is the completed compatible baseline. This backlog contains only fresh code-first findings and evidence-gated follow-ups.
 
-## P0 — release artifact contract
+## P1 — release semantics and independent evidence
 
-### TZ18-001 — TZ-compatible report base projection — CLOSED (2026-09-04)
-Current rich report replaces several base fields shown by the TZ. Preserve base `period`, provider `distribution.count/share_pct/target_pct`, `skip_reasons`, `projected_daily_utilization.used/limit/utilization_pct`, and string `recommendations`; keep rich exact fields as additive extensions.
+### TZ19-101 — organizer distribution accounting point — EVIDENCE CLOSED (2026-09-04; authority ambiguous)
+Current rich accounting cleanly separates primary assignment, attempts and settlement, but organizer base `distribution` projects primary assignment while decisions expose the final cascade provider. A deterministic independent probe proves the three populations diverge for `A rejected -> B approved`; literal TZ `distribution by provider` and the public sample/validator do not specify the fallback population. Keep primary assignment as the conservative reversible base projection and retain final/settlement/attempt distributions richly. Regression: `test/case/accounting_semantics_test.rb`.
 
-Evidence: `ReportBuilder` emits scalar `period` plus `period_window`, additive base distribution/utilization/recommendation projections and rich exact fields; `test/case/report_contract_test.rb` covers valid and malformed serialized shapes; fresh `bin/finalize_submission` output passed both `SerializedArtifactValidator` and `OrganizerReportContractValidator`. The independent validator also rejects empty provider projections, empty provider identities and utilization percentages above 100.
+### TZ19-102 — independent semantic report oracle — CLOSED (2026-09-04)
+`RubyRouting::Case::OrganizerReportSemanticValidator` parses raw providers/queue/profile and serialized decisions/report without using `ReportBuilder` expected values. It recomputes queue coverage, primary-assignment population/count denominator, `share_pct`, declared `target_pct`, approved-settlement projected daily `used/limit/utilization_pct` and UTC period. Finalization and the case CLI execute it after serialization. `test/case/report_semantic_test.rb` covers canonical/fallback outputs plus shape-valid mutations for each semantic field; public and strict validators remain separate layers.
 
-### TZ18-002 — independent organizer report validator — CLOSED (2026-09-04)
-Encode required report keys/types from the authoritative TZ independently of `ReportBuilder`. Finalization must validate the serialized report through this contract after write/read. A self-equality check remains useful but is insufficient.
+### TZ19-103 — candidate-set normalization robustness — CLOSED (2026-09-04)
+The deterministic canonical-weight A/B/C campaign confirmed a material
+candidate-relative min/max artifact: hard-eligible non-winning C changed A/B's
+winner while their raw count/volume/priority/amount/conversion/load evidence
+stayed fixed. `ConflictResolver` now requires an explicit normalization pool and
+fails closed if it omits a scored candidate; Router and strict replay pass the
+complete current eligible pool. `test/case/normalization_perturbation_test.rb`
+proves stable A/B selection and raw/normalized perturbation invariants, while
+the public finalization output remains unchanged.
 
-Evidence: `RubyRouting::Case::OrganizerReportContractValidator` parses and validates the report JSON directly without `Run`/`ReportBuilder`; both case CLIs invoke it after serialization; malformed-field regressions are in `test/case/report_contract_test.rb`.
+### TZ19-104 — multi-day daily-state semantics — CLOSED (2026-09-04)
+The deterministic cross-midnight reproducer confirmed that cumulative daily
+usage incorrectly carried a snapshot-day baseline into the next UTC date. The
+ordered TZ queue is not declared single-day, so `ProviderCaseState` now anchors
+the supplied baseline to `snapshot_at`'s UTC date and resets only
+`daily_approved_amount` when the operation date advances. RPM, in-progress,
+attempt, route and settlement state remain continuous. The regression also
+checks latest-day report utilization and strict replay conservation:
+`test/case/daily_temporal_test.rb`.
 
-## P1 — correctness/scoring semantics
+### TZ19-105 — missing preferred amount range neutrality — CLOSED (2026-09-04)
+The additional-provider reproducer confirmed that absent optional configuration
+returned strongest raw preference `1` and could beat a configured non-matching
+band. Missing bands now return exact raw `0`; equal missing/non-matching values
+are non-discriminating and contribute zero, with a stable explanation. Existing
+configured canonical bands remain active. Regression:
+`test/case/amount_band_neutrality_test.rb` plus the inherited factor/profile
+campaigns.
 
-### TZ18-101 — exact Case active status — CLOSED (2026-09-04)
-Bounded Case eligibility must treat only literal `status == "active"` as active, matching TZ/public validator semantics. Add hidden-like `enabled`/`disabled` regressions without changing production status semantics.
+### TZ19-106 — semantic-oracle malformed raw boundary — CLOSED (2026-09-04)
+An independent blind probe passed a raw provider with non-exact
+`traffic_percentage` to the semantic report oracle and reproduced an uncaught
+`NoMethodError`. The oracle now rejects malformed provider/queue/profile/report
+shapes, identities and non-exact target values with ordinary validation errors,
+without weakening the canonical input loader. Regressions:
+`test/case/report_semantic_test.rb`.
 
-Evidence: `Provider#active?` is literal-only; `test/case/state_test.rb` covers
-`enabled` as a hard exclusion; public queue finalization remains green.
-
-### TZ18-102 — phase-correct fallback scoring — CLOSED (2026-09-04)
-Primary assignment is recorded once. On rejected/expired fallback, count/volume factors must not add the current operation again through `TrafficLedger#counterfactual`. Add explicit primary/fallback resolution context and an independent fallback ranking regression that fails on the opening baseline.
-
-Evidence: `ConflictResolver` has one explicit `primary`/`fallback` phase; allocation factors are omitted from fallback pressure; Router and strict replay agree; `test/case/fallback_phase_test.rb` proves legacy B vs independent expected C and preserves separate assignment/attempt/settlement ledgers.
-
-### TZ18-103 — concrete selection reason codes — CLOSED (2026-09-04)
-Replace generic successful `reason: selected` with stable rubric-readable reason codes while preserving public validator compatibility and rich factor traces in report/internal evidence.
-
-Evidence: Router emits `only_eligible_provider`, `highest_composite_score`,
-`fallback_highest_composite_score` and explicit deterministic tie-break reasons when
-composite scores are equal; terminal/hard/outcome reasons remain stable. The
-tie-break regression proves neutral factor evidence does not masquerade as a
-highest-score decision; public validator and case suite pass.
-
-### TZ18-104 — canonical amount strategy is materially active — CLOSED (2026-09-04)
-The current committed preferred ranges are identical. Configure meaningful independent preferred bands based on TZ business semantics and prove the amount factor changes a finalization-equivalent conflict without changing hard eligibility or overfitting the public queue.
-
-Evidence: the canonical profile has transparent low/mid/high bands; `test/case/submission_profile_test.rb` loads the profile and proves amount-only selection differs from priority-only selection among the same hard-eligible loaded providers. Public golden operation IDs are not used as the fixture.
-
-### TZ18-105 — neutral factor contribution honesty — CLOSED (2026-09-04)
-Equal raw values across candidates must be treated as non-discriminating rather than receiving full normalized contribution. Preserve deterministic tie-break outside causal factor evidence. Fix any amount/factor test that passes only through provider-id tie-break.
-
-Evidence: `ConflictResolver` marks equal raw factors non-discriminating, assigns zero normalized/contribution values and labels the trace; tie-break remains priority/provider identity; focused factor tests pass.
-
-### TZ18-106 — quantitative causal recommendations — CLOSED (2026-09-04)
-Add concrete evidence-based actions for near-limit utilization, structural hard exclusions, target deviations and hard-forced alternatives. Base `recommendations` must be judge-readable strings; rich structured evidence moves to additive `recommendation_details`.
-
-Evidence: `ReportBuilder` derives near-limit, target-gap, hard-exclusion and hard-forced details from canonical ledgers/state; `test/case/recommendation_test.rb` checks exact used/limit/headroom, exclusion causes and string projection.
-
-### TZ18-107 — symmetric target feasibility evidence — CLOSED (2026-09-04)
-Support constrained-under-target analysis in addition to hard-forced over-target analysis. Distinguish structural hard-rule constraints from small/integer workload granularity; do not overclaim infeasibility.
-
-Evidence: observed exclusions are reported as `structurally_constrained_under_target`; a fresh one-operation `1/2` target is reported as `workload_granularity` and produces no infeasibility entry when no structural cause is present. The same granularity advice is suppressed when the provider is hard-excluded or hard-forced, so workload size is not presented as a remedy for a current hard rule; regression coverage is in `test/case/recommendation_test.rb`.
+### TZ19-107 — semantic-oracle empty-queue denominator — CLOSED (2026-09-04)
+The blind pass used an empty queue, which the canonical Case loader permits,
+and reproduced an uncaught `ZeroDivisionError` while recomputing zero-count
+distribution shares. The independent oracle now emits exact zero shares for a
+zero operation denominator and validates the empty serialized artifact. The
+regression lives in `test/case/report_semantic_test.rb`.
 
 ## P2 — evidence gated
 
-### TZ18-201 — independent volume target provenance — EVIDENCE CLOSED (2026-09-04; no production change)
-Count and volume are distinct TZ concepts. Evaluate a configured or clearly history-derived volume target source with explicit provenance after P0/P1 closure. History remains calibration/trends, not current eligibility truth.
+### TZ19-201 — terminal identity vs zero participation — EVIDENCE CLOSED (2026-09-04; no defect)
+An explicit-terminal probe with two zero-traffic providers showed that the
+configured active zero-participation identity is selected as terminal while the
+other zero-traffic provider is correctly excluded as an external candidate.
+The coupling is a typed case convention supported by the supplied data and TZ;
+no production change is justified. Regression:
+`test/case/terminal_causality_test.rb`.
 
-Evidence: the canonical profile explicitly records `volume_target_source: provider.traffic_percentage`; the loader rejects a `volume_share` override in that mode and a focused regression proves a `configured` source can supply an independent exact volume map. No authoritative independent volume target is supplied, so silently promoting history would be less honest than the current explicit source.
+### TZ19-202 — direct terminal fallback deviation causality — CLOSED (2026-09-04)
+The generated all-hard-excluded artifact confirmed that direct terminal routing
+could leave a zero-target/100%-actual deviation unexplained at report level.
+Rich deviation causes and deterministic recommendations now identify configured
+terminal fallback, its quantitative deviation and hard-excluded alternatives.
+Regression: `test/case/terminal_causality_test.rb`.
 
-### TZ18-202 — normalization robustness audit — EVIDENCE CLOSED (2026-09-04; no production change)
-Construct candidate-set counterexamples for current min/max normalization. Change to domain normalization only if material ranking instability, weight non-interpretability or misleading explanation is demonstrated.
+## Protected completed baseline
 
-Evidence: the candidate-relative normalization preserves factor ordering for the supported factor traces; the hidden-like factor campaign found no material inversion or misleading contribution. Raw, normalized and weighted contribution remain independently visible.
-
-### TZ18-203 — terminal identity vs zero participation — CLOSED (2026-09-04)
-Prefer explicit `terminal_provider_id` as terminal authority rather than deriving self-provider identity from zero traffic target. Avoid broad refactor unless a concrete ambiguity is reproduced.
-
-Evidence: `test/case/terminal_identity_test.rb` reproduces ambiguous multiple zero-participation providers and requires explicit configuration. `Router`, `ReportBuilder`, strict replay and `bin/ruby_routing_case_demo` now consume that explicit profile identity; canonical profile finalization remains green.
+Do not reopen without a new counterexample: TZ-compatible report shape, literal Case active status, primary/fallback phase split, assignment/attempt/settlement ledgers, concrete reason codes, canonical amount bands for current providers, neutral equal-factor contributions, deterministic recommendations and public finalization.
 
 ## Completion gate
 
-Known P0/P1 green produced `VERSION_CANDIDATE`; the independent code/data/artifact
-audit then found and closed the hard-forced granularity and permissive report-validator
-gaps. The fresh full matrix, finalization, validators, clean-checkout run and exact
-pushed-head Actions are green. No material local P0/P1 remains.
+All P1 items confirmed-fixed or explicitly evidence-closed -> VERSION_CANDIDATE only. Then run an independent code/data/artifact blind pass. Any new material P0/P1 returns ACTIVE. VERSION_COMPLETE requires fresh full inherited suites, case/adversarial campaigns, public decisions validator, independent report shape + semantic validators, strict serialized validation, clean finalization, docs consistency and exact pushed-head Actions success.
 
-Any material local P0/P1 returns ACTIVE. v0.4.2 is now `VERSION_COMPLETE` after fresh
-full inherited verification, organizer public decisions validation, independent TZ
-report validation, strict serialized validation, hidden-like campaigns,
-clean-checkout finalization and exact pushed-head Actions success.
+Candidate evidence (2026-09-04, exact code checkpoint
+`f1fc24f1637101e41c3d94b8140105a1917f60dd`): post-fix full inherited and Case
+matrices are green (`test` 855/13,603; `property` 4/1,210; `model` 3/2,958;
+`concurrency` 45/1,441; `fault` 407/4,900; `case` 115/637). Finalization
+produced fresh root artifacts; public validation is 29 passed, 0 errors,
+0 warnings; independent shape+semantic validation and strict serialized
+validation pass. The alternate Case CLI produces byte-identical artifacts.
+The 1,000-operation hidden-like campaign now also runs independent semantic
+validation and remains deterministic. The post-fix blind pass found no new
+material P0/P1. This candidate gate was followed by clean final docs sync and
+exact-head CI.
+
+Final closure (2026-09-04, exact pushed HEAD
+`13efbeba48f1726b91b71b1677d3541dd4f9f433`): all SPEC-019 P1/P2 evidence,
+fresh full inherited/Case/adversarial matrix, clean-checkout finalization,
+public decisions validation, independent shape+semantic report validation,
+strict serialized validation and exact-head Actions run `33852436704` passed.
+No material local P0/P1 remains; v0.4.3 is VERSION_COMPLETE.
 
 ## Frozen
 
-No generic recovery/restart hardening, HTTP polish, DB/Redis/queues/microservices, real PSP adapters, ML/neural networks, generic DSL or broad production refactor unless directly required by SPEC-018.
+No generic recovery/restart hardening, HTTP polish, DB/Redis/queues/microservices, real PSP adapters, ML/neural networks, generic DSL or broad production refactor without a direct SPEC-019 blocker.

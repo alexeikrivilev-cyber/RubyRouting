@@ -1,72 +1,49 @@
 # Authoritative TZ Requirement Matrix
 
-Status: **v0.4.2 VERSION_COMPLETE traceability source**.
+Status: **v0.4.3 VERSION_COMPLETE traceability source**.
 
-Opening v0.4.2 baseline: `e9a24923aebfdb1b01223a360b3f3f2b4e84ee45`.
+Opening baseline: `277d6b68d568eceb88ece3b3e466987535ff75bd` (completed v0.4.2).
 
-Legend: `SUPPORTED` = authoritative end-to-end release path proven; `PARTIAL` = primitive exists but release/output/scoring semantics incomplete; `MISSING`; `CONFLICT`; `OVERENGINEERED`.
+Legend: `SUPPORTED` = end-to-end release path proven; `PARTIAL` = implementation exists but the active audit has not independently closed semantics/evidence; `MISSING`; `CONFLICT`; `OVERENGINEERED`.
 
-A library feature is not `SUPPORTED` if the supported finalization path or submitted artifact does not demonstrate the authoritative contract.
-
-| ID | Requirement | v0.4.2 opening status | Current action |
+| ID | Requirement | Current status | v0.4.3 action |
 |---|---|---|---|
-| IO-01..04 | official inputs / one decision per op | SUPPORTED | preserve strict loader/coverage |
-| IO-05 | root decisions generation | SUPPORTED | keep exact finalization |
-| IO-06 | root report generation | **SUPPORTED** | `ReportBuilder` + `Serializer` emit TZ base fields additively; `test/case/report_contract_test.rb`; fresh `bin/finalize_submission` |
-| OUT-01 | operation id | SUPPORTED | preserve |
-| OUT-02 | final selected provider | SUPPORTED | final cascade provider remains external `selected_provider`; primary assignment reported separately |
-| OUT-03 | ordered attempts | SUPPORTED | preserve internal classification/order |
-| OUT-04 | organizer provider/decision/reason | **SUPPORTED** | minimal projection uses stable concrete selection/outcome reasons; rich traces remain additive |
-| OUT-05 | approved/rejected/expired | SUPPORTED | preserve bounded deterministic simulation |
-| OUT-06 | latency | SUPPORTED | preserve typed non-negative value |
-| OUT-07 | rich explanations | SUPPORTED in rich report/internal evidence | preserve as additive extension |
-| HC-01 | exact active status | **SUPPORTED** | Case `Provider#active?` is literal-only; `test/case/state_test.rb`; public queue remains green |
-| HC-02..10 | remaining official hard constraints | SUPPORTED | preserve fallback/state regressions |
-| SG-01 | count-share routing | SUPPORTED for primary routing | preserve assignment authority; remove fallback double-counterfactual |
-| SG-02 | volume-share routing | SUPPORTED for primary routing / explicit provenance | canonical profile declares its source; configured independent override is supported and tested |
+| IO-01..06 | official inputs and generated root artifacts | SUPPORTED | preserve |
+| OUT-01..06 | decisions fields/attempts/outcomes/latency | SUPPORTED | preserve public validator compatibility |
+| OUT-07 | rich explanations | SUPPORTED | preserve additive evidence |
+| HC-01..10 | authoritative hard constraints | SUPPORTED | preserve literal active and fallback recheck |
+| SG-01 | count-share routing | SUPPORTED for primary assignment; base fallback meaning authority-ambiguous | TZ19-101 evidence-closed; primary base projection is explicit and reversible |
+| SG-02 | volume-share routing | SUPPORTED for primary assignment | preserve explicit source/provenance |
 | SG-03 | lower-is-higher priority | SUPPORTED | preserve |
-| SG-04 | amount preference distinct from hard gate | **SUPPORTED** | canonical transparent bands; loaded hard-eligible conflict regression in `test/case/submission_profile_test.rb` |
+| SG-04 | amount preference distinct from hard gate | SUPPORTED with neutral absence | TZ19-105 closes missing-band strongest-preference bias |
 | SG-05 | conversion preference | SUPPORTED | preserve |
-| SG-06 | load/intensity preference | SUPPORTED capability | release profile enables load; intensity remains explicit optional input |
-| SG-07 | turnover-min obligation | SUPPORTED / explicit optional input | preserve; do not invent absent organizer values |
-| SG-08 | multiple goals simultaneously | **SUPPORTED** | one resolver with explicit primary/fallback phase; fallback oracle and case matrix |
-| SG-09 | explicit ConflictResolver | SUPPORTED | one resolver remains authority; add phase semantics rather than second chooser |
-| SG-10 | infeasible target explanation | **SUPPORTED** | hard-forced over-target, structural under-target and bounded workload-granularity evidence; `test/case/recommendation_test.rb` |
-| FB-01 | reject -> next | **SUPPORTED** | explicit fallback phase; A→reject→C regression and assignment/attempt/settlement accounting |
-| FB-02 | expired -> next | **SUPPORTED** | same canonical fallback phase; existing expiry cascade plus strict replay |
-| FB-03 | reapply hard constraints | SUPPORTED | preserve |
-| FB-04 | terminal self-provider | **SUPPORTED** | terminal identity is explicit configuration/profile; arbitrary zero-participation providers are not inferred |
-| STATE-01..04 | sequential provider state | SUPPORTED | preserve |
-| EXP-01 | concrete selection reason | **SUPPORTED** | stable only-eligible/highest-composite/fallback/tie-break reason codes; public validator remains green |
-| EXP-02 | exclusion reason | SUPPORTED | preserve stable codes |
-| EXP-03 | actual fallback sequence | SUPPORTED internally / projection compatible | preserve |
-| AN-01 | count/share | **SUPPORTED** | serialized `distribution.*.count/share_pct/target_pct`, exact rich shares retained; independent report contract test |
-| AN-02 | target deviation | SUPPORTED rich / P0 projection | preserve rich exact fields, add base-compatible projection |
-| AN-03 | outcomes | SUPPORTED | separate assignment/attempt/settlement ledgers |
-| AN-04 | utilization/limits | **SUPPORTED** | serialized `projected_daily_utilization.*.used/limit/utilization_pct`; independent report contract test |
-| AN-05 | skip reasons | SUPPORTED | preserve |
-| AN-06 | deviation causes | **SUPPORTED** | hard exclusions, hard-forced, fallback and workload-granularity causes from canonical run |
-| AN-07 | actionable recommendations | **SUPPORTED** | base strings + rich provider/evidence/action details; near-limit/structural/granularity regressions |
-| FLEX-01 | provider independent | SUPPORTED | preserve |
+| SG-06 | load/intensity preference | SUPPORTED capability | preserve |
+| SG-07 | turnover-min obligation | SUPPORTED optional capability | preserve absent organizer values |
+| SG-08 | simultaneous multi-goal resolution | SUPPORTED with explicit normalization pool | TZ19-103 closes candidate-set scale drift; preserve one resolver |
+| SG-09 | explicit one ConflictResolver | SUPPORTED | preserve one chooser/phase model |
+| SG-10 | infeasible target explanation | SUPPORTED including terminal fallback causality | TZ19-202 closes direct terminal deviation explanation |
+| FB-01..04 | reject/expired fallback, recheck, terminal | SUPPORTED | preserve phase-correct fallback |
+| STATE-01..03 | sequential provider state | SUPPORTED for sequential multi-day workload | preserve |
+| STATE-04 | daily-limit temporal semantics | SUPPORTED with deterministic UTC date scope | TZ19-104 closes stale cross-midnight baseline; no persistence/scheduler |
+| EXP-01..03 | reasons/exclusions/fallback sequence | SUPPORTED | preserve |
+| AN-01 | distribution count/share/target | SUPPORTED for explicit primary-assignment base; fallback population authority-ambiguous | TZ19-101 independent fallback probe; keep rich final/settlement ledgers |
+| AN-02 | target deviation | SUPPORTED rich evidence; base fallback meaning authority-ambiguous | primary assignment remains target authority pending organizer clarification |
+| AN-03 | outcomes / assignment-attempt-settlement | SUPPORTED rich | preserve separate ledgers |
+| AN-04 | projected utilization/limits | SUPPORTED | TZ19-102 recomputes raw snapshot + approved settlements; canonical serialized finalization |
+| AN-05..07 | skip reasons, deviation causes, recommendations | SUPPORTED including terminal causes | TZ19-202 adds quantitative terminal fallback evidence |
+| AN-08 | semantic report oracle fails closed on malformed raw boundary inputs | SUPPORTED | TZ19-106 regression prevents validator crashes |
+| AN-09 | semantic report oracle handles a permitted empty queue | SUPPORTED | TZ19-107 zero-denominator regression |
+| FLEX-01 | provider independent | SUPPORTED for optional amount configuration | TZ19-105 additional-provider missing-band regression |
 | FLEX-02 | config-driven rules/weights | SUPPORTED | preserve canonical profile |
-| FLEX-03 | add provider/factor without redesign | SUPPORTED | preserve one factor registry/resolver |
+| FLEX-03 | add provider/factor without redesign | PARTIAL | TZ19-103/105 additional-provider campaigns |
 | RULE-01..04 | deterministic/Ruby/no neural/proprietary | SUPPORTED | preserve |
 
 ## Release-critical interpretation
 
-The TZ base `routing_report` schema is authoritative even without a public report validator. Additional rich fields are allowed, so the safe strategy is base compatibility plus additive extensions.
+v0.4.2 solved the organizer report **shape** problem. v0.4.3 does not reopen that shape; it verifies semantic meaning independently. A library self-replay or ReportBuilder self-equality cannot by itself move an active PARTIAL row back to SUPPORTED.
 
-Current evidence: the finalization path writes and reparses a report with the required
-base shape, and `OrganizerReportContractValidator` checks that shape independently;
-percentage numbers are rounded to two decimal places only by `Serializer` at the JSON
-boundary while internal values remain exact `Rational`.
-
-Primary assignment remains the bounded authority for count/volume distribution unless stronger organizer clarification says otherwise. Therefore rejected/expired fallback must not counterfactually assign the same operation a second time when ranking fallback providers.
-
-## Protected scoring-low capabilities
-
-Production economic ownership/UNKNOWN, durable restart/replay, RecoveryExecutor and HTTP control plane remain protected but frozen unless SPEC-018 exposes a blocker.
+Primary assignment remains the current internal allocation authority unless stronger evidence changes the organizer-facing projection. Decisions continue to expose final cascade provider; settlement remains approved-only. These three facts must remain distinguishable.
 
 ## Traceability rule
 
-A row moves to `SUPPORTED` only after finalization-equivalent code, generated artifact and independent contract/rubric evidence agree. Public-validator permissiveness and self-derived validators do not independently close a row.
+A row becomes SUPPORTED only when authoritative wording and/or an independent oracle plus finalization-equivalent evidence agree. If a fresh hypothesis is falsified, record the reproducer and why no change is justified rather than manufacturing a feature.

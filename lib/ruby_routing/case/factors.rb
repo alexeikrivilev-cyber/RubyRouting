@@ -42,6 +42,7 @@ module RubyRouting
       def reason(raw)
         "#{key}=#{raw}"
       end
+
     end
 
     class CountShareFactor < FactorDefinition
@@ -53,6 +54,7 @@ module RubyRouting
         traffic.counterfactual(provider_id: provider_state.provider.payment_system, amount: operation.amount)
           .fetch(:count).fetch(:deficit_after)
       end
+
     end
 
     class VolumeShareFactor < FactorDefinition
@@ -64,6 +66,7 @@ module RubyRouting
         traffic.counterfactual(provider_id: provider_state.provider.payment_system, amount: operation.amount)
           .fetch(:volume).fetch(:deficit_after)
       end
+
     end
 
     class PriorityFactor < FactorDefinition
@@ -86,7 +89,9 @@ module RubyRouting
       end
 
       def raw(provider_state:, operation:, traffic:, as_of:, min_turnover: nil, preferred_amount_range: nil)
-        return Rational(1, 1) unless preferred_amount_range
+        # Absence of optional soft configuration is no preference. It must not
+        # silently outrank a configured provider whose band does not match.
+        return Rational(0, 1) unless preferred_amount_range
 
         low = preferred_amount_range.fetch(:min)
         high = preferred_amount_range.fetch(:max)
@@ -101,8 +106,12 @@ module RubyRouting
         [Rational(1, 1) - Rational(distance, high - low), Rational(0, 1)].max
       end
 
-      def reason(raw)
-        "preferred amount band preference=#{raw}; hard amount gate evaluated separately"
+      def reason(raw, preferred_amount_range: nil)
+        if preferred_amount_range
+          "preferred amount band preference=#{raw}; hard amount gate evaluated separately"
+        else
+          "preferred amount band absent; neutral/no preference; hard amount gate evaluated separately"
+        end
       end
     end
 
@@ -307,9 +316,24 @@ module RubyRouting
         freeze
       end
 
-      def resolve(candidates:, operation:, traffic:, as_of:, phase: :primary)
+      # `normalization_candidates` is an explicit, stable opportunity pool.
+      # A resolver must not silently let a caller's subset redefine the scale
+      # of a configured weight; Router supplies the complete eligible pool and
+      # alternate callers must make their comparison pool explicit.
+      def resolve(candidates:, operation:, traffic:, as_of:, phase: :primary,
+                  normalization_candidates: nil)
         candidates = candidates.to_a
         raise InputError, "conflict resolver requires candidates" if candidates.empty?
+        unless normalization_candidates
+          raise InputError, "conflict resolver requires an explicit normalization candidate pool"
+        end
+        normalization_candidates = normalization_candidates.to_a
+        raise InputError, "conflict resolver requires normalization candidates" if normalization_candidates.empty?
+        candidate_ids = candidates.map { |state| state.provider.payment_system }
+        normalization_ids = normalization_candidates.map { |state| state.provider.payment_system }
+        unless candidate_ids.all? { |provider_id| normalization_ids.include?(provider_id) }
+          raise InputError, "normalization candidate pool must include every candidate"
+        end
         phase = normalize_phase(phase)
         active_weights = weights_for(phase)
         raw_values = active_weights.each_with_object({}) do |(factor_key, _weight), result|
@@ -322,15 +346,33 @@ module RubyRouting
             )]
           end
         end
+        normalization_values = if normalization_candidates.equal?(candidates)
+          raw_values
+        else
+          active_weights.each_with_object({}) do |(factor_key, _weight), result|
+            factor = FactorRegistry.fetch(factor_key)
+            result[factor_key] = normalization_candidates.to_h do |state|
+              [state.provider.payment_system, factor.raw(
+                provider_state: state, operation: operation, traffic: traffic,
+                as_of: as_of, min_turnover: @min_turnovers[state.provider.payment_system],
+                preferred_amount_range: @preferred_amount_ranges[state.provider.payment_system]
+              )]
+            end
+          end
+        end
         traces = candidates.each_with_object({}) do |state, result|
           provider_id = state.provider.payment_system
           result[provider_id] = active_weights.each_with_object([]) do |(factor_key, weight), evidence|
             factor = FactorRegistry.fetch(factor_key)
             raw = raw_values.fetch(factor_key).fetch(provider_id)
-            factor_values = raw_values.fetch(factor_key).values
+            factor_values = normalization_values.fetch(factor_key).values
             discriminating = factor_values.uniq.length > 1
             normalized = discriminating ? normalize(raw, factor_values) : Rational(0, 1)
-            reason = factor.reason(raw)
+            reason = if factor_key == :amount
+              factor.reason(raw, preferred_amount_range: @preferred_amount_ranges[provider_id])
+            else
+              factor.reason(raw)
+            end
             reason = "#{reason}; non-discriminating; no causal contribution" unless discriminating
             evidence << FactorEvidence.new(
               factor: factor_key, raw: raw, normalized: normalized, weight: weight,
@@ -366,6 +408,7 @@ module RubyRouting
 
         Rational(raw - min, max - min)
       end
+
     end
   end
 end

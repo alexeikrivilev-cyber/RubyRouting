@@ -9,6 +9,7 @@ require_relative "case/configuration"
 require_relative "case/router"
 require_relative "case/report"
 require_relative "case/runner"
+require_relative "case/semantic_validator"
 require_relative "case/validator"
 
 module RubyRouting

@@ -1,29 +1,20 @@
-# Long-Session Goal Mode Policy
+# Session Policy — v0.4.3
 
-Current Version Goal: **v0.4.2 — Submission Contract Fidelity & Scoring Semantics Closure — VERSION_COMPLETE**.
+Status: **VERSION_COMPLETE under SPEC-019**.
 
-Continuous loop:
+Every coding session starts by fetching exact `main`, exact-head CI, SPEC-019, the one active ExecPlan, matrix/backlog and actual Case/data/artifacts. Do not trust a prior chat SHA.
 
-`exact main/data/TZ -> reproduce highest-value release gap -> smallest semantic fix -> focused independent evidence -> finalization-equivalent run -> serialize/reparse -> public decisions validator + independent TZ report validator -> adjacent skeptical review -> matrix/plan/docs -> coherent commit/push -> exact-head CI -> next gap`.
+Work continuously while the next step is derivable. The default unit of work is one adversarial hypothesis, not one arbitrary file.
 
-## Default order
+For each hypothesis:
 
-1. P0 report base contract + independent validator;
-2. exact Case active status;
-3. fallback phase semantics / independent ranking oracle;
-4. concrete selected reason codes;
-5. canonical amount strategy + neutral factor honesty;
-6. recommendations/feasibility;
-7. evidence-gated target/normalization refinements;
-8. hidden-like/rubric campaign;
-9. candidate only;
-10. blind code/data/artifact pass;
-11. fresh full exact verification and closure.
+1. reproduce/falsify on exact HEAD;
+2. state the semantic contract;
+3. make the smallest justified code change or explicitly evidence-close without code change;
+4. run focused and adjacent tests;
+5. generate real artifacts and run independent validators where relevant;
+6. update matrix/plan/docs;
+7. commit/push coherent checkpoint;
+8. continue to the next highest-value open item.
 
-Do not stop after a feature exists in a unit test. The exact submission artifact must demonstrate it.
-
-Do not use `ReportBuilder` equality as the only evidence for the TZ report contract. Do not use replay that copies Router control flow as the only evidence for fallback semantics.
-
-Do not return to generic recovery/HTTP/infrastructure work while a SPEC-018 P0/P1 remains open.
-
-If a new material local P0/P1 appears during blind review, reopen ACTIVE immediately and continue from evidence.
+Do not ask to continue when the active plan determines the next step. Do not mark VERSION_COMPLETE from backlog exhaustion alone.

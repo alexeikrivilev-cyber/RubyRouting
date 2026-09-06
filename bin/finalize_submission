@@ -36,6 +36,11 @@ begin
     run, decisions_path: options[:decisions], report_path: options[:report]
   ).validate!
   RubyRouting::Case::OrganizerReportContractValidator.new(options[:report]).validate!
+  RubyRouting::Case::OrganizerReportSemanticValidator.new(
+    providers_path: options[:providers], queue_path: options[:queue],
+    profile_path: options[:profile], decisions_path: options[:decisions],
+    report_path: options[:report]
+  ).validate!
   puts "generated #{options[:decisions]} and #{options[:report]}"
   public_queue = File.expand_path(File.join(root, "data/operations_queue_10.json"))
   if File.expand_path(options[:queue]) == public_queue

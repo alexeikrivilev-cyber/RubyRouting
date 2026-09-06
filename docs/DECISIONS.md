@@ -1,7 +1,5 @@
-# Decisions Index
+# Decisions Pointer
 
-Current authoritative decision overlay: **`docs/DECISIONS_CURRENT.md`** for **v0.4.2 / SPEC-018 — VERSION_COMPLETE**.
+Current decision authority: **`DECISIONS_CURRENT.md`** under **v0.4.3 / SPEC-019 — VERSION_COMPLETE**.
 
-v0.4.1/v0.4.0 decisions remain inherited where `DECISIONS_CURRENT.md` does not supersede them. Pre-TZ decision registers are historical rationale only.
-
-Use `docs/AUTHORITY.md` for precedence. Current organizer/TZ contract and SPEC-018 override any older decision when semantics conflict.
+Historical decision files are retained as evidence only. When they conflict with authoritative TZ, SPEC-019 or current decisions, the current authority wins.

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "../test_helper"
+require "tmpdir"
 
 class AuthoritativeCaseScaleCampaignTest < Minitest::Test
   SCALE = 1_000
@@ -85,6 +86,29 @@ class AuthoritativeCaseScaleCampaignTest < Minitest::Test
         assert artifact_result.valid?, artifact_result.errors.first(5).inspect
         assert report_result.valid?, report_result.errors.first(5).inspect
         assert_equal SCALE, JSON.parse(File.read(report.path)).fetch("total_operations")
+
+        Dir.mktmpdir("ruby-routing-scale-inputs") do |directory|
+          providers_path = File.join(directory, "providers.json")
+          queue_path = File.join(directory, "queue.json")
+          profile_path = File.join(directory, "profile.json")
+          RubyRouting::Case::Serializer.write_json(
+            providers_path,
+            {
+              snapshot_at: run.dataset.snapshot_at.iso8601,
+              gateway: run.dataset.gateway,
+              merchant: run.dataset.merchant,
+              providers: run.dataset.providers.map(&:to_h)
+            }
+          )
+          RubyRouting::Case::Serializer.write_json(queue_path, run.dataset.operations.map(&:to_h))
+          RubyRouting::Case::Serializer.write_json(profile_path, run.profile.to_h)
+          semantic_result = RubyRouting::Case::OrganizerReportSemanticValidator.new(
+            providers_path: providers_path, queue_path: queue_path, profile_path: profile_path,
+            decisions_path: decisions.path, report_path: report.path
+          ).call
+
+          assert semantic_result.valid?, semantic_result.errors.first(5).inspect
+        end
       end
     end
   end

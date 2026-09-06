@@ -1,26 +1,25 @@
 # TZ Reconciliation
 
-The authoritative TZ superseded pre-TZ guesses and produced v0.4.0 / SPEC-016, which built the bounded official case engine while preserving compatible production safety.
+The authoritative TZ superseded pre-TZ guesses and produced v0.4.0 / SPEC-016, the bounded official Case engine. v0.4.1 / SPEC-017 activated the smart policy on the supported finalization path and separated assignment/attempt/settlement. v0.4.2 / SPEC-018 then closed report-shape fidelity, literal Case active status, fallback phase semantics, concrete reasons, amount strategy evidence and recommendation/feasibility quality.
 
-An independent audit then opened v0.4.1 / SPEC-017 because the exact finalization path did not activate the richer smart policy and accounting/output semantics were incomplete. v0.4.1 closed that release-path gap through a typed `SubmissionProfile`, separate assignment/attempt/settlement ledgers, independent preferred amount ranges, conservative decision projection and post-serialization validation.
+A fresh code-first audit of exact v0.4.2 baseline `277d6b68d568eceb88ece3b3e466987535ff75bd` opened **v0.4.3 / SPEC-019**. The new cycle does not reopen the completed architecture generically; it attacks five remaining evidence questions:
 
-A subsequent code-first audit of exact `main` `e9a24923aebfdb1b01223a360b3f3f2b4e84ee45` found a new class of competition-boundary issues and opened v0.4.2 / SPEC-018:
-
-- the rich report does not preserve the TZ base report field/type shape;
-- the report validator is correlated with the same builder and therefore does not independently prove TZ compatibility;
-- fallback ranking can apply count/volume counterfactuals after primary assignment is already recorded;
-- Case active status is broader than organizer semantics;
-- selected reasons, canonical amount policy and recommendation/feasibility evidence can be made materially stronger for the rubric.
+- organizer base `distribution` accounting population under fallback;
+- independent semantic report recomputation beyond shape/self-consistency;
+- candidate-set robustness of relative normalization;
+- hidden-queue daily temporal semantics across midnight;
+- neutral behavior for providers missing optional preferred amount ranges.
 
 Current reconciliation rules:
 
-- authoritative TZ remains highest product authority;
-- base artifact schemas shown by the TZ are compatibility requirements; rich fields are additive;
-- public decisions validator remains lower-bound evidence;
-- count/volume distribution uses primary assignment by default, with attempts and settlement reported separately;
-- fallback cannot create a second counterfactual assignment for the same operation under that interpretation;
-- only literal `active` is active inside the bounded Case domain;
-- synthetic expired fallback remains case-only and never weakens production UNKNOWN;
-- organizer ambiguities use conservative reversible projections and explicit tests;
-- history may inform calibration/provenance but never becomes current hard eligibility truth;
-- any stronger organizer clarification supersedes the bounded assumptions above and must be reconciled before implementation changes.
+- authoritative TZ/rubric remain highest product authority;
+- supplied data/sample/reference/public validator define only what they explicitly cover;
+- v0.4.2 report base shape is preserved while v0.4.3 verifies its business meaning;
+- primary assignment, attempts, final selected provider and settlement remain distinct until accounting-point authority is proven;
+- public decisions validation is lower-bound evidence;
+- semantic report validation must recompute from raw inputs/profile/serialized artifacts rather than ReportBuilder expected values;
+- candidate-relative normalization is retained or changed only after a supported-factor adversarial counterexample;
+- cross-day behavior must be explicitly supported or fail closed; it cannot silently reuse stale daily usage;
+- missing optional soft configuration must not become hidden positive preference;
+- synthetic expired fallback remains Case-only and never weakens production UNKNOWN/economic ownership;
+- stronger organizer clarification supersedes bounded assumptions and must be reconciled before code changes.

@@ -1,62 +1,49 @@
-# Current Architecture — Authoritative TZ / v0.4.2
+# Current Architecture — post-TZ v0.4.3
 
-v0.4.1 established the canonical smart submission policy, distinct assignment/attempt/settlement ledgers and post-serialization validation. v0.4.2 tightens competition contract fidelity and scoring semantics without creating another router.
+Status: **ACTIVE audit overlay**. Completed v0.4.2 architecture remains the implementation baseline.
 
-## Competition flow
+## Competition path
 
-`DatasetLoader`
-→ `SubmissionProfile / CaseConfiguration`
-→ `ProviderCaseState`
-→ `HardConstraintEvaluator`
-→ `Routing phase context (primary/fallback)`
-→ `TrafficLedger + AttemptLedger + SettlementLedger`
-→ `RoutingFactors`
-→ `ConflictResolver`
-→ `CaseRouter`
-→ `DeterministicSimulator / fallback`
-→ `internal attempt facts`
-→ `organizer-compatible DecisionProjection + TZ base ReportProjection + rich report extensions`
-→ `independent organizer-contract validators + strict internal validators`
-→ required root files.
+`Dataset/Input -> SubmissionProfile -> CaseState -> HardConstraintEvaluator -> Traffic/Attempt/Settlement ledgers -> Factors -> ConflictResolver(primary|fallback) -> Router/DeterministicSimulator -> Decision/Report projections -> validators`.
 
-There is one provider-selection authority: hard filter + one ConflictResolver inside CaseRouter. CLI/finalization/demo/report cannot independently choose providers.
+## Stable boundaries
 
-## SubmissionProfile boundary
+- hard constraints are absolute and rerun before fallback attempts;
+- count/volume allocation is currently recorded once at primary assignment;
+- attempts record each invoked provider outcome;
+- settlement records approved final provider only;
+- organizer decisions expose final selected provider;
+- report preserves the TZ-compatible base projection and richer internal evidence;
+- Case judge expiry semantics do not weaken production UNKNOWN/economic ownership.
 
-The exact finalization path loads one typed profile; library defaults are not release policy. Profile carries target/weight/simulation/terminal provenance. Data-derived values are computed from loaded data, not copied provider names.
+## v0.4.3 audit seams
 
-## Accounting and phase boundary
+### 1. Base report meaning
 
-Keep distinct:
+The architecture intentionally has three ledgers. SPEC-019 must prove which ledger feeds organizer base `distribution`; do not delete ledgers or force them to match.
 
-- **primary assignment** — distribution strategy authority;
-- **attempts** — every invoked provider in cascade order;
-- **settlement** — approved final provider, if any.
+### 2. Independent semantic validation
 
-Count/volume factors evaluate the primary assignment. Once primary assignment is recorded, fallback must not counterfactually add that operation again. Fallback uses the same resolver under explicit fallback phase and applicable non-allocation business factors.
+Keep three distinct validator roles:
 
-## Hard vs soft
+- organizer decisions/public validator: supplied compatibility lower bound;
+- organizer report shape validator: required keys/types/ranges;
+- **semantic report oracle**: independent recomputation from raw inputs + serialized decisions/profile, without ReportBuilder expected values.
 
-All official hard constraints remain absolute and stateful. For the bounded Case domain, only literal `status == "active"` is active. Soft factors compare only eligible providers. Amount hard bounds and preferred amount bands are independent.
+Strict/Serialized validators remain valuable internal consistency checks but are not semantic independence.
 
-## Output boundary
+### 3. Resolver normalization
 
-External compatibility is layered:
+One ConflictResolver remains authority. Candidate-set robustness is tested at factor normalization boundary. If normalization changes, factor interfaces and exact trace fields stay stable.
 
-1. minimal decisions DTO compatible with organizer/public validator;
-2. TZ-compatible report base schema preserving required field names/types;
-3. additive rich exact assignment/attempt/settlement, factor, explanation and recommendation details.
+### 4. Temporal state
 
-Serialize, reparse and validate actual artifacts. Internal rich self-consistency validation and organizer/TZ contract validation are separate authorities.
+ProviderCaseState owns mutable per-run business state. Any daily rollover fix belongs here as deterministic date-scoped state; it must not introduce DB/jobs/clock infrastructure.
 
-## Scoring evidence boundary
+### 5. Optional soft configuration
 
-A factor that is configured but equal for all candidates is non-discriminating and must not appear causally decisive. Stable deterministic tie-break is separate. Canonical profile factor settings must be demonstrably meaningful in finalization-equivalent evidence.
+Missing optional factor configuration must be explicitly neutral. Absence must never silently equal strongest preference.
 
-## Production boundary
+## Protected production kernel
 
-Production economic ownership, UNKNOWN, provider operation identity and durable recovery remain protected. Synthetic case expiry/fallback stays bounded inside competition simulation.
-
-## Performance boundary
-
-Case routing/validation remains in-memory. Hidden-like robustness may use maps/indexes to avoid accidental quadratic scans, but no database/distributed infrastructure is warranted.
+Production ownership, UNKNOWN, idempotency, durable replay/recovery and provider I/O remain separate and frozen unless the authoritative case creates a direct blocker.

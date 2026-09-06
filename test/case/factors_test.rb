@@ -33,6 +33,10 @@ class AuthoritativeCaseFactorsTest < Minitest::Test
         RubyRouting::Case::ProviderCaseState.new(first),
         RubyRouting::Case::ProviderCaseState.new(second)
       ],
+      normalization_candidates: [
+        RubyRouting::Case::ProviderCaseState.new(first),
+        RubyRouting::Case::ProviderCaseState.new(second)
+      ],
       operation: operation, traffic: ledger, as_of: operation.created_at
     )
 
@@ -57,7 +61,8 @@ class AuthoritativeCaseFactorsTest < Minitest::Test
     states = [RubyRouting::Case::ProviderCaseState.new(a), RubyRouting::Case::ProviderCaseState.new(b)]
     resolution = RubyRouting::Case::ConflictResolver.new(
       weights: { count: Rational(1, 1), volume: Rational(1, 1) }
-    ).resolve(candidates: states, operation: operation, traffic: ledger, as_of: operation.created_at)
+    ).resolve(candidates: states, normalization_candidates: states,
+              operation: operation, traffic: ledger, as_of: operation.created_at)
 
     assert_equal %i[count volume], resolution.traces.fetch("a").map(&:factor)
     assert_equal %i[count volume], resolution.traces.fetch("b").map(&:factor)
@@ -82,6 +87,10 @@ class AuthoritativeCaseFactorsTest < Minitest::Test
         RubyRouting::Case::ProviderCaseState.new(b),
         RubyRouting::Case::ProviderCaseState.new(c)
       ],
+      normalization_candidates: [
+        RubyRouting::Case::ProviderCaseState.new(b),
+        RubyRouting::Case::ProviderCaseState.new(c)
+      ],
       operation: operation, traffic: ledger, as_of: operation.created_at, phase: :fallback
     )
 
@@ -92,11 +101,12 @@ class AuthoritativeCaseFactorsTest < Minitest::Test
   end
 
   def test_equal_raw_factor_is_non_discriminating_and_does_not_claim_contribution
+    candidates = [
+      RubyRouting::Case::ProviderCaseState.new(provider("a", priority: 1)),
+      RubyRouting::Case::ProviderCaseState.new(provider("b", priority: 1))
+    ]
     resolution = RubyRouting::Case::ConflictResolver.new(weights: { priority: 1 }).resolve(
-      candidates: [
-        RubyRouting::Case::ProviderCaseState.new(provider("a", priority: 1)),
-        RubyRouting::Case::ProviderCaseState.new(provider("b", priority: 1))
-      ],
+      candidates: candidates, normalization_candidates: candidates,
       operation: operation, traffic: RubyRouting::Case::TrafficLedger.new(%w[a b]),
       as_of: operation.created_at
     )
@@ -119,7 +129,8 @@ class AuthoritativeCaseFactorsTest < Minitest::Test
       },
       min_turnovers: { p: 10_000 }
     )
-    resolution = resolver.resolve(candidates: [state], operation: operation, traffic: ledger, as_of: operation.created_at)
+    resolution = resolver.resolve(candidates: [state], normalization_candidates: [state],
+                                  operation: operation, traffic: ledger, as_of: operation.created_at)
 
     assert_equal 8, resolution.traces.fetch("p").length
     assert resolution.traces.fetch("p").all? { |e| e.raw.is_a?(Integer) || e.raw.is_a?(Rational) }

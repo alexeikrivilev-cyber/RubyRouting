@@ -80,10 +80,12 @@ class AuthoritativeCaseFallbackPhaseTest < Minitest::Test
     resolver = RubyRouting::Case::ConflictResolver.new(weights: { count: 10, volume: 10, priority: 1 })
 
     legacy_counterfactual = resolver.resolve(
-      candidates: states, operation: operation, traffic: ledger, as_of: operation.created_at
+      candidates: states, normalization_candidates: states,
+      operation: operation, traffic: ledger, as_of: operation.created_at
     )
     fallback_resolution = resolver.resolve(
-      candidates: states, operation: operation, traffic: ledger, as_of: operation.created_at, phase: :fallback
+      candidates: states, normalization_candidates: states,
+      operation: operation, traffic: ledger, as_of: operation.created_at, phase: :fallback
     )
 
     expected_fallback_provider = "c" # lower official priority rank: c=1, b=9

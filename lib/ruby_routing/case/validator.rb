@@ -263,10 +263,7 @@ module RubyRouting
       def validate_state_conservation
         @dataset.providers.each do |provider|
           state = @run.state.fetch(provider.payment_system)
-          expected_approved = @dataset.operations.sum do |operation|
-            decision = @decisions_by_id[operation.operation_id]
-            decision&.selected_provider == provider.payment_system && decision.simulated_result == "approved" ? operation.amount : 0
-          end
+          expected_approved = expected_daily_approved(provider)
           expected_routes = @run.decisions.count do |decision|
             decision.selected_provider == provider.payment_system && decision.simulated_result == "approved"
           end
@@ -277,7 +274,7 @@ module RubyRouting
 
             operation.amount
           end
-          add("#{provider.payment_system}: daily approved conservation failed") unless state.daily_approved_amount == provider.daily_approved_amount + expected_approved
+          add("#{provider.payment_system}: daily approved conservation failed") unless state.daily_approved_amount == expected_approved
           add("#{provider.payment_system}: transient exposure must be zero") unless state.transient_count.zero? && state.transient_amount.zero?
           add("#{provider.payment_system}: routed count conservation failed") unless state.routed_count == expected_routes
           add("#{provider.payment_system}: routed volume conservation failed") unless state.routed_volume == expected_routed_volume
@@ -324,7 +321,8 @@ module RubyRouting
             fallback_resolution = assignment_recorded
             resolution = @run.resolver.resolve(
               candidates: eligible, operation: operation, traffic: replay_traffic,
-              as_of: operation.created_at, phase: fallback_resolution ? :fallback : :primary
+              as_of: operation.created_at, phase: fallback_resolution ? :fallback : :primary,
+              normalization_candidates: eligible
             )
             actual = decision.attempts[cursor]
             add("#{operation.operation_id}: resolver replay selected #{resolution.selected_provider}, output selected #{actual&.provider}") unless actual&.provider == resolution.selected_provider
@@ -389,6 +387,27 @@ module RubyRouting
         end
       rescue StandardError => error
         add("stateful replay failed: #{error.class}: #{error.message}")
+      end
+
+      def expected_daily_approved(provider)
+        final_time = @dataset.operations.map(&:created_at).max || @dataset.snapshot_at
+        final_day = calendar_day(final_time)
+        baseline = calendar_day(@dataset.snapshot_at) == final_day ? provider.daily_approved_amount : 0
+        approved_on_final_day = @dataset.operations.sum do |operation|
+          decision = @decisions_by_id[operation.operation_id]
+          if calendar_day(operation.created_at) == final_day &&
+             decision&.selected_provider == provider.payment_system &&
+             decision.simulated_result == "approved"
+            operation.amount
+          else
+            0
+          end
+        end
+        baseline + approved_on_final_day
+      end
+
+      def calendar_day(value)
+        value.utc.strftime("%Y-%m-%d")
       end
 
       def validate_traffic_conservation

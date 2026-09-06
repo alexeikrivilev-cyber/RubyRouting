@@ -37,7 +37,8 @@ class AuthoritativeCaseFactorCampaignTest < Minitest::Test
     RubyRouting::Case::ConflictResolver.new(
       weights: weights, min_turnovers: min_turnovers
     ).resolve(
-      candidates: provider_states, operation: item, traffic: ledger, as_of: item.created_at
+      candidates: provider_states, normalization_candidates: provider_states,
+      operation: item, traffic: ledger, as_of: item.created_at
     )
   end
 
@@ -90,7 +91,7 @@ class AuthoritativeCaseFactorCampaignTest < Minitest::Test
     rpm_states.last.reserve!(rpm_item, as_of: rpm_item.created_at)
     rpm_states.last.release!(rpm_item)
     assert_equal "a", RubyRouting::Case::ConflictResolver.new(weights: { intensity: 1 }).resolve(
-      candidates: rpm_states, operation: rpm_item,
+      candidates: rpm_states, normalization_candidates: rpm_states, operation: rpm_item,
       traffic: RubyRouting::Case::TrafficLedger.new(%w[a b]), as_of: rpm_item.created_at
     ).selected_provider
 
@@ -135,7 +136,7 @@ class AuthoritativeCaseFactorCampaignTest < Minitest::Test
       }
     )
     resolution = resolver.resolve(
-      candidates: states, operation: operation,
+      candidates: states, normalization_candidates: states, operation: operation,
       traffic: RubyRouting::Case::TrafficLedger.new(%w[a b]), as_of: operation.created_at
     )
 

@@ -71,9 +71,11 @@ class AuthoritativeSubmissionProfileTest < Minitest::Test
     traffic = RubyRouting::Case::TrafficLedger.new(dataset.providers.map(&:payment_system), targets: profile.configuration.targets)
     amount_winner = RubyRouting::Case::ConflictResolver.new(
       weights: { amount: 1 }, preferred_amount_ranges: profile.configuration.preferred_amount_ranges
-    ).resolve(candidates: eligible, operation: operation, traffic: traffic, as_of: operation.created_at)
+    ).resolve(candidates: eligible, normalization_candidates: eligible,
+              operation: operation, traffic: traffic, as_of: operation.created_at)
     priority_winner = RubyRouting::Case::ConflictResolver.new(weights: { priority: 1 }).resolve(
-      candidates: eligible, operation: operation, traffic: traffic, as_of: operation.created_at
+      candidates: eligible, normalization_candidates: eligible,
+      operation: operation, traffic: traffic, as_of: operation.created_at
     )
 
     assert_equal "payflow", amount_winner.selected_provider

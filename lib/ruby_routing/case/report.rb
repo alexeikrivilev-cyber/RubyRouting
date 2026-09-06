@@ -239,6 +239,8 @@ module RubyRouting
             result[provider_id] = {
               hard_forced_assignments: provider_decisions.count { |decision| hard_forced?(decision) },
               fallback_assignments: provider_decisions.count { |decision| fallback?(decision) },
+              terminal_fallback_assignments: provider_id == terminal_provider_id ?
+                @decisions.count { |decision| terminal_fallback?(decision) } : 0,
               hard_exclusions: exclusions_by_provider.fetch(provider_id, {}).dup,
               target_count_gap: -values[:count_deviation],
               target_volume_gap: -values[:volume_deviation]
@@ -362,6 +364,22 @@ module RubyRouting
             }
           end
 
+          if provider_id == terminal_provider_id &&
+             causes[:terminal_fallback_assignments].positive? &&
+             (values[:count_deviation].positive? || values[:volume_deviation].positive?)
+            result << {
+              kind: "terminal_fallback_deviation",
+              provider: provider_id,
+              evidence: {
+                terminal_fallback_assignments: causes[:terminal_fallback_assignments],
+                target_count: values[:target_count_share], actual_count: values[:count_share],
+                target_volume: values[:target_volume_share], actual_volume: values[:volume_share],
+                hard_excluded_alternatives: terminal_hard_exclusion_causes
+              },
+              action: "terminal fallback is the configured safety path; restore external coverage before changing traffic targets"
+            }
+          end
+
           causes = deviation_causes.fetch(provider_id)
           if (values[:count_deviation].negative? || values[:volume_deviation].negative?) &&
              causes[:hard_exclusions].values.sum.positive?
@@ -447,6 +465,8 @@ module RubyRouting
           "#{provider} target is bounded by whole-operation granularity; use a larger workload before changing policy."
         when "daily_utilization_near_limit"
           "#{provider} is near its daily limit at #{percentage_text(evidence.fetch(:utilization))}%; preserve #{evidence.fetch(:remaining)} units of headroom or raise the daily limit."
+        when "terminal_fallback_deviation"
+          "#{provider} exceeded its zero target because #{evidence.fetch(:terminal_fallback_assignments)} operation(s) used the configured terminal fallback after external hard exclusions; restore external coverage before changing targets."
         else
           "Review #{provider} routing evidence for #{detail.fetch(:kind)}."
         end
@@ -458,6 +478,21 @@ module RubyRouting
 
       def primary_provider(decision)
         assignment_attempt(decision)&.provider
+      end
+
+      def terminal_fallback?(decision)
+        decision.selected_provider == terminal_provider_id &&
+          decision.attempts.last&.provider == terminal_provider_id
+      end
+
+      def terminal_hard_exclusion_causes
+        @terminal_hard_exclusion_causes ||= @decisions.each_with_object(Hash.new(0)) do |decision, result|
+          next unless terminal_fallback?(decision)
+
+          decision.attempts.each do |attempt|
+            result[attempt.reason] += 1 if attempt.hard_skipped?
+          end
+        end
       end
 
       def build_attempt_ledger

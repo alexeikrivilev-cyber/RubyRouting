@@ -2,147 +2,124 @@
 
 ## Mission
 
-Build the strongest submission-grade Ruby solution for Hack.Genesis **«Умный роутинг выплат»** under the authoritative TZ and rubric.
+Drive RubyRouting to a defensible 10/10 Hack.Genesis submission under the authoritative TZ and rubric.
 
-Current Version Goal: **v0.4.2 — Submission Contract Fidelity & Scoring Semantics Closure — VERSION_COMPLETE**.
+Current Version Goal: **v0.4.3 — Adversarial Evidence & Contract Semantics Closure — VERSION_COMPLETE**.
 
-Opening baseline: `e9a24923aebfdb1b01223a360b3f3f2b4e84ee45` (completed v0.4.1 submission-policy baseline).
+Opening baseline: `277d6b68d568eceb88ece3b3e466987535ff75bd` (completed v0.4.2 baseline).
 
 ## Read before coding
 
-1. `README.md`
-2. `AGENTS.md`
-3. `docs/AUTHORITY.md`
-4. SPEC-018
-5. compatible SPEC-017/SPEC-016 baseline semantics
-6. `docs/TZ_REQUIREMENT_MATRIX.md`
-7. `docs/exec-plans/completed/submission-contract-fidelity-scoring-semantics.md` (closure plan)
-8. `docs/POST_TZ_BACKLOG.md`
-9. current architecture/decisions/completion/testing/workflow docs
-10. actual `data/`, organizer sample/reference/validator, case code/tests and exact-head CI.
+`README.md -> AGENTS.md -> docs/AUTHORITY.md -> SPEC-019 -> compatible SPEC-018/SPEC-017/SPEC-016 -> TZ_REQUIREMENT_MATRIX -> completed v0.4.3 ExecPlan -> POST_TZ_BACKLOG -> current architecture/decisions/completion/testing/workflow -> actual data/code/artifacts/CI`.
 
-Documentation sets intended authority. Code and generated artifacts prove reality.
+Documentation states intended authority. Exact code and generated artifacts prove reality.
 
-## Why v0.4.2 is VERSION_COMPLETE
+## Operating rule
 
-The v0.4.1 code is strong and its exact-head CI was green, but a fresh code-first audit found material competition-boundary defects:
+This cycle is an adversarial evidence session, not a feature sprint.
 
-- submitted report shape drifts from the base structure shown by the TZ;
-- post-write report validation is correlated with the same report builder and cannot independently detect that drift;
-- fallback ranking can apply count/volume counterfactuals after the current operation is already recorded as a primary assignment;
-- Case `active?` accepts `enabled` while authoritative/public eligibility requires exact `active`;
-- selected reasons are generic;
-- release amount preferences are non-discriminating;
-- neutral factors claim full contribution;
-- recommendation/feasibility output needs stronger causal, quantitative evidence.
+For every finding:
 
-The known P0/P1 scope is covered by fresh case/artifact evidence. An independent
-blind code/data/output pass found two material local issues—misleading workload
-granularity advice for hard-forced routing and permissive empty/out-of-range report
-projections—and both were fixed with deterministic regressions. Fresh exact-head
-verification and Actions are green; no material local P0/P1 remains.
+`exact HEAD -> independent reproducer/counterexample -> state the invariant/contract -> classify confirmed or falsified -> smallest justified change OR evidence-close unchanged behavior -> focused tests -> adjacent tests -> real finalization/artifacts -> independent oracle -> broad verification -> docs/matrix/plan -> commit/push`.
 
-## Mandatory order
+Do not “fix” a hypothesis before reproducing it. Do not preserve a design merely because existing tests replay the same implementation.
 
-### P0 — authoritative report contract
+## Mandatory work order
 
-Preserve the TZ base report fields/types instead of replacing them with the rich internal schema. Keep rich analytics as additive extensions.
+### P1-A — organizer distribution accounting point — CLOSED
 
-At minimum the organizer-facing report projection must expose:
+Current code intentionally records count/volume against the first selected provider, while `selected_provider` is the final cascade provider. SPEC-019 evidence-closed the authority ambiguity with a conservative, reversible primary-assignment base projection and retained rich final/settlement ledgers.
 
-- scalar `period`;
-- `total_operations`;
-- `distribution.<provider>.count/share_pct/target_pct`;
-- `skip_reasons`;
-- `projected_daily_utilization.<provider>.used/limit/utilization_pct`;
-- judge-readable string `recommendations`.
+Required evidence:
 
-Create an independent contract validator whose required fields/types are encoded from the TZ, not reconstructed from `ReportBuilder`. Run it on the serialized file from finalization.
+- build a deterministic rejection/expiry case where primary provider != final provider;
+- independently compute three candidate projections: primary assignment, final selected route, approved settlement;
+- compare each to the literal TZ language and report example/rubric;
+- document the chosen contract and keep all three rich ledgers regardless;
+- if authority is genuinely ambiguous, choose the most conservative projection and make the ambiguity explicit/reversible.
 
-Internal exact Rational arithmetic remains exact; percentage conversion occurs only at the compatibility boundary under an explicit rounding rule.
+Do not silently move TrafficLedger accounting just to make decisions/report totals look alike.
 
-### P1-A — exact Case status semantics
+### P1-B — independent semantic report oracle — CLOSED
 
-For the bounded competition domain, only literal `status == "active"` is eligible. Do not let a broader production status vocabulary leak into organizer semantics.
+`OrganizerReportContractValidator` proves shape/types, not business truth. The separate `OrganizerReportSemanticValidator` now recomputes the required business fields from raw inputs plus serialized decisions/report without rebuilding `ReportBuilder` output.
 
-### P1-B — phase-correct fallback scoring
+At minimum validate from raw queue/providers/profile/serialized decisions/report:
 
-Primary count/volume objectives apply to the provider initially assigned the new payout. Once primary assignment is recorded, fallback must not counterfactually add the same operation again.
+- `total_operations` equals queue length;
+- distribution provider identities are valid and complete under the chosen base contract;
+- distribution counts sum to the intended population;
+- `share_pct` is recomputed from counts and denominator under the chosen accounting semantics within explicit rounding tolerance;
+- `target_pct` is recomputed from the submission profile/source;
+- projected utilization recomputes `used`, `limit`, `utilization_pct` from initial snapshot + approved settlement semantics;
+- report period matches the authoritative temporal interpretation;
+- recommendations may be additive, but no semantic validator may use `ReportBuilder` as its expected-value oracle.
 
-Keep one resolver and one policy authority. Pass explicit phase/context so fallback ranks remaining eligible providers with the applicable business factors without mutating or double-projecting primary distribution.
+Keep existing shape validator and strict self-consistency validator; this is an additional independent layer.
 
-Write an independent regression where the old phantom count/volume term changes B-vs-C fallback order. A replay that copies Router logic is not an independent oracle.
+### P1-C — candidate-set normalization robustness — CLOSED
 
-### P1-C — concrete selection reasons
+The adversarial real-factor campaign reproduced candidate-relative scale drift and the resolver now requires an explicit complete normalization pool:
 
-Do not emit `reason: selected` as the only explanation. Use stable minimal codes such as `only_eligible_provider`, `highest_composite_score`, `fallback_highest_composite_score`, and terminal reasons. Keep full factor traces in report/internal evidence.
+- hold A and B provider/business values constant;
+- add/remove C while keeping C non-winning and hard-eligible;
+- test whether A-vs-B ordering changes materially;
+- run across count/volume, priority, conversion, load and canonical mixed weights;
+- distinguish legitimate change (C changes allocation denominator/business opportunity) from pure normalization artifact.
 
-### P1-D — amount strategy and factor honesty
+Change normalization only if a material routing or explanation defect is reproduced. Prefer bounded/domain normalization per factor if necessary; preserve exact arithmetic and inspectable raw/normalized/contribution traces.
 
-The canonical profile must use meaningful independent preferred amount bands that can actually distinguish hard-eligible providers. Do not overfit exact public rows.
+### P1-D — daily-state temporal semantics — CLOSED
 
-If a factor has equal raw value for every candidate, it is non-discriminating: it must not claim full causal contribution. Deterministic tie-break remains separate.
+Public data is single-day; hidden queue semantics must not be guessed. The cross-midnight campaign established deterministic UTC date-scoped daily state for the ordered Case queue.
 
-### P1-E — analytics / recommendations / feasibility
+- inspect authoritative TZ/sample for period/day guarantees;
+- reproduce a queue crossing midnight with daily limits;
+- if multi-day input is permitted/unspecified and current cumulative behavior becomes wrong, implement deterministic day-bucket/reset semantics from the supplied snapshot and operation timestamps;
+- if the contract is explicitly single operational day, document and fail closed on incompatible cross-day queues rather than silently applying stale daily usage.
 
-Recommendations must name the evidence and the concrete rule/parameter/action. Add strong cases for near-limit daily utilization, structural under-target exclusions, hard-forced over-target traffic and bounded workload granularity.
+Do not introduce persistence or scheduling infrastructure.
 
-Keep base `recommendations` judge-readable strings; put structured evidence in additive `recommendation_details`.
+### P1-E — missing preferred amount configuration — CLOSED
 
-### P2 — evidence-gated semantics
+`AmountPreferenceFactor` no longer returns maximum raw preference when a provider has no preferred range. The missing-band campaign established neutral/non-discriminating semantics.
 
-Only after P0/P1 closure:
+Build a new-provider regression where only one provider lacks a band. Missing optional soft configuration must be explicitly neutral/non-discriminating, not silently best. Choose the minimal representation that keeps existing configured providers unchanged and explanations honest.
 
-- reconsider volume target provenance so count and volume goals are explicitly distinct;
-- audit candidate-relative normalization against domain-normalized counterexamples;
-- separate terminal identity from generic zero-participation semantics where useful.
+### P2 follow-ups
 
-Do not destabilize the submission for theoretical purity without a failing or materially misleading example.
+Only after P1 closure:
 
-## Protected architecture
+- verify explicit terminal identity is not semantically coupled to zero traffic more than the TZ requires;
+- improve terminal/direct-fallback deviation causality only if a concrete report counterexample shows judge-facing ambiguity;
+- do not reopen volume-target provenance, generic recovery or production architecture without new evidence.
 
-Keep one competition path:
+## Protected boundaries
 
-`Input -> SubmissionProfile -> CaseState -> HardConstraintEvaluator -> Traffic/Attempt/Settlement ledgers -> Factors -> ConflictResolver -> Router/Simulator -> organizer projections -> independent validators`.
+Keep one Case path:
 
-Hard constraints stay absolute and rerun on fallback. A score never revives an ineligible provider.
+`Input -> SubmissionProfile -> CaseState -> HardConstraintEvaluator -> ledgers -> Factors -> ConflictResolver -> Router/Simulator -> decisions/report projections -> independent validators`.
 
-## Protected production kernel
-
-Never weaken production UNKNOWN/economic ownership to satisfy synthetic judge expiry. Judge `expired -> next provider` remains inside `RubyRouting::Case`.
-
-## Evidence discipline
-
-For every material fix:
-
-`reproduce on exact HEAD -> state invariant -> smallest semantic change -> focused tests -> adjacent fallback/accounting/scoring tests -> fresh finalization -> public decisions validator -> independent TZ report validator -> strict serialized validator -> inherited relevant suites -> matrix/plan/docs -> coherent commit/push`.
-
-Do not use public-validator permissiveness or a self-generated validator as the only oracle.
+Hard constraints are absolute. Judge `expired -> next provider` remains bounded to Case and must not weaken production UNKNOWN/economic-ownership guarantees.
 
 ## Candidate gate
 
-Before `VERSION_CANDIDATE`, prove:
+Before `VERSION_CANDIDATE`:
 
-- serialized report preserves the TZ base contract and rich extensions;
-- independent report validator passes on fresh finalization;
-- public decisions validator remains green;
-- Case only routes literal active providers;
-- fallback no longer applies a phantom count/volume counterfactual;
-- accounting conservation remains exact;
-- selected reasons are concrete;
-- canonical amount strategy can affect a finalization-equivalent decision;
-- neutral factors are contribution-neutral;
-- recommendation and constrained-under-target evidence are causal and quantitative;
-- requirement matrix has no material P0/P1 `PARTIAL/MISSING/CONFLICT`.
+- accounting-point semantics are explicitly proven or conservatively documented;
+- serialized report passes independent shape and semantic validation;
+- normalization adversarial campaign is either fixed or evidence-closed with concrete tests;
+- daily-state behavior is correct/fail-closed for the authoritative temporal contract;
+- missing amount-range configuration cannot gain hidden preference;
+- public validator and canonical finalization remain green;
+- no material P0/P1 row remains PARTIAL/MISSING/CONFLICT in the current matrix.
 
-This produces candidate only. Completion additionally requires the independent blind
-code/data/artifact pass, fresh exact-head verification and exact pushed-head CI; those
-gates are satisfied for the current release.
+Candidate was followed by a fresh blind pass. New material P0/P1 found there were closed by TZ19-106/107; the subsequent exact-head gate is VERSION_COMPLETE.
 
 ## Non-goals
 
-No Rails/ORM, DB, Redis/Sidekiq, queues, microservices, real PSP integrations, ML/bandits/neural networks, generic DSL/plugins, broad Coordinator rewrite or generic recovery work without a direct SPEC-018 blocker.
+No database, Redis, queues, microservices, real PSP, ML, general DSL, broad Coordinator refactor or generic pre-TZ hardening without a direct SPEC-019 blocker.
 
 ## Goal Mode
 
-Work continuously while the next release/scoring step is derivable. Do not stop after one green fix, one validator, or one checklist. Stop only after genuine v0.4.2 completion under `docs/COMPLETION_POLICY.md`, a non-resolvable external blocker, or new authoritative organizer clarification that changes the contract.
+Continue autonomously while the next step is derivable. Do not stop after one green probe or one commit. Do not ask “continue?” when the plan determines the next action. Stop only at genuine VERSION_COMPLETE, a non-resolvable external ambiguity that cannot be conservatively handled, or a new authoritative organizer clarification requiring replanning.

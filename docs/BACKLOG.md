@@ -1,7 +1,5 @@
-# RubyRouting Backlog
+# Backlog Pointer
 
-Current canonical backlog: **`docs/POST_TZ_BACKLOG.md`** for **v0.4.2 / SPEC-018 — VERSION_COMPLETE**.
+Current canonical backlog: **`POST_TZ_BACKLOG.md`** for **v0.4.3 / SPEC-019 — VERSION_COMPLETE**.
 
-v0.4.1 / SPEC-017 and v0.4.0 / SPEC-016 are completed baseline evidence, not the current work queue. Pre-TZ backlogs are historical only.
-
-Follow `docs/AUTHORITY.md` → SPEC-018 → active v0.4.2 ExecPlan → `POST_TZ_BACKLOG.md`. Do not execute an older item merely because it remains in Git history.
+Follow `AUTHORITY.md` -> SPEC-019 -> the completed v0.4.3 ExecPlan -> `POST_TZ_BACKLOG.md`. v0.4.3 has no open locally actionable backlog; v0.4.2/SPEC-018 and older backlogs are completed/historical evidence.

@@ -251,7 +251,11 @@ module RubyRouting
 
           resolution = @resolver.resolve(
             candidates: eligible_states, operation: operation, traffic: traffic, as_of: as_of,
-            phase: assignment_recorded ? :fallback : :primary
+            phase: assignment_recorded ? :fallback : :primary,
+            # Keep normalization tied to the complete current opportunity
+            # set. Alternate callers comparing subsets must pass the same
+            # pool explicitly to avoid candidate-set scale drift.
+            normalization_candidates: eligible_states
           )
           resolution_reason = resolution.selection_reason(candidate_count: eligible_states.length)
           provider = eligible_states.find { |item| item.provider.payment_system == resolution.selected_provider }.provider
