@@ -44,14 +44,25 @@ module RubyRouting
       def initialize(provider_id:, state: :healthy, operational_failure_count: 0,
                      consecutive_failure_count: 0, consecutive_success_count: 0,
                      probe_in_flight: 0, probe_limit: 1)
-        @provider_id = provider_id.to_s.freeze
-        @state = state.to_sym
-        raise ArgumentError, "unsupported health state" unless STATES.include?(@state)
-        @operational_failure_count = operational_failure_count
-        @consecutive_failure_count = consecutive_failure_count
-        @consecutive_success_count = consecutive_success_count
-        @probe_in_flight = probe_in_flight
-        @probe_limit = probe_limit
+        @provider_id = normalize_provider_id(provider_id)
+        @state = normalize_enum(state, STATES, "health state")
+        @operational_failure_count = normalize_non_negative_integer(
+          operational_failure_count,
+          "operational_failure_count"
+        )
+        @consecutive_failure_count = normalize_non_negative_integer(
+          consecutive_failure_count,
+          "consecutive_failure_count"
+        )
+        @consecutive_success_count = normalize_non_negative_integer(
+          consecutive_success_count,
+          "consecutive_success_count"
+        )
+        @probe_in_flight = normalize_non_negative_integer(probe_in_flight, "probe_in_flight")
+        @probe_limit = normalize_positive_integer(probe_limit, "probe_limit")
+        if @probe_in_flight > @probe_limit
+          raise ArgumentError, "probe_in_flight must not exceed probe_limit"
+        end
         freeze
       end
 
@@ -70,10 +81,40 @@ module RubyRouting
           probe_limit: probe_limit
         }.freeze
       end
+
+      private
+
+      def normalize_provider_id(provider_id)
+        normalized = provider_id.to_s.strip
+        raise ArgumentError, "provider id must be non-empty" if normalized.empty?
+
+        normalized.freeze
+      end
+
+      def normalize_enum(value, allowed, label)
+        RubyRouting::Enum.normalize(value, allowed, label)
+      end
+
+      def normalize_non_negative_integer(value, label)
+        unless value.is_a?(Integer) && value >= 0
+          raise ArgumentError, "#{label} must be a non-negative Integer"
+        end
+
+        value
+      end
+
+      def normalize_positive_integer(value, label)
+        unless value.is_a?(Integer) && value.positive?
+          raise ArgumentError, "#{label} must be a positive Integer"
+        end
+
+        value
+      end
     end
 
     class HealthController
       SIGNALS = %i[operational_failure operational_success timeout provider_failure recipient_failure].freeze
+      ATTRIBUTIONS = %i[provider recipient downstream policy unknown].freeze
 
       attr_reader :policy
 
@@ -106,15 +147,16 @@ module RubyRouting
 
       def reserve_exposure(provider_id, owner: nil)
         normalized_provider_id = normalize_provider_id(provider_id)
+        normalized_owner = normalize_owner(owner) unless owner.nil?
         ensure_provider(normalized_provider_id)
         state = @states[normalized_provider_id]
-        return true if owner && state.operation_probe_owners.key?(owner.to_s)
+        return true if normalized_owner && state.operation_probe_owners.key?(normalized_owner)
         return false if state.state == :quarantined
         return true unless state.state == :probing
         return false if state.probe_in_flight >= @policy.probe_limit
 
-        if owner
-          state.reserve_operation_probe(owner)
+        if normalized_owner
+          state.reserve_operation_probe(normalized_owner)
         else
           state.reserve_direct_probe
         end
@@ -126,26 +168,28 @@ module RubyRouting
         return unless state
 
         if owner
-          state.release_operation_probe(owner)
+          state.release_operation_probe(normalize_owner(owner))
         else
           state.release_direct_probe
         end
+        promote_if_recovered(state)
       end
 
       def observe(provider_id:, signal:, attribution: :unknown, release_exposure: true)
-        normalized_signal = signal.to_sym
-        raise ArgumentError, "unsupported health signal" unless SIGNALS.include?(normalized_signal)
+        normalized_release_exposure = normalize_boolean(release_exposure, "release_exposure")
+        normalized_signal = normalize_enum(signal, SIGNALS, "health signal")
+        normalized_attribution = normalize_enum(attribution, ATTRIBUTIONS, "health attribution")
 
         normalized_provider_id = normalize_provider_id(provider_id)
         ensure_provider(normalized_provider_id)
         state = @states[normalized_provider_id]
         before = state.snapshot
-        if normalized_signal == :recipient_failure || attribution.to_sym != :provider
+        if normalized_signal == :recipient_failure || normalized_attribution != :provider
           return [before, before]
         end
 
         if %i[operational_failure timeout provider_failure].include?(normalized_signal)
-          state.release_direct_probe if release_exposure
+          state.release_direct_probe if normalized_release_exposure
           state.record_failure
           if state.consecutive_failure_count >= @policy.quarantine_after
             state.state = :quarantined
@@ -153,10 +197,12 @@ module RubyRouting
             state.state = :degraded
           end
         elsif normalized_signal == :operational_success
-          state.release_direct_probe if release_exposure
+          state.release_direct_probe if normalized_release_exposure
           state.record_success
           if state.state == :quarantined
             state.state = :probing
+          elsif state.state == :probing
+            promote_if_recovered(state)
           elsif state.consecutive_success_count >= @policy.recover_after
             state.state = :healthy
           end
@@ -174,8 +220,33 @@ module RubyRouting
         normalized
       end
 
+      def normalize_owner(owner)
+        normalized = owner.to_s.strip
+        raise ArgumentError, "probe owner must be non-empty" if normalized.empty?
+
+        normalized
+      end
+
+      def normalize_boolean(value, label)
+        return value if value == true || value == false
+
+        raise ArgumentError, "#{label} must be boolean"
+      end
+
+      def normalize_enum(value, allowed, label)
+        RubyRouting::Enum.normalize(value, allowed, label)
+      end
+
       def default_snapshot(provider_id)
         ProviderHealthSnapshot.new(provider_id: provider_id, probe_limit: @policy.probe_limit)
+      end
+
+      def promote_if_recovered(state)
+        return unless state.state == :probing
+        return unless state.consecutive_success_count >= @policy.recover_after
+        return unless state.probe_in_flight.zero?
+
+        state.state = :healthy
       end
 
       class MutableState
@@ -207,7 +278,7 @@ module RubyRouting
         end
 
         def reserve_operation_probe(owner)
-          @operation_probe_owners[owner.to_s] = true
+          @operation_probe_owners[owner] = true
         end
 
         def record_failure
@@ -226,7 +297,7 @@ module RubyRouting
         end
 
         def release_operation_probe(owner)
-          @operation_probe_owners.delete(owner.to_s)
+          @operation_probe_owners.delete(owner)
         end
 
         def snapshot

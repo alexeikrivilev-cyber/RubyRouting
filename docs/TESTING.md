@@ -1,392 +1,252 @@
 # Testing Strategy
 
-This document defines how RubyRouting proves correctness for the current **v0.2 — Pre-TZ Comprehensive Routing Core**.
+Current target: **v0.3 — Product Convergence & Full Routing Product**.
 
-Behavior is governed by SPEC-001, SPEC-002 and SPEC-003. `docs/COMPLETION_POLICY.md` governs whether test evidence is sufficient for a version-complete claim.
+Testing exists to falsify financial, routing, restart and integration assumptions. Green tests are necessary but never sufficient for version completion.
 
-The goal is not maximum line coverage. The goal is evidence that payout routing preserves safety, allocation correctness, recovery semantics, replayability and causal analytics across normal, boundary, concurrent, delayed, duplicated, reordered and degraded execution.
+## 1. Ruby-only and deterministic by default
 
-## 1. Green tests are not completeness proof
+All executable product/reference/simulator/property/model/concurrency/fault logic is Ruby.
 
-A green suite is necessary but never sufficient to declare the version complete.
+Correctness-sensitive tests must use controlled time and reproducible randomness. Global `rand`, real `sleep` and wall-clock time are not acceptable in core verification unless the test is explicitly a nondeterministic load experiment outside correctness gates.
 
-It proves only behavior represented by current tests. Version closure also requires source/spec reconciliation, full capability-matrix sweep, repository discovery, adversarial review, backlog audit and documentation consistency.
+Generated/fuzz failures must record seed/trace and become deterministic regressions when material.
 
-Test counts, assertion counts and coverage are evidence, not the definition of done.
+## 2. Core verification objectives
 
-## 2. Ruby-only test policy
+Prove:
 
-Production implementation, routing algorithms, reference/oracle models, simulators, property generators, state-machine models, concurrency harnesses and executable domain tests are Ruby-only.
+1. one economic intent cannot accidentally create multiple independent payout effects;
+2. dispatch/UNKNOWN/safe-release semantics are correct;
+3. count/volume allocation follows explicit policy with exact arithmetic and committed work;
+4. opportunity, live admission and optimization stay separate;
+5. throughput/rate state is not confused with concurrent capacity exposure;
+6. optimizer cannot violate hard/admission/allocation constraints;
+7. provider health uses correct attribution and controlled recovery;
+8. recovery/reconciliation obey operation contracts, budgets and time;
+9. duplicate/delayed/out-of-order events do not corrupt state;
+10. settlement/reversal/economic conflict remain distinct;
+11. facts/replay match supported live state;
+12. durable restart safely restores the state required to continue unresolved payouts;
+13. analytics conserve opportunity/assignment/attempt/settlement semantics;
+14. critical concurrency histories remain safe;
+15. public/provider boundaries cannot inject trusted financial semantics incorrectly.
 
-Minimal CI/shell/YAML orchestration is allowed. Do not create a second router/oracle in another language.
+## 3. Test layers
 
-## 3. Verification objectives
+### A — Value/unit
 
-The test system must prove, as applicable:
+Money, policy values, constraints, exact discrepancy, provider contracts, normalized outcomes, health/admission arithmetic, typed reasons.
 
-1. **Economic safety** — one intent cannot accidentally create multiple independent monetary effects.
-2. **Dispatch safety** — committed, dispatching, definitely-not-sent, ambiguous and observed operation states are distinguished.
-3. **Allocation correctness** — count/volume policies follow explicit scope/accounting/window/tolerance/constraints using exact arithmetic and committed work.
-4. **Policy correctness** — identity/fingerprint/epoch and static/runtime feasibility cannot silently change meaning.
-5. **Eligibility correctness** — functional opportunity is context-aware and separate from live feasibility.
-6. **Capacity correctness** — reservations are atomic, bounded and duplicate-safe.
-7. **Health correctness** — only attributable signals change provider exposure; hysteresis/probing prevents flapping/recovery stampede.
-8. **Ranking correctness** — ranking operates only inside the safe feasible set.
-9. **Recovery correctness** — retry, resolve, fallback, defer, reconciliation and terminal stop obey operation contracts/budgets/time.
-10. **Event correctness** — duplicate/delayed/out-of-order observations do not corrupt state or invent chronology.
-11. **Settlement correctness** — settlement, reversal/return and economic conflict are distinct.
-12. **Replay correctness** — facts rebuild supported lifecycle/ownership/settlement/conflict state deterministically.
-13. **Analytics correctness** — primary/recovery/settlement/deviation/attribution metrics are conserved and typed.
-14. **Concurrency correctness** — critical histories are equivalent to legal sequential behavior for required invariants.
-15. **Performance fitness** — measured after correctness; official gates only after TZ provides limits.
+### B — Deterministic acceptance/regression
 
-## 4. Test architecture
+Every normative behavior and every material bug has explicit executable evidence.
 
-### 4.1 Production system under test
+### C — Independent oracle/property
 
-Prefer domain/application boundaries over private-method tests when observable behavior can be exercised directly.
+Reference models should cover:
 
-### 4.2 Independent reference/oracle model
-
-Maintain a deliberately simple Ruby reference model for semantics that benefit from an oracle:
-
-- allocation discrepancy/constraints;
-- ownership and operation legality;
+- allocation/discrepancy;
+- ownership legality;
 - recovery action legality;
-- capacity conservation;
-- health transition baseline where useful;
-- lifecycle replay/projection invariants.
+- admission/capacity conservation;
+- lifecycle/replay invariants;
+- policy/share invariants.
 
-The oracle must not call the production algorithm it verifies.
+The oracle must not invoke production algorithms it verifies.
 
-### 4.3 Deterministic provider simulator
+### D — State-machine/model histories
 
-The simulator must support scripted behavior including:
+Generate long histories with submit, dispatch, observations, UNKNOWN/pending, resolve/retry/fallback, provider state changes, policy changes, capacity/admission, health, reconciliation, reversal/conflict and replay.
+
+### E — Controlled concurrency
+
+Required race families include:
+
+- two workers for one payout;
+- duplicate submit during dispatch;
+- concurrent primary allocation over one deficit;
+- competing last capacity/admission slot;
+- provider state change versus decision commit;
+- safe release versus fallback;
+- callback versus reconciliation/status lookup;
+- restart/recovery handoff where simulated.
+
+Use barriers/hooks, not hope-based stress.
+
+### F — Provider contract/normalization
+
+For each simulator/real adapter verify raw-to-domain mapping, idempotency identity, status resolution, transport ambiguity, terminal/pending/unknown semantics, ordering and duplicate behavior.
+
+Raw payload fields cannot directly bypass normalization to assert financial safety.
+
+### G — End-to-end scenarios
+
+High-value cases:
 
 - immediate success;
-- safe route/provider failure;
-- terminal recipient/payout failure;
-- definitely-not-sent transport failure;
-- ambiguous-after-send timeout -> UNKNOWN;
-- PENDING -> success/failure;
-- long unresolved pending;
-- delayed success after timeout;
-- duplicate callbacks;
-- delayed/out-of-order observations;
-- authoritative sequence/version where configured;
-- malformed/unknown provider response;
-- temporary provider unavailable/rate-limited/capacity constrained;
-- same-provider idempotent retry;
-- status lookup;
-- provider disablement after operation creation;
-- success followed by return/reversal;
-- late old-operation success after fallback/new settlement.
+- primary safe failure -> fallback success;
+- primary UNKNOWN while alternates healthy -> no cross-provider fallback;
+- pending -> resolve -> success;
+- provider disabled after operation creation -> old operation still resolves;
+- skewed allocation plus fallback;
+- outage/capacity/health pressure with target deviation attribution;
+- large indivisible volume;
+- policy epoch change;
+- late old success after newer settlement -> conflict;
+- settlement -> reversal;
+- no-safe-route/defer/resume;
+- ownerless defer is represented as `:deferred` in live state, working restore,
+  replay and analytics, while owner-held defer preserves the unresolved status;
+- malformed `DecisionProposal` control shapes (invalid defer/terminal roles or
+  non-operation provider/operation/attempt identifiers) fail at construction;
+- concurrent many-payout allocation;
+- restart with UNKNOWN/pending owner.
 
-Time, IDs, ordering and random choices must be controllable.
+### H — Replay and durable restart
 
-### 4.4 Controlled time
+Replay and restart are different tests.
 
-Core tests must not depend on real `sleep`.
+Replay test:
 
-Use injectable/controlled time for:
+`facts -> read projection` equals live supported projection.
 
-- deadlines;
-- pending age;
-- idempotency/status TTL;
-- health windows/cooldowns;
-- probing/recovery exposure;
-- allocation windows where time-based semantics are configured.
+Restart test:
 
-### 4.5 Reproducible randomness
+`durable state -> fresh working application/coordinator -> continue commands safely`.
 
-Deterministic core routing should not require randomness. Generated/property tests use explicit seeds and report them. Material failures become deterministic regressions.
+At least one durable continuation regression must cross an actual fresh Ruby
+process, not only instantiate a second coordinator in the original process;
+the child must restore the durable policy/provider state it needs rather than
+receiving the original runtime catalog as an implicit shortcut. The parent must
+also reopen the journal after the child exits and verify the terminal facts.
 
-## 5. Verification layers
+Required restart crash points include, when durability exists:
 
-### Layer A — value/unit tests
+- after decision/reservation before provider dispatch;
+- after provider may have accepted but before response persisted;
+- after UNKNOWN persisted;
+- after safe release before fallback;
+- after settlement before acknowledgement;
+- during reconciliation state.
 
-Use for:
+A fresh process must not gain permission to start another provider solely because volatile ownership was lost.
 
-- Money;
-- policy fingerprint/validation;
-- exact discrepancy;
-- provider constraints;
-- capacity arithmetic;
-- normalized outcome/transport classification;
-- health state predicates;
-- typed reason/deviation values.
+Replay corruption tests must also remove the lifecycle phase transition paired
+with an applied pending/unknown observation, including an observation that
+arrives after a resolution decision. Restore must reject the resulting
+action/outcome/phase mismatch rather than exposing a misleading in-flight
+state that suppresses safe recovery.
 
-### Layer B — deterministic acceptance/regression tests
+Durable corruption tests must include truncated/invalid records and explicit failure/controlled repair semantics.
 
-Every implemented normative requirement has executable evidence. Critical safety rules need positive and negative cases.
+### I — Seeded chaos/fault
 
-Every material bug gets a deterministic regression before/with the fix where practical.
+A deterministic chaos simulator should support scripted/seeded:
 
-### Layer C — property/invariant tests
+- connection failure definitely not sent;
+- timeout after possible send;
+- provider reject;
+- recipient terminal failure;
+- delayed success;
+- duplicate callback;
+- out-of-order callback;
+- provider outage/recovery;
+- capacity/rate rejection;
+- slow/pending outcome;
+- late return/reversal.
 
-Generate many valid policies, provider sets, amounts, availability/capacity/health states and histories.
+### J — Performance/load
 
-Important properties:
+Correctness comes first.
 
-- selected provider is functionally/live feasible;
-- one unresolved economic owner;
-- UNKNOWN retains ownership;
-- fresh fallback excludes attempted money-moving providers;
-- primary recovery accounting conservation;
-- allocation choice is oracle-optimal within hard constraints;
-- capacity never negative/leaked;
-- recipient failure does not degrade provider health;
-- ranking never resurrects hard-excluded provider;
-- duplicate observations are idempotent;
-- replay equals live supported projection;
-- analytics conservation.
+Maintain fast CI-sized tests separately from heavy load campaigns.
 
-### Layer D — state-machine/model tests
+When claiming 10k/100k scale, a dedicated reproducible harness must actually execute that scale and record environment/results. Do not name a 300-payout test “100k”.
 
-Generate long command/event histories across:
+Measure:
 
-- create/submit intent;
-- primary route;
-- dispatch begin/evidence;
-- provider success/failure/pending/unknown;
-- resolve/status lookup;
-- same-provider retry;
-- safe fallback;
-- provider enable/disable;
-- capacity changes;
-- health transitions;
-- policy epoch/fingerprint changes;
-- duplicate command;
-- delayed/out-of-order observation;
-- reconciliation;
-- return/reversal;
-- replay.
-
-Compare expected state/actions/invariants after every step.
-
-### Layer E — controlled concurrency/interleaving
-
-Force races with barriers/hooks rather than hoping stress finds them.
-
-Required race families:
-
-- two workers acquire owner for same payout;
-- duplicate submit while dispatch is blocked;
-- two primary allocations consume same deficit;
-- two capacity reservations compete for last slot/budget;
-- safe release versus fallback worker;
-- UNKNOWN/callback versus fallback/recovery decision;
-- reconciliation versus status resolution;
-- provider live-state update versus decision commit;
-- policy epoch/fingerprint update versus decision commit where supported.
-
-### Layer F — provider contract tests
-
-For each provider/simulator adapter verify:
-
-- idempotency identity;
-- status lookup;
-- TTL/expiry when modeled;
-- definitely-not-sent versus ambiguous transport;
-- terminal versus non-terminal status;
-- normalized attribution;
-- duplicate/out-of-order behavior;
-- unknown raw state conservative handling.
-
-### Layer G — end-to-end fault scenarios
-
-Exercise full flow from intent through route/dispatch/observation/recovery/reconciliation/analytics.
-
-High-value combinations:
-
-- A UNKNOWN while B healthy -> B cannot start;
-- A safe-fails, B goes unavailable, C succeeds;
-- A safe-fails under skewed 90/10 allocation -> fresh A operation forbidden;
-- fallback occurs but primary allocation state is unchanged;
-- provider disabled after unresolved operation -> old operation still resolves;
-- missing adapter -> no money-moving commit;
-- large volume during partial outage/capacity pressure;
-- allocation pressure cannot override quarantine;
-- capacity last-slot race;
-- UNKNOWN + duplicate submit + idempotency TTL boundary;
-- fallback + late old-provider success -> economic conflict;
-- settlement -> reversal -> replay/analytics;
-- policy change during concurrent primary decisions;
-- health recovery with bounded probing and allocation deviation.
-
-### Layer H — replay verification
-
-For every complex scenario, compare:
-
-- live coordinator/application projection;
-- projection rebuilt from immutable facts.
-
-No hidden mutable state may be required for a capability claimed replayable.
-
-### Layer I — stress/performance
-
-Before TZ, record baselines without inventing acceptance limits. Measure relevant paths:
-
-- allocation/decision throughput;
-- lifecycle/replay cost;
+- decision/allocation throughput;
+- coordinator contention;
+- replay/restart time;
 - memory growth over long histories;
-- high concurrency correctness;
 - attempt amplification under degradation;
-- health/fallback recovery behavior.
+- analytics cost.
 
-Correctness failure always fails the test regardless of throughput.
+## 4. Invariants
 
-### Layer J — mutation/fault seeding
+### SAFETY-1
 
-Use targeted fault seeding to prove critical tests can detect regressions such as:
+At most one unresolved economic owner per payout.
 
-- release owner on UNKNOWN;
-- recovery advances primary allocation;
-- fallback reuses failed provider;
-- ignore committed allocation/capacity reservation;
-- recipient failure degrades provider health;
-- ranking bypasses quarantine;
-- use status rank as chronology;
-- duplicate callback double-counts settlement;
-- stale old success silently ignored;
-- replay omits hidden coordinator state;
-- Float money.
+### SAFETY-2
 
-No universal mutation-score target is required.
+UNKNOWN retains ownership and blocks fresh cross-provider money movement.
 
-## 6. Reusable invariant catalog
+### SAFETY-3
 
-### SAFETY-P1 — single unresolved owner
+Fresh fallback excludes already money-moving attempted providers unless explicit same-provider recovery semantics apply.
 
-`active_unresolved_economic_owners <= 1` for every payout history.
+### SAFETY-4
 
-### SAFETY-P2 — UNKNOWN retains ownership
+Restart does not erase unresolved economic authority.
 
-No cross-provider money-moving operation while prior operation may still pay.
+### ALLOC-1
 
-### SAFETY-P3 — duplicate intent/effect
+Primary assignment is exact and deterministic under configured accounting semantics.
 
-Replaying the same economic intent does not create a second logical payout/economic ownership.
+### ALLOC-2
 
-### SAFETY-P4 — dispatch phase safety
+Recovery does not pollute primary allocation under `primary_assignment`.
 
-Committed/dispatching operation is not automatically eligible for resolve/retry until operation evidence permits it.
+### ALLOC-3
 
-### SAFETY-P5 — late conflict visible
+Committed primary work is visible to concurrent decisions.
 
-If an old released operation later indicates a possible effect after newer operation/settlement, conflict is preserved and surfaced.
+### ALLOC-4
 
-### ALLOC-P1 — selected provider is admissible
+Optimizer selection remains inside the allocation-admissible set.
 
-Every primary/recovery assignment satisfies the hard envelope for that action.
+### ADMISSION-1
 
-### ALLOC-P2 — local allocation optimality
+Hard-inadmissible provider cannot be selected by allocation pressure or optimization.
 
-Within allowed allocation choices, selected post-decision discrepancy is no worse than alternatives unless an explicit higher-priority hard/tolerance rule defines the admissible band.
+### ADMISSION-2
 
-### ALLOC-P3 — committed primary work visible
+Concurrent exposure counters conserve reserve/release; time-based rate budget is consumed over time and is not released on payout completion.
 
-Concurrent primary decisions see committed reservations.
+### HEALTH-1
 
-### ALLOC-P4 — recovery does not pollute primary ledger
+Recipient/business failure does not degrade provider operational health.
 
-Under `primary_assignment`, fallback/recovery contributes zero to primary allocation accounting.
+### RECOVERY-1
 
-### ALLOC-P5 — opportunity correctness
+Terminal payout failure stops provider hopping.
 
-Functional ineligibility does not create ordinary router-choice debt; temporary live infeasibility is represented as deviation rather than erased history.
+### EVENT-1
 
-### ALLOC-P6 — exact money
+Duplicate observation identity is idempotent; conflicting reuse is an integrity error.
 
-No Float may change volume routing correctness.
+### EVENT-2
 
-### POLICY-P1 — immutable definition
+Chronology is explicit, not semantic status ranking.
 
-Same policy identity/epoch/scope cannot refer to two material definitions.
+### REPLAY-1
 
-### CAP-P1 — conservation
+Supported live projections equal replay from ordered facts.
 
-Reserved + available/consumed capacity equals configured capacity semantics; duplicates/late events cannot over-release or double-consume.
+### DURABLE-1
 
-### HEALTH-P1 — attribution correctness
+A fresh process can continue unresolved payouts without creating new permissions absent from pre-crash state.
 
-Recipient/payout-attributable failures are neutral to provider operational health.
+### ANALYTICS-1
 
-### HEALTH-P2 — hard exposure
+Opportunity, primary assignment, attempts and settlement conserve their own definitions without silent double counting.
 
-Quarantined/provider-hard-excluded state cannot be overridden by allocation or ranking.
+## 5. Closure testing rule
 
-### REC-P1 — terminal payout failure stops hopping
+Testing does not self-authorize `VERSION_COMPLETE`.
 
-Recipient/business terminal failure does not start another provider solely because one exists.
+Before closure, perform the full protocol in `docs/COMPLETION_POLICY.md`, including source/spec, module cohesion, durability, provider/API boundary, repository cleanup and documentation review.
 
-### REC-P2 — fresh fallback
-
-Fallback is a fresh current decision, excludes previously attempted providers by default and rechecks capacity/health.
-
-### REC-P3 — bounded recovery
-
-Money-moving/switch/resolution budgets and deadline/TTL semantics prevent unbounded cascades.
-
-### EVT-P1 — duplicate identity idempotent
-
-Exact duplicate observation cannot double-apply state/settlement/health/accounting.
-
-### EVT-P2 — chronology is explicit
-
-No transition depends on arbitrary semantic status ranking.
-
-### REPLAY-P1 — replay equivalence
-
-Applying the same ordered fact set to a fresh projection yields the same supported lifecycle/analytics state.
-
-### ANALYTICS-P1 — conservation and separation
-
-Primary allocation, recovery attempts and settlement each conserve their own defined measure without silent double counting.
-
-## 7. Scenario-space matrix
-
-Generate/systematically cover these axes:
-
-- provider count: 0/1/2/3+/many;
-- allocation: count/volume;
-- target shape: equal/skewed/tiny/dominant/min/max/tolerance;
-- amount: minimum/ordinary/boundary/large-indivisible;
-- functional opportunity: all/subset/one/none;
-- live state: healthy/degraded/quarantined/unavailable/capacity-limited;
-- operation phase: committed/dispatching/unknown/pending/terminal;
-- primary outcome: success/safe failure/terminal/pending/unknown;
-- delivery: in-order/duplicate/delayed/out-of-order;
-- recovery position: primary/first fallback/deeper/budget edge;
-- policy: valid/runtime-infeasible/conflicting identity/epoch change;
-- allocation history: balanced/under/over/outage deviation;
-- capacity: free/last slot/exhausted/budget boundary;
-- contract: idempotent/status lookup/TTL expiry/no resolution;
-- concurrency: single/two-way/high fan-out;
-- settlement: success/return/reversal/conflict.
-
-Property/model tests cover the product space; known dangerous combinations require explicit regressions.
-
-## 8. Slice verification rule
-
-A slice may be marked `SLICE_VERIFIED` only after:
-
-1. focused behavior tests pass;
-2. applicable invariant/oracle/model/concurrency evidence passes;
-3. the smallest broader suite capable of detecting interaction regression passes;
-4. material failure paths are tested;
-5. any discovered material bug has a regression.
-
-## 9. Phase verification rule
-
-A phase may be marked `PHASE_VERIFIED` only after its capabilities interact correctly with all prior required phases.
-
-Example: health is not phase-complete if its unit transitions work but allocation pressure can still route into quarantined PSPs.
-
-## 10. Version completion rule
-
-Testing never self-authorizes `VERSION_COMPLETE`.
-
-When all phase evidence is green, follow `docs/COMPLETION_POLICY.md`. Closure can and should add new tests/regressions if the source/spec/red-team sweep finds previously unrepresented gaps.
-
-Never hide flaky behavior with automatic retries. Never report a check as passed if it was not executed on current code.
+Old green runs are historical only. Changed code requires current evidence.

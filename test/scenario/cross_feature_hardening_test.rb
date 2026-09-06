@@ -161,10 +161,10 @@ class CrossFeatureHardeningTest < Minitest::Test
     coordinator.apply_observation(observation(first, "success", :success))
 
     coordinator.record_reversal(
-      payout_id: payout.id,
+      payout_id: " #{payout.id} ",
       reversal_id: "return-analytics",
-      provider_id: "A",
-      operation_id: first.proposal.operation_id,
+      provider_id: " A ",
+      operation_id: " #{first.proposal.operation_id} ",
       amount: payout.money
     )
 
@@ -181,13 +181,47 @@ class CrossFeatureHardeningTest < Minitest::Test
     assert_equal 1, lifecycle.payout(payout.id).reversals.length
 
     repeated = coordinator.record_reversal(
-      payout_id: payout.id,
+      payout_id: " #{payout.id} ",
       reversal_id: " return-analytics ",
       provider_id: "A",
       operation_id: first.proposal.operation_id,
       amount: payout.money
     )
     assert_equal 1, repeated.reversals.length
+  end
+
+  def test_reversal_canonicalizes_provider_and_operation_identity_before_linkage
+    coordinator = RubyRouting::State::Coordinator.new(opportunities: [opportunity("A")])
+    policy = policy_for("reversal-identity", targets: { "A" => 1 })
+    payout = intent("reversal-identity")
+    first = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
+    coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(observation(first, "success", :success))
+
+    recorded = coordinator.record_reversal(
+      payout_id: payout.id,
+      reversal_id: "return-identity",
+      provider_id: " A ",
+      operation_id: " #{first.proposal.operation_id} ",
+      amount: payout.money
+    )
+
+    assert_equal "A", recorded.reversals.first.provider_id
+    assert_equal first.proposal.operation_id, recorded.reversals.first.operation_id
+    assert_equal 1, coordinator.facts.count { |fact| fact.type == :reversal_recorded }
+    reversal_fact = coordinator.facts.find { |fact| fact.type == :reversal_recorded }
+    assert_equal "A", reversal_fact.payload.fetch(:provider_id)
+    assert_equal first.proposal.operation_id, reversal_fact.payload.fetch(:operation_id)
+
+    repeated = coordinator.record_reversal(
+      payout_id: payout.id,
+      reversal_id: " return-identity ",
+      provider_id: " A ",
+      operation_id: " #{first.proposal.operation_id} ",
+      amount: payout.money
+    )
+    assert_equal 1, repeated.reversals.length
+    assert_equal 1, coordinator.facts.count { |fact| fact.type == :reversal_recorded }
   end
 
   def test_health_recovery_probe_budget_and_allocation_deviation_remain_typed
@@ -222,6 +256,7 @@ class CrossFeatureHardeningTest < Minitest::Test
     assert_equal coordinator.health_projection.to_h, %w[A B].to_h { |id| [id, coordinator.health_snapshot(id).to_h] }
     assert_equal 1, analytics.deviation_by_cause.fetch(:optimizer_choice).fetch(:count)
     assert_equal 1, analytics.deviation_by_cause.fetch(:health_quarantine).fetch(:count)
+    assert_equal 2, analytics.deviation_by_recoverability.fetch(:recoverable).fetch(:count)
     assert_equal({ "A" => 1, "B" => 1 }, analytics.primary_assignment_measure_by_provider)
   end
 
@@ -262,6 +297,111 @@ class CrossFeatureHardeningTest < Minitest::Test
     assert_equal live, replay
     assert_nil replay.fetch("A").fetch(:budget)
     assert_equal 0, replay.fetch("A").fetch(:used_slots)
+  end
+
+  def test_remediation_of_conflicted_operation_via_reversal_fact
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [opportunity("A"), opportunity("B")]
+    )
+    policy = policy_for("remediation", targets: { "A" => 1, "B" => 1 })
+    payout_intent = intent("remediation-1")
+
+    first = coordinator.prepare_and_commit_decision(intent: payout_intent, policy: policy)
+    coordinator.mark_attempt_started(first)
+    # A safe-fails and ownership is released
+    coordinator.apply_observation(observation(first, "safe-fail", :safe_route_failure))
+
+    # B fallback is assigned and succeeds
+    second = coordinator.prepare_and_commit_decision(intent: payout_intent, policy: policy)
+    coordinator.mark_attempt_started(second)
+    coordinator.apply_observation(observation(second, "success", :success))
+
+    assert_equal :success, coordinator.payout_snapshot("remediation-1").status
+    assert_equal "B", coordinator.payout_snapshot("remediation-1").settlement_provider_id
+
+    # Late success arrives from A, creating an economic conflict
+    conflict_obs = RubyRouting::ProviderObservation.new(
+      observation_id: "remediation:late-A-success",
+      payout_id: payout_intent.id,
+      provider_id: "A",
+      operation_id: first.proposal.operation_id,
+      attempt_id: first.proposal.attempt_id,
+      outcome: RubyRouting::NormalizedOutcome.success(attribution: :provider)
+    )
+    coordinator.apply_observation(conflict_obs)
+
+    assert_equal 1, coordinator.payout_snapshot("remediation-1").conflicts.length
+    assert_equal "A", coordinator.payout_snapshot("remediation-1").conflicts.first.provider_id
+
+    # Remediate the conflict on operation 1 via record_reversal
+    reversal_snapshot = coordinator.record_reversal(
+      payout_id: payout_intent.id,
+      reversal_id: "rev:A:1",
+      provider_id: " A ",
+      operation_id: " #{first.proposal.operation_id} ",
+      amount: payout_intent.money,
+      reason: :returned
+    )
+
+    assert_equal :reversed, reversal_snapshot.status
+    assert_equal 1, reversal_snapshot.reversals.length
+    assert_equal "rev:A:1", reversal_snapshot.reversals.first.reversal_id
+    assert_equal "A", reversal_snapshot.reversals.first.provider_id
+
+    # Replay must match
+    replayed = RubyRouting::Projections::Replay.lifecycle(coordinator.facts).payout("remediation-1")
+    assert_equal :reversed, replayed.status
+    assert_equal 1, replayed.reversals.length
+  end
+
+  def test_orchestrator_multi_currency_routing_via_policy_registry
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [
+        opportunity("A-RUB"),
+        opportunity("B-USD")
+      ]
+    )
+    rub_policy = RubyRouting::RoutingPolicy.new(
+      id: "rub-volume",
+      epoch: "1",
+      measure: :volume,
+      targets: { "A-RUB" => 1 },
+      currency: "RUB"
+    )
+    usd_policy = RubyRouting::RoutingPolicy.new(
+      id: "usd-volume",
+      epoch: "1",
+      measure: :volume,
+      targets: { "B-USD" => 1 },
+      currency: "USD"
+    )
+    registry = RubyRouting::PolicyRegistry.new([rub_policy, usd_policy])
+
+    scripted_a = TestSupport::Simulator::ScriptedProvider.new(
+      provider_id: "A-RUB",
+      steps: [TestSupport::Simulator::Step.success]
+    )
+    scripted_b = TestSupport::Simulator::ScriptedProvider.new(
+      provider_id: "B-USD",
+      steps: [TestSupport::Simulator::Step.success]
+    )
+    orchestrator = RubyRouting::Application::Orchestrator.new(
+      coordinator: coordinator,
+      providers: { "A-RUB" => scripted_a, "B-USD" => scripted_b },
+      policy_registry: registry
+    )
+
+    rub_payout = RubyRouting::PayoutIntent.new(id: "multi-rub", money: RubyRouting::Money.new(1000, "RUB"))
+    usd_payout = RubyRouting::PayoutIntent.new(id: "multi-usd", money: RubyRouting::Money.new(500, "USD"))
+
+    res_rub = orchestrator.submit(intent: rub_payout)
+    res_usd = orchestrator.submit(intent: usd_payout)
+
+    assert_equal :success, res_rub.status
+    assert_equal "A-RUB", res_rub.payout.settlement_provider_id
+
+    assert_equal :success, res_usd.status
+    assert_equal "B-USD", res_usd.payout.settlement_provider_id
   end
 
   private

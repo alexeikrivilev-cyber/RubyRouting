@@ -1,6 +1,18 @@
 # frozen_string_literal: true
 
 module RubyRouting
+  class StaticPolicyInfeasibilityError < ArgumentError
+    attr_reader :reason_codes
+
+    def initialize(message, reason_codes:)
+      @reason_codes = RubyRouting::Collection.to_array(
+        reason_codes,
+        "policy infeasibility reason codes"
+      ).map { |reason_code| reason_code.is_a?(Symbol) ? reason_code : reason_code.to_s.freeze }.uniq.freeze
+      super(message)
+    end
+  end
+
   class RoutingConstraints
     attr_reader :allowed_provider_ids, :excluded_provider_ids, :required_context_labels,
                 :minimum_amount_minor, :maximum_amount_minor
@@ -50,11 +62,8 @@ module RubyRouting
 
     def normalize_ids(value, label)
       return nil if value.nil?
-      unless value.respond_to?(:map)
-        raise ArgumentError, "#{label} must be enumerable or nil"
-      end
 
-      value.map do |provider_id|
+      RubyRouting::Collection.to_array(value, label).map do |provider_id|
         normalized = provider_id.to_s.strip
         raise ArgumentError, "#{label} must contain non-empty ids" if normalized.empty?
 
@@ -63,11 +72,7 @@ module RubyRouting
     end
 
     def normalize_labels(value)
-      unless value.respond_to?(:map)
-        raise ArgumentError, "required_context_labels must be enumerable"
-      end
-
-      value.map do |label|
+      RubyRouting::Collection.to_array(value, "required_context_labels").map do |label|
         normalized = label.to_s.strip
         raise ArgumentError, "context labels must be non-empty" if normalized.empty?
 
@@ -88,7 +93,8 @@ module RubyRouting
       return [] unless context.is_a?(Hash)
 
       raw = context[:labels] || context["labels"] || []
-      Array(raw).map(&:to_s)
+      raw = [raw] if raw.is_a?(String) || raw.is_a?(Symbol)
+      RubyRouting::Collection.to_array(raw, "context labels").map { |label| label.to_s.strip }
     end
   end
 
@@ -156,15 +162,15 @@ module RubyRouting
     end
 
     def priority_for(provider_id)
-      priority_by_provider.fetch(provider_id.to_s, 0)
+      priority_by_provider.fetch(provider_id.to_s.strip, 0)
     end
 
     def cost_for(provider_id)
-      cost_minor_by_provider.fetch(provider_id.to_s, 0)
+      cost_minor_by_provider.fetch(provider_id.to_s.strip, 0)
     end
 
     def latency_for(provider_id)
-      latency_ms_by_provider.fetch(provider_id.to_s, 0)
+      latency_ms_by_provider.fetch(provider_id.to_s.strip, 0)
     end
 
     def to_h
@@ -189,6 +195,8 @@ module RubyRouting
           raise ArgumentError, "#{label} metrics must be non-negative Integers"
         end
 
+        raise ArgumentError, "#{label} metrics contain duplicate provider id" if copy.key?(normalized_id)
+
         copy[normalized_id.freeze] = metric
       end.freeze
     end
@@ -200,12 +208,14 @@ module RubyRouting
     WINDOWS = %i[opportunity_cohort policy_epoch].freeze
 
     attr_reader :id, :epoch, :measure, :targets, :currency, :scope, :accounting_point,
-                :window, :tolerance, :minimums, :maximums, :recovery, :ranking,
+                :window, :tolerance, :minimum_measures, :maximum_measures,
+                :minimum_shares, :maximum_shares, :recovery, :ranking,
                 :hard_constraints, :soft_constraints, :fingerprint
 
     def initialize(id:, epoch:, measure:, targets:, currency: nil, scope: :default,
                    accounting_point: :primary_assignment, window: :opportunity_cohort,
-                   max_attempts: 3, tolerance: nil, minimums: {}, maximums: {},
+                   max_attempts: 3, tolerance: nil, minimum_measures: nil,
+                   maximum_measures: nil, minimum_shares: {}, maximum_shares: {},
                    recovery: nil, ranking: nil, hard_constraints: nil, soft_constraints: nil)
       @id = normalize_id(id, "policy id")
       @epoch = normalize_id(epoch, "policy epoch")
@@ -216,8 +226,10 @@ module RubyRouting
       @accounting_point = normalize_symbol(accounting_point, ACCOUNTING_POINTS, "accounting point")
       @window = normalize_symbol(window, WINDOWS, "window")
       @tolerance = normalize_tolerance(tolerance)
-      @minimums = normalize_measure_limits(minimums, "minimums")
-      @maximums = normalize_measure_limits(maximums, "maximums")
+      @minimum_measures = normalize_measure_limits(minimum_measures || {}, "minimum_measures")
+      @maximum_measures = normalize_measure_limits(maximum_measures || {}, "maximum_measures")
+      @minimum_shares = normalize_share_limits(minimum_shares, "minimum_shares")
+      @maximum_shares = normalize_share_limits(maximum_shares, "maximum_shares")
       @recovery = recovery || RecoveryPolicy.new(max_operations: max_attempts)
       unless @recovery.is_a?(RecoveryPolicy)
         raise ArgumentError, "recovery must be RecoveryPolicy"
@@ -229,15 +241,40 @@ module RubyRouting
       @hard_constraints = normalize_constraints(hard_constraints)
       @soft_constraints = normalize_constraints(soft_constraints)
 
-      if @minimums.any? { |provider_id, minimum| @maximums.key?(provider_id) && minimum > @maximums.fetch(provider_id) }
-        raise ArgumentError, "provider minimum cannot exceed maximum"
+      if @minimum_measures.any? { |provider_id, minimum|
+        @maximum_measures.key?(provider_id) && minimum > @maximum_measures.fetch(provider_id)
+      }
+        raise StaticPolicyInfeasibilityError.new(
+          "provider measure minimum cannot exceed maximum",
+          reason_codes: [:measure_minimum_above_maximum]
+        )
+      end
+
+      if @minimum_shares.any? { |provider_id, minimum| minimum > maximum_share_for(provider_id) }
+        raise StaticPolicyInfeasibilityError.new(
+          "provider share minimum cannot exceed maximum",
+          reason_codes: [:share_minimum_above_maximum]
+        )
+      end
+
+      if @minimum_shares.values.sum > 1
+        raise StaticPolicyInfeasibilityError.new(
+          "provider share minimums are statically infeasible",
+          reason_codes: [:share_minimums_exceed_total]
+        )
+      end
+      if targets.keys.sum { |provider_id| maximum_share_for(provider_id) } < 1
+        raise StaticPolicyInfeasibilityError.new(
+          "provider share maximums are statically infeasible",
+          reason_codes: [:share_maximums_below_total]
+        )
       end
 
       if @measure == :volume && @currency.nil?
         raise ArgumentError, "volume policies require a currency"
       end
 
-      @fingerprint = Digest::SHA256.hexdigest(Marshal.dump(fingerprint_material)).freeze
+      @fingerprint = Digest::SHA256.hexdigest(Marshal.dump(canonical_fingerprint_value(fingerprint_material))).freeze
       freeze
     end
 
@@ -256,8 +293,10 @@ module RubyRouting
         accounting_point: accounting_point,
         window: window,
         tolerance: tolerance,
-        minimums: minimums,
-        maximums: maximums,
+        minimum_measures: minimum_measures,
+        maximum_measures: maximum_measures,
+        minimum_shares: minimum_shares,
+        maximum_shares: maximum_shares,
         recovery: recovery.to_h,
         ranking: ranking.to_h,
         hard_constraints: hard_constraints.to_h,
@@ -265,25 +304,56 @@ module RubyRouting
       }.freeze
     end
 
+    def static_feasibility
+      target_provider_ids = targets.keys
+      target_provider_ids &= hard_constraints.allowed_provider_ids if hard_constraints.allowed_provider_ids
+      target_provider_ids -= hard_constraints.excluded_provider_ids
+      reason_codes = []
+      reason_codes << :no_hard_constraint_eligible_target if target_provider_ids.empty?
+
+      ineligible_minimums = minimum_shares.any? do |provider_id, minimum|
+        minimum.positive? && !target_provider_ids.include?(provider_id)
+      end
+      reason_codes << :share_minimum_on_hard_ineligible_target if ineligible_minimums
+
+      if target_provider_ids.any? &&
+         target_provider_ids.sum { |provider_id| maximum_share_for(provider_id) } < 1
+        reason_codes << :share_maximums_below_hard_constraint_capacity
+      end
+
+      {
+        status: reason_codes.empty? ? :feasible : :infeasible,
+        reason_codes: reason_codes.freeze
+      }.freeze
+    end
+
     def scope_key
       [id, epoch, scope].freeze
     end
 
-    # `opportunity_cohort` keeps one ledger for the policy identity while the
-    # current functional opportunity set controls the live denominator. The
-    # provisional `policy_epoch` window uses the same immutable epoch ledger;
-    # the explicit value keeps the future TZ mapping from being implicit.
-    def allocation_key
-      scope_key
+    # `policy_epoch` keeps one ledger for the immutable policy identity. The
+    # `opportunity_cohort` window starts an explicit ledger for each functional
+    # target-provider cohort, so a payout that could not legally use a target
+    # cannot create hidden debt in a different cohort.
+    def allocation_key(opportunity_provider_ids: nil)
+      return scope_key if window == :policy_epoch
+
+      cohort = RubyRouting::Collection.to_array(
+        opportunity_provider_ids || targets.keys,
+        "opportunity_provider_ids"
+      ).map { |provider_id| provider_id.to_s.strip }.uniq.select do |provider_id|
+        targets.key?(provider_id)
+      end.sort.freeze
+      [id, epoch, scope, cohort].freeze
     end
 
     def weight_for(provider_id)
-      targets.fetch(provider_id.to_s, 0)
+      targets.fetch(provider_id.to_s.strip, 0)
     end
 
     def weights_for(provider_ids)
-      provider_ids.each_with_object({}) do |provider_id, weights|
-        normalized = provider_id.to_s
+      RubyRouting::Collection.to_array(provider_ids, "provider_ids").each_with_object({}) do |provider_id, weights|
+        normalized = provider_id.to_s.strip
         weight = weight_for(normalized)
         weights[normalized] = weight if weight.positive?
       end.freeze
@@ -304,25 +374,60 @@ module RubyRouting
       end
     end
 
-    def minimum_for(provider_id)
-      minimums.fetch(provider_id.to_s, 0)
+    def minimum_measure_for(provider_id)
+      minimum_measures.fetch(provider_id.to_s.strip, 0)
     end
 
-    def maximum_for(provider_id)
-      maximums.fetch(provider_id.to_s, nil)
+    def maximum_measure_for(provider_id)
+      maximum_measures.fetch(provider_id.to_s.strip, nil)
     end
 
     def allows_measure?(provider_id, measure)
-      return false if measure < minimum_for(provider_id)
+      return false if measure < minimum_measure_for(provider_id)
 
-      maximum = maximum_for(provider_id)
+      maximum = maximum_measure_for(provider_id)
       maximum.nil? || measure <= maximum
     end
 
     def measure_exclusions(provider_ids, measure)
-      provider_ids.each_with_object({}) do |provider_id, exclusions|
-        exclusions[provider_id.to_s] = :policy_measure_constraint unless
+      RubyRouting::Collection.to_array(provider_ids, "provider_ids").each_with_object({}) do |provider_id, exclusions|
+        normalized = provider_id.to_s.strip
+        exclusions[normalized] = :policy_measure_constraint unless
           allows_measure?(provider_id, measure)
+      end.freeze
+    end
+
+    def minimum_share_for(provider_id)
+      minimum_shares.fetch(provider_id.to_s.strip, Rational(0, 1))
+    end
+
+    def maximum_share_for(provider_id)
+      maximum_shares.fetch(provider_id.to_s.strip, Rational(1, 1))
+    end
+
+    # Returns only positive exact violations. Share obligations are part of
+    # allocation authority; when indivisible work makes the corridor
+    # impossible, the caller can choose the least-violating state and expose
+    # the typed deviation instead of silently dropping the obligation.
+    def share_violations(measures, total_measure: nil, provider_ids: targets.keys)
+      unless measures.is_a?(Hash)
+        raise ArgumentError, "measures must be a Hash"
+      end
+
+      total = total_measure || measures.values.sum
+      unless total.is_a?(Integer) && total >= 0
+        raise ArgumentError, "total_measure must be a non-negative Integer"
+      end
+      return {}.freeze if total.zero?
+
+      RubyRouting::Collection.to_array(provider_ids, "provider_ids").map { |provider_id| provider_id.to_s.strip }.uniq.sort.each_with_object({}) do |provider_id, violations|
+        share = Rational(measures.fetch(provider_id, 0), total)
+        provider_violations = {}
+        minimum = minimum_share_for(provider_id)
+        maximum = maximum_share_for(provider_id)
+        provider_violations[:minimum] = minimum - share if share < minimum
+        provider_violations[:maximum] = share - maximum if share > maximum
+        violations[provider_id] = provider_violations.freeze unless provider_violations.empty?
       end.freeze
     end
 
@@ -340,12 +445,7 @@ module RubyRouting
     end
 
     def normalize_measure(value)
-      normalized = value.to_sym
-      raise ArgumentError, "measure must be count or volume" unless MEASURES.include?(normalized)
-
-      normalized
-    rescue NoMethodError
-      raise ArgumentError, "measure must be count or volume"
+      RubyRouting::Enum.normalize(value, MEASURES, "measure")
     end
 
     def normalize_targets(value)
@@ -380,12 +480,7 @@ module RubyRouting
     end
 
     def normalize_symbol(value, allowed, label)
-      normalized = value.to_sym
-      raise ArgumentError, "unsupported #{label}" unless allowed.include?(normalized)
-
-      normalized
-    rescue NoMethodError
-      raise ArgumentError, "unsupported #{label}"
+      RubyRouting::Enum.normalize(value, allowed, label)
     end
 
     def normalize_tolerance(value)
@@ -413,8 +508,45 @@ module RubyRouting
           raise ArgumentError, "#{label} must contain non-negative Integer measures"
         end
 
+        raise ArgumentError, "#{label} contain duplicate provider id" if copy.key?(normalized_id)
+
         copy[normalized_id] = measure
       end.freeze
+    end
+
+    def normalize_share_limits(value, label)
+      unless value.is_a?(Hash)
+        raise ArgumentError, "#{label} must be a Hash"
+      end
+
+      value.each_with_object({}) do |(provider_id, share), copy|
+        normalized_id = normalize_id(provider_id, "provider id")
+        unless targets.key?(normalized_id)
+          raise ArgumentError, "#{label} references an unknown target provider"
+        end
+
+        raise ArgumentError, "#{label} contain duplicate provider id" if copy.key?(normalized_id)
+
+        copy[normalized_id] = normalize_share(share, label)
+      end.freeze
+    end
+
+    def normalize_share(value, label)
+      normalized = case value
+      when Rational
+        value
+      when Integer
+        Rational(value, 1)
+      when String
+        Rational(value)
+      end
+      unless normalized && normalized >= 0 && normalized <= 1
+        raise ArgumentError, "#{label} must contain exact shares between 0 and 1"
+      end
+
+      normalized
+    rescue ArgumentError, ZeroDivisionError
+      raise ArgumentError, "#{label} must contain exact shares between 0 and 1"
     end
 
     def fingerprint_material
@@ -428,8 +560,10 @@ module RubyRouting
         accounting_point,
         window,
         tolerance,
-        minimums.sort,
-        maximums.sort,
+        minimum_measures.sort,
+        maximum_measures.sort,
+        minimum_shares.sort,
+        maximum_shares.sort,
         recovery.to_h,
         ranking_material,
         constraints_material(hard_constraints),
@@ -454,6 +588,26 @@ module RubyRouting
         minimum_amount_minor: values.fetch(:minimum_amount_minor),
         maximum_amount_minor: values.fetch(:maximum_amount_minor)
       }
+    end
+
+    # Marshal includes a String's encoding, although routing policy identity
+    # is about the definition's value rather than whether a caller supplied an
+    # ASCII-only literal as US-ASCII or UTF-8. Durable JSON round-trips choose
+    # their own string encoding, so canonicalize before hashing to keep the
+    # immutable policy fingerprint stable across restart.
+    def canonical_fingerprint_value(value)
+      case value
+      when String
+        value.encode(Encoding::UTF_8)
+      when Array
+        value.map { |nested| canonical_fingerprint_value(nested) }
+      when Hash
+        value.map do |key, nested|
+          [canonical_fingerprint_value(key), canonical_fingerprint_value(nested)]
+        end.sort_by { |entry| Marshal.dump(entry.first) }
+      else
+        value
+      end
     end
 
     def normalize_constraints(value)

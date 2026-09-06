@@ -8,11 +8,10 @@ module RubyRouting
       attr_reader :action, :reason, :reason_code
 
       def initialize(action:, reason:, reason_code: nil)
-        @action = action.to_sym
-        raise ArgumentError, "unsupported recovery action" unless ACTIONS.include?(@action)
+        @action = RubyRouting::Enum.normalize(action, ACTIONS, "recovery action")
 
         @reason = reason.to_s.freeze
-        @reason_code = reason_code&.to_sym
+        @reason_code = reason_code && (reason_code.is_a?(Symbol) ? reason_code : reason_code.to_s.freeze)
         freeze
       end
     end
@@ -23,11 +22,10 @@ module RubyRouting
       attr_reader :action, :reason, :reason_code
 
       def initialize(action:, reason:, reason_code:)
-        @action = action.to_sym
-        raise ArgumentError, "unsupported recovery classification" unless ACTIONS.include?(@action)
+        @action = RubyRouting::Enum.normalize(action, ACTIONS, "recovery classification")
 
         @reason = reason.to_s.freeze
-        @reason_code = reason_code&.to_sym
+        @reason_code = reason_code && (reason_code.is_a?(Symbol) ? reason_code : reason_code.to_s.freeze)
         freeze
       end
     end
@@ -37,21 +35,22 @@ module RubyRouting
 
       def classify(status:, ownership:, capabilities:, operation_phase: nil, attempts:, policy:,
                    resolution_interactions: 0)
-        if %i[success reversed].include?(status.to_sym)
+        normalized_status = status.is_a?(Symbol) ? status : status.to_s
+        if %w[success reversed].include?(normalized_status.to_s)
           return RecoveryClassification.new(
             action: :already_final,
             reason: "payout already succeeded",
             reason_code: :already_final
           )
         end
-        if status.to_sym == :terminal_payout_failure
+        if normalized_status.to_s == "terminal_payout_failure"
           return RecoveryClassification.new(
             action: :terminate,
             reason: "terminal payout failure",
             reason_code: :terminal
           )
         end
-        if status.to_sym == :reconciliation_blocked
+        if normalized_status.to_s == "reconciliation_blocked"
           return RecoveryClassification.new(
             action: :defer,
             reason: "automatic recovery is reconciliation-blocked",
@@ -60,7 +59,7 @@ module RubyRouting
         end
 
         if ownership
-          if %i[committed dispatching resolving].include?(operation_phase&.to_sym)
+          if %w[committed dispatching resolving].include?(operation_phase&.to_s)
             return RecoveryClassification.new(
               action: :defer,
               reason: "provider operation dispatch is in progress",

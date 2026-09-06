@@ -3,6 +3,108 @@
 require_relative "../test_helper"
 
 class AllocationTest < Minitest::Test
+  def test_allocation_decision_canonicalizes_provider_maps_and_rejects_collisions
+    decision = RubyRouting::Routing::AllocationDecision.new(
+      chosen_provider: " A ",
+      candidate_discrepancies: { " A " => Rational(1) },
+      post_measures: { " A " => { " B " => 1 } },
+      candidate_share_violations: { " A " => { " B " => { minimum: Rational(1, 2) } } },
+      incoming_measure: 1,
+      snapshot_revision: 0,
+      tolerance: Rational(0),
+      optimization_trace: { " A " => { selected: true } }
+    )
+
+    assert_equal "A", decision.chosen_provider
+    assert_equal Rational(1), decision.discrepancy
+    assert_equal({ "B" => 1 }, decision.post_measures.fetch("A"))
+    assert_equal({ "B" => { minimum: Rational(1, 2) } }, decision.share_violations)
+    assert_equal decision.allocation_key_for("A"), decision.allocation_key_for(" A ")
+    assert_equal true, decision.candidate_deviation_exceeded?(" A ")
+    assert_equal({ "A" => { selected: true } }, decision.optimization_trace)
+
+    assert_raises(ArgumentError) do
+      RubyRouting::Routing::AllocationDecision.new(
+        chosen_provider: nil,
+        candidate_discrepancies: { "A" => Rational(1), " A " => Rational(2) },
+        post_measures: {},
+        incoming_measure: 1,
+        snapshot_revision: 0
+      )
+    end
+    assert_raises(ArgumentError) do
+      RubyRouting::Routing::AllocationDecision.new(
+        chosen_provider: nil,
+        candidate_discrepancies: {},
+        post_measures: { "A" => { "B" => 1, " B " => 2 } },
+        incoming_measure: 1,
+        snapshot_revision: 0
+      )
+    end
+  end
+
+  def test_runtime_feasibility_canonicalizes_attempted_provider_identity
+    policy = count_policy("A" => 1)
+    eligibility = Struct.new(:functional_provider_ids, :feasible_provider_ids).new(
+      [" A "],
+      [" A "]
+    )
+
+    assessed = RubyRouting::Routing::RuntimeFeasibility.assess(
+      policy: policy,
+      eligibility: eligibility,
+      attempted_provider_ids: TestSupport::EachOnlyCollection.new([" A "]),
+      measure_exclusions: { " A " => :measure_limit }
+    )
+
+    assert_equal :infeasible, assessed.status
+    assert_equal [:recovery_provider_exhausted], assessed.reason_codes
+    assert_equal ["A"], assessed.functional_target_provider_ids
+    assert_equal ["A"], assessed.feasible_target_provider_ids
+    assert_empty assessed.unattempted_provider_ids
+    assert_empty assessed.measure_admissible_provider_ids
+  end
+
+  def test_runtime_feasibility_accepts_each_only_reason_codes
+    feasibility = RubyRouting::Routing::RuntimeFeasibility.new(
+      status: :infeasible,
+      reason_codes: TestSupport::EachOnlyCollection.new([:operational_infeasibility])
+    )
+
+    assert_equal [:operational_infeasibility], feasibility.reason_codes
+  end
+
+  def test_allocation_choose_canonicalizes_padded_each_only_candidate_ids
+    policy = count_policy("A" => 1, "B" => 1)
+
+    decision = RubyRouting::Routing::Allocation.choose(
+      policy: policy,
+      candidates: TestSupport::EachOnlyCollection.new([" A ", " B "]),
+      accounting_provider_ids: TestSupport::EachOnlyCollection.new([" A ", " B "]),
+      snapshot: RubyRouting::Routing::AllocationSnapshot.empty,
+      incoming_measure: 1
+    )
+
+    assert_equal "A", decision.chosen_provider
+    assert_equal %w[A B], decision.candidate_discrepancies.keys
+  end
+
+  def test_allocation_snapshot_canonicalizes_provider_ids_and_rejects_collisions
+    snapshot = RubyRouting::Routing::AllocationSnapshot.new(measures: { " A " => 2 })
+
+    assert_equal({ "A" => 2 }, snapshot.measures)
+    assert_equal 2, snapshot.measure_for(" A ")
+    assert_equal({ "A" => 5 }, snapshot.with_commit(" A ", 3).measures)
+    assert_raises(ArgumentError) { snapshot.measure_for(" ") }
+    assert_raises(ArgumentError) { snapshot.with_commit(" ", 1) }
+    assert_raises(ArgumentError) do
+      RubyRouting::Routing::AllocationSnapshot.new(measures: { " " => 1 })
+    end
+    assert_raises(ArgumentError) do
+      RubyRouting::Routing::AllocationSnapshot.new(measures: { "A" => 1, " A " => 2 })
+    end
+  end
+
   def test_count_allocation_minimizes_prefix_discrepancy
     policy = count_policy("A" => 1, "B" => 1)
     snapshot = RubyRouting::Routing::AllocationSnapshot.empty
@@ -87,6 +189,32 @@ class AllocationTest < Minitest::Test
     assert_equal Rational(150), decision.candidate_discrepancies.fetch("B")
   end
 
+  def test_tolerance_is_an_explicit_allocation_corridor_and_candidate_trace
+    policy = count_policy("A" => 1, "B" => 1).then do |base|
+      RubyRouting::RoutingPolicy.new(
+        id: base.id,
+        epoch: base.epoch,
+        measure: base.measure,
+        targets: base.targets,
+        tolerance: 0
+      )
+    end
+
+    decision = RubyRouting::Routing::Allocation.choose(
+      policy: policy,
+      candidates: %w[A B],
+      snapshot: RubyRouting::Routing::AllocationSnapshot.new(measures: { "A" => 1, "B" => 0 }),
+      incoming_measure: 1
+    )
+
+    assert_equal "B", decision.chosen_provider
+    assert_predicate decision, :allocation_corridor_satisfied?
+    assert_equal true, decision.candidate_trace.fetch("A").fetch(:tolerance_exceeded)
+    assert_equal false, decision.candidate_trace.fetch("B").fetch(:tolerance_exceeded)
+    assert_equal decision.allocation_key_for("A"), decision.candidate_trace.fetch("A").fetch(:allocation_key)
+    assert_equal decision.candidate_trace.keys.sort, %w[A B]
+  end
+
   def test_only_positive_weight_candidates_are_selected
     policy = count_policy("A" => 1)
 
@@ -99,6 +227,118 @@ class AllocationTest < Minitest::Test
 
     assert_equal "A", decision.chosen_provider
     assert_equal ["A"], decision.candidate_discrepancies.keys
+  end
+
+  def test_share_maximum_is_respected_before_lower_level_ranking
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "bounded",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1, "B" => 1 },
+      maximum_shares: { "A" => "1/2" }
+    )
+
+    decision = RubyRouting::Routing::Allocation.choose(
+      policy: policy,
+      candidates: %w[A B],
+      snapshot: RubyRouting::Routing::AllocationSnapshot.new(measures: { "A" => 1, "B" => 1 }),
+      incoming_measure: 1
+    )
+
+    assert_equal "B", decision.chosen_provider
+    assert_predicate decision, :share_corridor_satisfied?
+    assert_empty decision.share_violations
+  end
+
+  def test_share_minimum_creates_typed_pressure_for_underrepresented_provider
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "minimum",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1, "B" => 1 },
+      minimum_shares: { "B" => "1/2" }
+    )
+
+    decision = RubyRouting::Routing::Allocation.choose(
+      policy: policy,
+      candidates: %w[A B],
+      snapshot: RubyRouting::Routing::AllocationSnapshot.empty,
+      incoming_measure: 1
+    )
+
+    assert_equal "B", decision.chosen_provider
+    assert_predicate decision, :share_corridor_satisfied?
+  end
+
+  def test_indivisible_assignment_exposes_unsatisfied_share_corridor
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "indivisible-share",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1, "B" => 1 },
+      maximum_shares: { "A" => "1/2", "B" => "1/2" }
+    )
+
+    decision = RubyRouting::Routing::Allocation.choose(
+      policy: policy,
+      candidates: %w[A B],
+      snapshot: RubyRouting::Routing::AllocationSnapshot.empty,
+      incoming_measure: 1
+    )
+
+    refute_predicate decision, :share_corridor_satisfied?
+    assert_equal Rational(1, 2), decision.chosen_provider_share_violations.fetch(:maximum)
+  end
+
+  def test_deviation_classification_is_explicit_and_does_not_change_allocation
+    policy = count_policy("A" => 1, "B" => 1)
+    allocation = RubyRouting::Routing::Allocation.choose(
+      policy: policy,
+      candidates: %w[A B],
+      snapshot: RubyRouting::Routing::AllocationSnapshot.empty,
+      incoming_measure: 1
+    )
+
+    assert_equal :recoverable,
+      RubyRouting::Routing::Deviation.recoverability(
+        allocation: allocation,
+        cause: :optimizer_choice,
+        role: :primary
+      )
+    assert_equal :unavoidable,
+      RubyRouting::Routing::Deviation.recoverability(
+        allocation: allocation,
+        cause: :recovery_exclusion,
+        role: :primary
+      )
+    assert_equal :unavoidable,
+      RubyRouting::Routing::Deviation.recoverability(
+        allocation: allocation,
+        cause: :optimizer_choice,
+        role: :recovery
+      )
+    assert_equal "A", allocation.chosen_provider
+  end
+
+  def test_chosen_provider_share_violations_are_scoped_to_the_chosen_provider
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "chosen-share-scope",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1, "B" => 1 },
+      maximum_shares: { "A" => "1/3" }
+    )
+
+    decision = RubyRouting::Routing::Allocation.choose(
+      policy: policy,
+      candidates: %w[A B],
+      snapshot: RubyRouting::Routing::AllocationSnapshot.new(measures: { "A" => 2, "B" => 1 }),
+      incoming_measure: 1
+    )
+
+    assert_equal "B", decision.chosen_provider
+    assert_equal({ "A" => { maximum: Rational(1, 6) } }, decision.share_violations)
+    assert_empty decision.chosen_provider_share_violations
   end
 
   def test_no_configured_feasible_candidate_is_explicit_no_route
@@ -123,6 +363,26 @@ class AllocationTest < Minitest::Test
 
     assert_equal ["A"], result.feasible_provider_ids
     assert_equal :unavailable, result.exclusions.fetch("B")
+  end
+
+  def test_eligibility_and_allocation_accept_each_only_enumerables
+    policy = count_policy("A" => 1, "B" => 1)
+    opportunities = TestSupport::EachOnlyCollection.new([
+      RubyRouting::ProviderOpportunity.new(provider_id: "A"),
+      RubyRouting::ProviderOpportunity.new(provider_id: "B")
+    ])
+
+    eligibility = RubyRouting::Routing::Eligibility.evaluate(opportunities)
+    decision = RubyRouting::Routing::Allocation.choose(
+      policy: policy,
+      candidates: TestSupport::EachOnlyCollection.new(eligibility.feasible_provider_ids),
+      accounting_provider_ids: TestSupport::EachOnlyCollection.new(eligibility.functional_provider_ids),
+      snapshot: RubyRouting::Routing::AllocationSnapshot.empty,
+      incoming_measure: 1
+    )
+
+    assert_equal %w[A B], eligibility.feasible_provider_ids
+    assert_equal "A", decision.chosen_provider
   end
 
   def test_context_eligibility_is_distinct_from_live_availability
@@ -236,6 +496,33 @@ class AllocationTest < Minitest::Test
 
     assert_empty result.functional_provider_ids
     assert_equal :hard_policy_constraint, result.exclusions.fetch("A")
+  end
+
+  def test_context_labels_are_canonicalized_for_provider_and_policy_eligibility
+    intent = RubyRouting::PayoutIntent.new(
+      id: "padded-context",
+      money: RubyRouting::Money.new(100, "RUB"),
+      context: { labels: [" retail "] }
+    )
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "padded-context",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1 },
+      hard_constraints: { required_context_labels: ["retail"] }
+    )
+    provider = RubyRouting::ProviderOpportunity.new(
+      provider_id: "A",
+      required_context_labels: ["retail"]
+    )
+
+    assert policy.hard_constraints.allows?(intent: intent, provider_id: "A")
+    assert provider.functional_eligible_for?(intent: intent, policy: policy)
+    assert_equal ["A"], RubyRouting::Routing::Eligibility.evaluate(
+      [provider],
+      intent: intent,
+      policy: policy
+    ).feasible_provider_ids
   end
 
   private

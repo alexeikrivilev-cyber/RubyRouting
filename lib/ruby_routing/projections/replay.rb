@@ -11,20 +11,21 @@ module RubyRouting
 
       def capacity(facts)
         states = {}
-        facts.to_a.sort_by(&:sequence).each do |fact|
+        RubyRouting::Collection.to_array(facts, "facts").sort_by(&:sequence).each do |fact|
           payload = fact.payload
           if fact.type == :provider_opportunity_registered
-            provider_id = payload.fetch(:provider_id)
-            state = states[provider_id.to_s] ||= CapacityState.new(provider_id)
+            provider_id = normalize_identity(payload.fetch(:provider_id), "provider id")
+            state = states[provider_id] ||= CapacityState.new(provider_id)
             state.set_budget(payload[:capacity])
           elsif fact.type == :opportunity_evaluated
             payload.fetch(:capacity, {}).each do |provider_id, trace|
-              state = states[provider_id.to_s] ||= CapacityState.new(provider_id)
+              provider_id = normalize_identity(provider_id, "provider id")
+              state = states[provider_id] ||= CapacityState.new(provider_id)
               state.set_budget(trace[:budget])
             end
           elsif %i[capacity_reserved capacity_released].include?(fact.type)
-            provider_id = payload.fetch(:provider_id)
-            state = states[provider_id.to_s] ||= CapacityState.new(provider_id)
+            provider_id = normalize_identity(payload.fetch(:provider_id), "provider id")
+            state = states[provider_id] ||= CapacityState.new(provider_id)
             if fact.type == :capacity_reserved
               state.reserve(payload.fetch(:amount))
             else
@@ -35,14 +36,41 @@ module RubyRouting
         CapacityProjection.new(states.transform_values(&:snapshot))
       end
 
+      def throughput(facts, as_of: nil)
+        states = {}
+        RubyRouting::Collection.to_array(facts, "facts").sort_by(&:sequence).each do |fact|
+          payload = fact.payload
+          if fact.type == :provider_opportunity_registered
+            provider_id = normalize_identity(payload.fetch(:provider_id), "provider id")
+            state = states[provider_id] ||= ThroughputState.new(provider_id)
+            state.set_budget(payload[:throughput])
+          elsif fact.type == :throughput_consumed
+            provider_id = normalize_identity(payload.fetch(:provider_id), "provider id")
+            state = states[provider_id] ||= ThroughputState.new(provider_id)
+            state.consume(payload.fetch(:consumed_at))
+          end
+        end
+        ThroughputProjection.new(states.transform_values { |state| state.snapshot(as_of: as_of) })
+      end
+
       def allocation(facts)
         states = {}
-        facts.to_a.sort_by(&:sequence).each do |fact|
+        RubyRouting::Collection.to_array(facts, "facts").sort_by(&:sequence).each do |fact|
           next unless fact.type == :allocation_committed
-          next unless fact.payload.fetch(:role).to_sym == :primary
+          next unless RubyRouting::Enum.normalize(
+            fact.payload.fetch(:role),
+            %i[primary recovery],
+            "allocation role"
+          ) == :primary
 
           payload = fact.payload
-          key = Array(payload.fetch(:policy_scope)).map(&:to_s).freeze
+          key = if payload[:allocation_key]
+            normalize_allocation_key(payload[:allocation_key])
+          else
+            RubyRouting::Collection.to_array(payload.fetch(:policy_scope), "allocation key").map do |part|
+              normalize_identity(part, "allocation key part")
+            end.freeze
+          end
           state = states[key] ||= AllocationState.new(key)
           state.commit(provider_id: payload.fetch(:provider_id), measure: payload.fetch(:measure))
         end
@@ -51,22 +79,26 @@ module RubyRouting
 
       def health(facts)
         controller = nil
-        facts.to_a.sort_by(&:sequence).each do |fact|
+        RubyRouting::Collection.to_array(facts, "facts").sort_by(&:sequence).each do |fact|
           payload = fact.payload
           if fact.type == :provider_opportunity_registered
             controller ||= RubyRouting::Routing::HealthController.new(
               policy: health_policy_from(payload[:health_policy])
             )
-            controller.ensure_provider(payload.fetch(:provider_id))
+            controller.ensure_provider(
+              normalize_identity(payload.fetch(:provider_id), "provider id")
+            )
           elsif fact.type == :opportunity_evaluated
             controller ||= RubyRouting::Routing::HealthController.new(
               policy: health_policy_from(payload[:health_policy])
             )
-            payload.fetch(:health, {}).each_key { |provider_id| controller.ensure_provider(provider_id) }
+            payload.fetch(:health, {}).each_key do |provider_id|
+              controller.ensure_provider(normalize_identity(provider_id, "provider id"))
+            end
           elsif fact.type == :health_signal
             controller ||= RubyRouting::Routing::HealthController.new(policy: health_policy_from(payload[:policy]))
             controller.observe(
-              provider_id: payload.fetch(:provider_id),
+              provider_id: normalize_identity(payload.fetch(:provider_id), "provider id"),
               signal: payload.fetch(:signal),
               attribution: payload.fetch(:attribution),
               release_exposure: payload.fetch(:release_exposure, true)
@@ -74,28 +106,61 @@ module RubyRouting
           elsif fact.type == :health_exposure_reserved
             controller ||= RubyRouting::Routing::HealthController.new
             controller.reserve_exposure(
-              payload.fetch(:provider_id),
-              owner: payload.fetch(:operation_id)
+              normalize_identity(payload.fetch(:provider_id), "provider id"),
+              owner: normalize_identity(payload.fetch(:operation_id), "operation id")
             )
           elsif fact.type == :health_exposure_released
+            provider_id = normalize_identity(payload.fetch(:provider_id), "provider id")
+            operation_id = normalize_identity(payload.fetch(:operation_id), "operation id")
             controller&.release_exposure(
-              payload.fetch(:provider_id),
-              owner: payload.fetch(:operation_id)
+              provider_id,
+              owner: operation_id
             )
           end
         end
         HealthProjection.new(controller || RubyRouting::Routing::HealthController.new)
       end
 
+      def quality(facts)
+        controller = nil
+        RubyRouting::Collection.to_array(facts, "facts").sort_by(&:sequence).each do |fact|
+          payload = fact.payload
+          if fact.type == :provider_opportunity_registered
+            controller ||= RubyRouting::Routing::QualityController.new(
+              policy: quality_policy_from(payload[:quality_policy])
+            )
+            controller.ensure_provider(
+              normalize_identity(payload.fetch(:provider_id), "provider id")
+            )
+          elsif fact.type == :quality_signal
+            controller ||= RubyRouting::Routing::QualityController.new
+            controller.observe(
+              provider_id: normalize_identity(payload.fetch(:provider_id), "provider id"),
+              context_key: normalize_context_key(payload.fetch(:context_key, [])),
+              outcome: RubyRouting::NormalizedOutcome.new(
+                status: payload.fetch(:status),
+                attribution: payload.fetch(:attribution),
+                safe_to_release: payload[:safe_to_release]
+              )
+            )
+          end
+        end
+        QualityProjection.new(controller || RubyRouting::Routing::QualityController.new)
+      end
+
       def lifecycle(facts)
         states = {}
-        ordered_facts = facts.to_a.sort_by(&:sequence)
+        ordered_facts = RubyRouting::Collection.to_array(facts, "facts").sort_by(&:sequence)
         revision = ordered_facts.last&.sequence || 0
         ordered_facts.each do |fact|
           next if %i[
             provider_opportunity_registered
+            provider_opportunity_removed
+            provider_runtime_changed
             health_signal
             health_state_changed
+            throughput_consumed
+            quality_signal
           ].include?(fact.type)
           state = states[fact.payout_id] ||= LifecycleState.new(fact.payout_id, revision: revision)
           state.apply(fact)
@@ -108,10 +173,51 @@ module RubyRouting
       end
 
       def health_policy_from(payload)
-        return RubyRouting::Routing::HealthPolicy.new unless payload.is_a?(Hash)
+        return RubyRouting::Routing::HealthPolicy.new if payload.nil?
 
-        RubyRouting::Routing::HealthPolicy.new(**payload.transform_keys(&:to_sym))
+        values = RubyRouting::HashKeys.symbolize(
+          payload,
+          %i[degrade_after quarantine_after recover_after probe_limit],
+          "health policy"
+        )
+        RubyRouting::Routing::HealthPolicy.new(**values)
       end
+
+      def quality_policy_from(payload)
+        return RubyRouting::Routing::QualityPolicy.new if payload.nil?
+
+        values = RubyRouting::HashKeys.symbolize(payload, %i[minimum_samples], "quality policy")
+        RubyRouting::Routing::QualityPolicy.new(**values)
+      end
+
+      def normalize_allocation_key(value)
+        case value
+        when Array
+          value.map { |part| normalize_allocation_key(part) }.freeze
+        else
+          normalize_identity(value, "allocation key part")
+        end
+      end
+      private_class_method :normalize_allocation_key
+
+      def normalize_context_key(value)
+        RubyRouting::Collection.to_array(value, "quality context key").map do |label|
+          normalize_identity(label, "quality context label")
+        end.uniq.sort.freeze
+      end
+      private_class_method :normalize_context_key
+
+      def normalize_identity(value, label)
+        unless value.is_a?(String) || value.is_a?(Symbol)
+          raise ArgumentError, "#{label} must be a String or Symbol"
+        end
+
+        normalized = value.to_s.strip
+        raise ArgumentError, "#{label} must be non-empty" if normalized.empty?
+
+        normalized.freeze
+      end
+      private_class_method :normalize_identity
 
       class CapacityProjection
         attr_reader :providers
@@ -122,7 +228,7 @@ module RubyRouting
         end
 
         def snapshot(provider_id)
-          providers.fetch(provider_id.to_s)
+          providers.fetch(Replay.send(:normalize_identity, provider_id, "provider id"))
         end
 
         def to_h
@@ -146,18 +252,46 @@ module RubyRouting
         end
 
         def snapshot(policy_or_key)
-          key = if policy_or_key.respond_to?(:allocation_key)
+          raw_key = if policy_or_key.respond_to?(:allocation_key)
             policy_or_key.allocation_key
           else
-            Array(policy_or_key).map(&:to_s)
+            policy_or_key
           end
-          policies.fetch(key) { RubyRouting::Routing::AllocationSnapshot.empty }
+          policies.fetch(normalize_allocation_key(raw_key)) { RubyRouting::Routing::AllocationSnapshot.empty }
         end
 
         def to_h
           policies.transform_values do |snapshot|
             { measures: snapshot.measures, revision: snapshot.revision }
           end.freeze
+        end
+
+        private
+
+        def normalize_allocation_key(value)
+          case value
+          when Array
+            value.map { |part| normalize_allocation_key(part) }.freeze
+          else
+            Replay.send(:normalize_identity, value, "allocation key part")
+          end
+        end
+      end
+
+      class ThroughputProjection
+        attr_reader :providers
+
+        def initialize(providers)
+          @providers = providers.dup.freeze
+          freeze
+        end
+
+        def snapshot(provider_id)
+          providers.fetch(Replay.send(:normalize_identity, provider_id, "provider id"))
+        end
+
+        def to_h
+          providers.transform_values(&:to_h).freeze
         end
       end
 
@@ -169,7 +303,7 @@ module RubyRouting
         end
 
         def commit(provider_id:, measure:)
-          normalized_provider_id = provider_id.to_s
+          normalized_provider_id = Replay.send(:normalize_identity, provider_id, "provider id")
           @measures[normalized_provider_id] = @measures.fetch(normalized_provider_id, 0) + measure
           @revision += 1
         end
@@ -184,7 +318,7 @@ module RubyRouting
 
       class CapacityState
         def initialize(provider_id)
-          @provider_id = provider_id.to_s
+          @provider_id = Replay.send(:normalize_identity, provider_id, "provider id")
           @budget = nil
           @used_slots = 0
           @used_count = 0
@@ -195,7 +329,11 @@ module RubyRouting
           @budget = if payload.nil?
             nil
           else
-            values = payload.transform_keys(&:to_sym)
+            values = RubyRouting::HashKeys.symbolize(
+              payload,
+              %i[max_slots max_count max_amount_minor currency],
+              "capacity budget"
+            )
             RubyRouting::CapacityBudget.new(**values)
           end
         end
@@ -225,6 +363,45 @@ module RubyRouting
         end
       end
 
+      class ThroughputState
+        def initialize(provider_id)
+          @provider_id = Replay.send(:normalize_identity, provider_id, "provider id")
+          @budget = nil
+          @consumed_at = []
+        end
+
+        def set_budget(payload)
+          @budget = if payload.nil?
+            nil
+          else
+            values = RubyRouting::HashKeys.symbolize(
+              payload,
+              %i[max_operations window_seconds],
+              "throughput budget"
+            )
+            RubyRouting::ThroughputBudget.new(**values)
+          end
+        end
+
+        def consume(consumed_at)
+          @consumed_at << consumed_at
+        end
+
+        def snapshot(as_of: nil)
+          consumed_at = if @budget && as_of
+            cutoff = as_of - @budget.window_seconds
+            @consumed_at.select { |timestamp| timestamp > cutoff }
+          else
+            @consumed_at
+          end
+          RubyRouting::State::ThroughputSnapshot.new(
+            provider_id: @provider_id,
+            budget: @budget,
+            consumed_at: consumed_at
+          )
+        end
+      end
+
       class HealthProjection
         def initialize(controller)
           @controller = controller
@@ -232,7 +409,28 @@ module RubyRouting
         end
 
         def snapshot(provider_id)
-          @controller.snapshot(provider_id)
+          @controller.snapshot(Replay.send(:normalize_identity, provider_id, "provider id"))
+        end
+
+        def to_h
+          @controller.provider_ids.each_with_object({}) do |provider_id, copy|
+            copy[provider_id] = @controller.snapshot(provider_id).to_h
+          end.freeze
+        end
+      end
+
+      class QualityProjection
+        def initialize(controller)
+          @controller = controller
+          freeze
+        end
+
+        def snapshot(provider_id, context: nil, context_key: nil)
+          @controller.snapshot(
+            Replay.send(:normalize_identity, provider_id, "provider id"),
+            context: context,
+            context_key: context_key
+          )
         end
 
         def to_h
@@ -251,7 +449,7 @@ module RubyRouting
         end
 
         def payout(payout_id)
-          payouts.fetch(payout_id.to_s)
+          payouts.fetch(Replay.send(:normalize_identity, payout_id, "payout id"))
         end
 
         def to_h
@@ -285,7 +483,7 @@ module RubyRouting
         attr_reader :payout_id
 
         def initialize(payout_id, revision: 0)
-          @payout_id = payout_id
+          @payout_id = Replay.send(:normalize_identity, payout_id, "payout id")
           @revision = revision
           @intent = nil
           @status = :new
@@ -322,12 +520,23 @@ module RubyRouting
               payload.fetch(:policy_id),
               payload.fetch(:policy_epoch),
               payload.fetch(:policy_scope)
-            ].map(&:to_s).freeze
-            @policy_epoch = payload.fetch(:policy_epoch).to_s
-            @policy_fingerprint = payload.fetch(:policy_fingerprint).to_s.freeze
+            ].map { |part| Replay.send(:normalize_identity, part, "policy identity") }.freeze
+            @policy_epoch = Replay.send(:normalize_identity, payload.fetch(:policy_epoch), "policy epoch")
+            @policy_fingerprint = Replay.send(:normalize_identity, payload.fetch(:policy_fingerprint), "policy fingerprint")
           when :decision_committed
-            @policy_epoch = payload[:policy_epoch]&.to_s
-            if %i[assign retry_same].include?(payload[:action].to_sym) && payload[:operation_id]
+            @policy_epoch = payload[:policy_epoch] &&
+              Replay.send(:normalize_identity, payload[:policy_epoch], "policy epoch")
+            action = RubyRouting::Enum.normalize(
+              payload.fetch(:action),
+              RubyRouting::DecisionProposal::ACTIONS,
+              "decision action"
+            )
+            if payload[:operation_id]
+              Replay.send(:normalize_identity, payload[:operation_id], "operation id")
+              Replay.send(:normalize_identity, payload.fetch(:attempt_id), "attempt id")
+              Replay.send(:normalize_identity, payload.fetch(:provider_id), "provider id")
+            end
+            if %i[assign retry_same].include?(action) && payload[:operation_id]
               ensure_attempt(
                 operation_id: payload[:operation_id],
                 attempt_id: payload[:attempt_id],
@@ -336,8 +545,11 @@ module RubyRouting
                 contract: payload[:contract],
                 committed_at: payload[:committed_at]
               )
-              @primary_provider_id ||= payload[:provider_id].to_s if payload[:role].to_sym == :primary
+              if RubyRouting::Enum.normalize(payload.fetch(:role), RubyRouting::DecisionProposal::ROLES, "decision role") == :primary
+                @primary_provider_id ||= Replay.send(:normalize_identity, payload[:provider_id], "provider id")
+              end
             end
+            @status = :deferred if action == :defer && @ownership.nil?
           when :allocation_committed
             attempt = ensure_attempt(
               operation_id: payload[:operation_id],
@@ -349,42 +561,60 @@ module RubyRouting
           when :ownership_acquired
             @ownership = RubyRouting::EconomicOwnership.new(
               payout_id: fact.payout_id,
-              provider_id: payload.fetch(:provider_id),
-              operation_id: payload.fetch(:operation_id),
-              attempt_id: payload.fetch(:attempt_id)
+              provider_id: Replay.send(:normalize_identity, payload.fetch(:provider_id), "provider id"),
+              operation_id: Replay.send(:normalize_identity, payload.fetch(:operation_id), "operation id"),
+              attempt_id: Replay.send(:normalize_identity, payload.fetch(:attempt_id), "attempt id")
             )
             @status = :pending
           when :attempt_started
+            Replay.send(:normalize_identity, payload.fetch(:provider_id), "provider id")
+            Replay.send(:normalize_identity, payload.fetch(:operation_id), "operation id")
+            Replay.send(:normalize_identity, payload.fetch(:attempt_id), "attempt id")
             @provider_interaction_count += 1
-            @resolution_interaction_count += 1 if %i[resolve retry_same].include?(payload[:action].to_sym)
+            action = RubyRouting::Enum.normalize(
+              payload.fetch(:action),
+              RubyRouting::DecisionProposal::ACTIONS,
+              "decision action"
+            )
+            @resolution_interaction_count += 1 if %i[resolve retry_same].include?(action)
           when :operation_phase_changed
-            attempt = @operations[payload[:operation_id]]
-            attempt.phase = payload[:to].to_sym if attempt
+            operation_id = Replay.send(:normalize_identity, payload[:operation_id], "operation id")
+            Replay.send(:normalize_identity, payload.fetch(:provider_id), "provider id")
+            Replay.send(:normalize_identity, payload.fetch(:attempt_id), "attempt id")
+            attempt = @operations[operation_id]
+            attempt.phase = RubyRouting::Enum.normalize(
+              payload.fetch(:to),
+              RubyRouting::State::AttemptSnapshot::PHASES,
+              "operation phase"
+            ) if attempt
           when :provider_observed
             apply_observation(payload)
           when :ownership_released
+            Replay.send(:normalize_identity, payload.fetch(:provider_id), "provider id")
+            Replay.send(:normalize_identity, payload.fetch(:operation_id), "operation id")
+            Replay.send(:normalize_identity, payload.fetch(:attempt_id), "attempt id")
             @ownership = nil
           when :settlement_recorded
             @status = :success
-            @settlement_provider_id = payload.fetch(:provider_id).to_s
-            @settlement_operation_id = payload.fetch(:operation_id).to_s
+            @settlement_provider_id = Replay.send(:normalize_identity, payload.fetch(:provider_id), "provider id")
+            @settlement_operation_id = Replay.send(:normalize_identity, payload.fetch(:operation_id), "operation id")
             @ownership = nil
           when :reconciliation_blocked
             @status = :reconciliation_blocked
           when :economic_conflict
             @conflicts << RubyRouting::EconomicConflict.new(
               payout_id: fact.payout_id,
-              provider_id: payload.fetch(:provider_id),
-              operation_id: payload.fetch(:operation_id),
-              attempt_id: payload.fetch(:attempt_id),
+              provider_id: Replay.send(:normalize_identity, payload.fetch(:provider_id), "provider id"),
+              operation_id: Replay.send(:normalize_identity, payload.fetch(:operation_id), "operation id"),
+              attempt_id: Replay.send(:normalize_identity, payload.fetch(:attempt_id), "attempt id"),
               reason: payload.fetch(:reason)
             )
           when :reversal_recorded
             reversal = RubyRouting::SettlementReversal.new(
-              reversal_id: payload.fetch(:reversal_id),
+              reversal_id: Replay.send(:normalize_identity, payload.fetch(:reversal_id), "reversal id"),
               payout_id: fact.payout_id,
-              provider_id: payload.fetch(:provider_id),
-              operation_id: payload.fetch(:operation_id),
+              provider_id: Replay.send(:normalize_identity, payload.fetch(:provider_id), "provider id"),
+              operation_id: Replay.send(:normalize_identity, payload.fetch(:operation_id), "operation id"),
               amount: payload.fetch(:amount),
               reason: payload.fetch(:reason)
             )
@@ -419,14 +649,23 @@ module RubyRouting
         private
 
         def ensure_attempt(operation_id:, attempt_id:, provider_id:, role:, contract: nil, committed_at: nil)
-          return @operations[operation_id.to_s] if @operations.key?(operation_id.to_s)
+          normalized_operation_id = Replay.send(:normalize_identity, operation_id, "operation id")
+          normalized_attempt_id = attempt_id && Replay.send(:normalize_identity, attempt_id, "attempt id")
+          normalized_provider_id = Replay.send(:normalize_identity, provider_id, "provider id")
+          normalized_role = RubyRouting::Enum.normalize(
+            role,
+            RubyRouting::DecisionProposal::ROLES,
+            "replay attempt role"
+          )
+          normalized_contract = contract_from(contract)
+          return @operations[normalized_operation_id] if @operations.key?(normalized_operation_id)
 
           attempt = ReplayAttempt.new(
-            attempt_id: attempt_id || "#{@payout_id}:unknown-attempt:#{@attempts.length + 1}",
-            operation_id: operation_id,
-            provider_id: provider_id,
-            role: role,
-            contract: contract_from(contract),
+            attempt_id: normalized_attempt_id || "#{@payout_id}:unknown-attempt:#{@attempts.length + 1}",
+            operation_id: normalized_operation_id,
+            provider_id: normalized_provider_id,
+            role: normalized_role,
+            contract: normalized_contract,
             committed_at: committed_at
           )
           @attempts << attempt
@@ -438,21 +677,25 @@ module RubyRouting
           return nil unless payload
 
           RubyRouting::ProviderOperationContract.new(
-            provider_id: payload.fetch(:provider_id),
+            provider_id: Replay.send(:normalize_identity, payload.fetch(:provider_id), "provider id"),
             idempotent_retry: payload.fetch(:idempotent_retry),
             status_lookup: payload.fetch(:status_lookup),
-            idempotency_key: payload.fetch(:idempotency_key),
+            idempotency_key: Replay.send(:normalize_identity, payload.fetch(:idempotency_key), "idempotency key"),
             ttl_seconds: payload[:ttl_seconds],
             deadline_seconds: payload[:deadline_seconds],
-            version: payload.fetch(:version),
+            version: Replay.send(:normalize_identity, payload.fetch(:version), "contract version"),
             authoritative_sequence: payload.fetch(:authoritative_sequence, false)
           )
         end
 
         def apply_observation(payload)
+          Replay.send(:normalize_identity, payload.fetch(:observation_id), "observation id")
+          Replay.send(:normalize_identity, payload.fetch(:provider_id), "provider id")
+          Replay.send(:normalize_identity, payload.fetch(:attempt_id), "attempt id")
+          operation_id = Replay.send(:normalize_identity, payload[:operation_id], "operation id")
           return unless payload[:applied]
 
-          attempt = @operations[payload[:operation_id].to_s]
+          attempt = @operations[operation_id]
           return unless attempt
 
           outcome = RubyRouting::NormalizedOutcome.new(
@@ -485,10 +728,10 @@ module RubyRouting
         attr_accessor :outcome, :measure, :phase, :last_observation_sequence
 
         def initialize(attempt_id:, operation_id:, provider_id:, role:, contract:, committed_at: nil)
-          @attempt_id = attempt_id.to_s
-          @operation_id = operation_id.to_s
-          @provider_id = provider_id.to_s
-          @role = role.to_sym
+          @attempt_id = Replay.send(:normalize_identity, attempt_id, "attempt id")
+          @operation_id = Replay.send(:normalize_identity, operation_id, "operation id")
+          @provider_id = Replay.send(:normalize_identity, provider_id, "provider id")
+          @role = RubyRouting::Enum.normalize(role, RubyRouting::DecisionProposal::ROLES, "replay attempt role")
           @contract = contract
           @committed_at = committed_at&.freeze
           @measure = nil

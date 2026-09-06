@@ -36,4 +36,12 @@ task :benchmark do
   ruby "-Ilib", "benchmark/baseline.rb"
 end
 
+task :load_10k do
+  ruby "-Ilib", "benchmark/load_10k.rb"
+end
+
+task :degradation_metrics do
+  ruby "-Ilib", "benchmark/degradation_metrics.rb"
+end
+
 task default: :test

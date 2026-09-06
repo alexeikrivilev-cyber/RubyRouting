@@ -1,296 +1,541 @@
-# Current Architecture — v0.2
+# Current Architecture — Product Convergence
 
-This document is the current architecture supplement for **v0.2 — Pre-TZ Comprehensive Routing Core**.
+This document defines the current architecture for **v0.3 — Product Convergence & Full Routing Product**.
 
-`docs/ARCHITECTURE.md` remains the detailed v0.1 starting architecture and is still valid as the inherited structural baseline. Where this document adds or changes a responsibility for v0.2, this document wins until the official TZ requires another architecture.
+`docs/ARCHITECTURE.md` remains useful historical rationale. This document is authoritative where they differ.
 
-## 1. Architecture stance
+## 1. Architecture objective
 
-Do not restart the system.
+Build one coherent payout-routing product, not a collection of independently plausible modules.
 
-Keep a plain-Ruby modular monolith with:
+Keep a plain-Ruby modular monolith. The product may contain multiple internal components, but it has one domain model, one routing pipeline and one atomic correctness boundary.
 
-- deterministic domain/routing kernel;
-- application orchestration/use cases;
-- one in-memory atomic coordinator boundary guarded by `Thread::Mutex` for current mutable correctness state;
-- provider I/O outside the coordinator lock;
-- explicit provider/time boundaries;
-- append-preserved typed facts and replayable projections;
-- independent Ruby oracle/simulator/test models.
+The target architecture is:
 
-The goal of v0.2 is **fuller domain logic**, not infrastructure expansion.
+`Application Commands / Queries`
+→ `Policy Resolver`
+→ `Opportunity Builder`
+→ `Admission Controller`
+→ `Allocation Controller`
+→ `Constrained Optimizer`
+→ `Atomic State Transaction`
+→ `Provider Port / Adapter`
+→ `Observation Normalizer`
+→ `Lifecycle + Recovery + Reconciliation`
+→ `Durable State / Facts`
+→ `Replay / Analytics / Audit`
 
-## 2. Current logical components
+API/dashboard/demo layers sit above application commands and projections. They never own business semantics.
 
-The architecture should evolve toward these responsibilities. Exact class/file boundaries may differ.
+`DecisionProposal` also enforces the state-independent shape of control
+decisions at the domain boundary: non-operation controls carry no provider,
+operation or attempt identity; ownerless and owner-held defer roles are
+validated later against restored ownership state by the durable trace
+validator.
 
-### Domain / policy values
+## 2. Component responsibilities
 
-Own immutable definitions:
+### Domain values
 
-- economic intent;
-- exact money;
-- policy identity/fingerprint;
-- allocation policy;
-- recovery policy;
-- hard constraints plus explicitly advisory soft constraints;
-- provider profile/functional constraints;
-- operation-scoped provider recovery contract;
+Immutable/value-like definitions:
+
+- `Money`;
+- `PayoutIntent`;
+- policy identity/version/fingerprint;
+- allocation strategy and obligations;
+- eligibility constraints;
+- recovery policy/budgets;
+- constrained quality/cost/latency/priority optimization;
+- provider capabilities/operation contract;
 - normalized outcomes/observations;
-- typed reason/deviation/conflict values.
+- typed reason/deviation/conflict/reversal values.
 
-### Deterministic routing kernel
+No wall clock, network call or mutable registry belongs here.
 
-Own pure decision logic:
+### Policy resolver
 
-- opportunity/functional eligibility;
-- static/runtime policy feasibility;
-- primary allocation discrepancy;
-- live feasible-set filtering from capacity/health/administrative state;
-- deterministic ranking inside the feasible envelope;
-- recovery action selection;
-- legal lifecycle transitions.
+Resolves the exact immutable policy definition for an intent and pins it to payout history.
 
-### Atomic coordinator
+It owns selection/versioning semantics, not routing arithmetic.
 
-Own the atomic transaction boundary across correctness state. Internally it may delegate to focused ledgers/reducers, but those collaborators remain under one correctness transaction unless evidence earns another model.
+### Provider catalog / opportunity builder
 
-Likely internal responsibilities:
+Produces the functional opportunity set from payout context and provider capabilities/configuration.
 
-- payout/operation registry;
-- primary allocation ledger;
-- capacity ledger;
-- operation/provider-contract state;
-- lifecycle reducer;
-- fact journal/revision;
-- provider opportunity configuration facts needed to replay capacity and health
-  projections;
-- health projection or a synchronized snapshot of health state where routing correctness depends on it.
+Functional opportunity answers: **could this provider serve this payout in principle?**
 
-### Application orchestration
+It must remain separate from temporary live state.
 
-Own workflow commands, not business math:
+Catalog replacement records explicit provider-removal facts. Restart therefore
+restores the current opportunity set without discarding older admission usage
+that may still be needed to release an unresolved operation safely.
 
-- submit/create intent;
-- prepare/commit a new route;
-- dispatch provider operation;
-- classify transport evidence;
-- apply provider observation;
-- resume/advance unresolved payout;
-- reconcile old operation/callback;
-- stop/defer/return typed result.
+`State::ProviderCatalogLedger` owns the current opportunity map and the ordered
+registration/removal timeline behind the coordinator atomic facade. Restore
+replays the durable catalog from an empty ledger; supplied runtime opportunities
+are accepted only when their IDs remain current in that history, so configuration
+cannot add or resurrect a provider without a new atomic registration. Timeline
+sequences must advance monotonically. The ledger performs no provider I/O and does
+not publish facts.
 
-A repeated call to continue an unresolved payout must not masquerade semantically as a new economic intent.
+### Admission controller
 
-### Provider boundary
+Answers: **may a new provider operation start now?**
 
-Own raw-provider semantics and expose structured domain evidence:
+Inputs may include:
 
-- executable adapter availability;
-- initiate using stable operation identity/idempotency key;
-- resolve/status lookup for an existing operation;
-- definitely-not-sent transport failure;
-- ambiguous-after-possible-send transport failure;
-- normalized provider observation;
-- provider sequence/version only when contractually meaningful.
+- administrative enablement;
+- live availability;
+- concurrent operation exposure;
+- amount exposure;
+- time-based throughput/rate budget;
+- health/quarantine/probing;
+- emergency/provider-specific hard gates.
 
-Provider-specific error strings/statuses never drive core routing directly.
+Admission is hard. An optimizer cannot resurrect a rejected provider.
 
-### Projections
+Important distinction:
 
-Own deterministic read models over facts:
+- concurrency/amount exposure is reserved and released with operation lifecycle;
+- throughput/rate limits are time-window/token style admission state and are not “released” when the payout completes.
 
-- current payout/operation/ownership state;
-- primary allocation state;
-- recovery/attempt history;
-- settlement/reversal/conflict state;
-- decision trace;
-- analytics.
+Do not reuse one counter for both meanings.
 
-Replay must be able to rebuild supported lifecycle state without hidden coordinator-only inputs.
+`State::AdmissionLedger` owns the mutable capacity and throughput counters
+behind the coordinator atomic facade. It has no provider I/O and does not own
+health policy; health exposure is a separate hard input to admission.
 
-## 3. Decision pipeline
+`Routing::DecisionEvaluator` is the fact-free evaluation seam that assembles runtime
+opportunities, eligibility, admission flags, allocation state, runtime
+feasibility and the constrained proposal. It publishes no facts and reserves
+no business resources (admission reads may prune expired local window entries);
+the coordinator records its output and hands admitted assignment work to
+`State::OperationCommitter` inside the same atomic transaction.
 
-The current intended pipeline is:
+### Allocation controller
 
-`Payout Intent`
-→ `Policy identity/fingerprint`
-→ `Functional opportunity`
-→ `Live availability`
-→ `Capacity feasibility`
-→ `Health/quarantine feasibility`
-→ `Hard business constraints`
-→ `Primary allocation pressure / recovery constraints`
-→ `Deterministic ranking within admissible choices`
-→ `Atomic decision + relevant reservations + ownership + operation contract + dispatch phase`
-→ release lock
-→ `Provider dispatch`
-→ `Transport/provider observation`
-→ `Lifecycle reducer`
-→ `success | wait/resolve | safe fallback | terminal | reconciliation-blocked | conflict/remediation`
+Owns business distribution obligations independently from provider quality optimization.
 
-Hard constraints are not blended into a single scalar score.
-Soft constraints are advisory in the current pre-TZ core: they never widen the
-route beyond hard feasibility or eliminate a safe provider, and any violation
-is preserved in typed opportunity/decision facts as `soft_constraint_relaxed`.
-The official TZ may later define a different relaxable-objective ordering.
+It supports exact count/volume measures and tracks the configured accounting point/window.
 
-## 4. Atomic commit contract
+Responsibilities:
 
-Before a new money-moving provider call, one coordinator transaction must establish all state that prevents concurrent correctness violations.
+- target weights/shares;
+- provider share minimum/maximum obligations when configured;
+- tolerance/admissible allocation corridor;
+- committed/in-flight primary assignments;
+- opportunity-aware denominator;
+- policy epochs/windows;
+- deviation attribution;
+- explicit `none`/`recoverable`/`unavoidable` deviation classification;
+- recoverable/non-recoverable debt if enabled;
+- bounded recovery/catch-up only if an explicit debt policy is enabled; v0.3
+  does not infer catch-up from recoverable deviation (D-059).
 
-For a primary assignment this may include:
+Per-payout amount eligibility limits are not provider share minimum/maximum obligations. Keep these concepts separate.
 
-- current payout legality;
-- current policy fingerprint;
-- provider opportunity/live feasibility;
+`State::AllocationLedger` owns keyed committed primary snapshots and exact
+revision progression. The coordinator supplies the atomic timing and the
+policy-derived key; recovery attempts remain outside the primary ledger.
+
+`State::LifecycleLedger` owns operation phase transitions and the deterministic
+reduction from normalized provider outcomes to payout status/release intent.
+`State::OperationCommitter` owns the fact-producing assignment, retry/resolve,
+phase-transition and ownership-release side effects around that reducer. The
+coordinator remains responsible for atomic fact publication and external
+capacity/health effects through this explicit seam, so lifecycle reduction
+cannot bypass the correctness boundary.
+
+`State::WorkingStateRestorer` owns ordered durable-prefix replay, validation that
+supplied runtime opportunities are current in durable provider history and the
+boundary that classifies reducer shape failures as durable corruption. The
+coordinator supplies the individual fact reducers, while
+`State::RestoredStateValidator` owns final restored-state ownership,
+reservation, phase/outcome and release-order checks. These are orchestration
+seams, not a second durable transaction owner.
+
+`State::ProviderCatalogRestorer` owns provider-definition and provider-runtime
+fact replay through the catalog, admission and quality seams. It does not append
+facts, perform provider I/O or own the transaction; the coordinator supplies
+identity/order validation and current component references.
+
+`State::AdmissionFactRestorer` owns durable capacity reservation/release and
+throughput-consumption reduction through `State::AdmissionLedger`, while the
+coordinator supplies payout, provider-history and operation-linkage callbacks.
+Exact money and monotonic-time validation therefore remains at the admission
+boundary without making the restorer a second transaction owner.
+
+`State::OperationFactRestorer` owns durable ownership-acquisition,
+attempt-start, reconciliation-block and health-exposure reservation/release
+replay. It uses coordinator-supplied operation, lifecycle and health-order
+validation callbacks, and does not publish facts or perform provider I/O.
+
+`State::ProviderEvidenceFactRestorer` owns provider-derived transport, health,
+quality and health-transition replay. `State::FinancialFactRestorer` owns
+late-success conflict and settlement-reversal replay. `State::PayoutFactRestorer`
+owns intent and policy registration replay, while
+`State::OpportunityEvaluationFactRestorer` and `State::DecisionFactRestorer`
+own the recomputed evaluation and assignment/recovery decision replay seams.
+`State::DecisionTraceValidator` owns the policy/allocation/admission/operation
+cross-fact proof used by decision replay. All of these remain callback-driven
+and behind the coordinator's durable atomic facade; none publishes facts or
+performs provider I/O.
+
+### Constrained optimizer
+
+Chooses among already safe/admitted allocation-compatible candidates.
+
+It must not be one arbitrary weighted scalar that can violate higher-priority obligations.
+
+Priority order:
+
+1. economic safety;
+2. hard functional/business constraints;
+3. operational admission;
+4. allocation admissibility/obligations;
+5. reliability/quality;
+6. cost;
+7. latency/priority;
+8. bounded exploration if explicitly enabled.
+
+A simple deterministic lexicographic implementation is preferred before statistical/adaptive routing.
+
+Reliability estimates are separate from fast operational health. Slow quality must account for:
+
+- attribution;
+- comparable route/context cohort;
+- maturity/delayed feedback;
+- sample confidence;
+- stale evidence.
+
+Pending/UNKNOWN does not automatically equal provider failure.
+
+### Lifecycle / recovery / reconciliation
+
+Owns legal action after a committed provider operation:
+
+- dispatch state;
+- provider observation reduction;
+- observation identity/deduplication and provider-event ordering;
+- same-provider status resolution;
+- same-operation idempotent retry;
+- safe release;
+- fresh fallback;
+- wait/defer;
+- deadline/TTL expiry;
+- reconciliation-blocked;
+- settlement;
+- return/reversal;
+- economic conflict/remediation.
+
+Fresh fallback is a new routing decision over current opportunity/admission state and excludes already money-moving providers unless an explicit policy says otherwise.
+
+A non-operation `defer` with no economic owner is a durable current-state
+transition to `:deferred`, so no-route and exhausted-budget payouts are
+distinguishable from untouched `:new` intents. A `defer` while ownership is
+retained remains an owner-held unresolved state such as `:unknown` or
+`:reconciliation_blocked`; it does not release or relabel that ownership.
+
+### Atomic state coordinator
+
+The coordinator is the correctness transaction facade, not the owner of every algorithm.
+
+It serializes the state changes that must be atomic together, including as applicable:
+
+- payout/operation legality;
+- policy pinning;
 - primary allocation reservation;
-- capacity reservation;
-- decision/operation/attempt identity;
+- admission/capacity reservation;
+- decision/operation identity;
 - economic ownership;
-- operation-scoped provider recovery contract;
-- operation dispatch phase initialized as committed/not-yet-dispatched;
-- typed facts/revision.
+- operation contract;
+- dispatch token/phase;
+- fact/state revision.
 
-For recovery, primary allocation is not mutated under the current `primary_assignment` accounting point.
+Provider I/O is always outside the coordinator mutex/transaction.
 
-Provider I/O happens only after the lock is released.
+Current `State::Coordinator` is too large to remain the final internal design. Decompose it incrementally into focused ledgers/reducers while preserving one atomic facade. Do not turn this refactor into microservices.
 
-## 5. Dispatch protocol
+Likely internal components:
 
-Ownership acquisition does not mean the request has already reached the provider.
+- `PayoutRegistry` / operation registry;
+- `ProviderCatalogLedger` / ordered opportunity history;
+- `AllocationLedger`;
+- `AdmissionLedger` / exposure/rate state;
+- `ProviderHealth` projection/controller;
+- `LifecycleLedger` / operation lifecycle reducer;
+- `OperationCommitter` / operation fact and ownership side effects;
+- `WorkingStateRestorer` / ordered durable replay and supplied-catalog validation;
+- `ProviderCatalogRestorer` / provider definition/runtime fact replay;
+- `AdmissionFactRestorer` / capacity and throughput fact replay;
+- `OperationFactRestorer` / ownership, dispatch, reconciliation and probe fact replay;
+- `ProviderEvidenceFactRestorer` / provider transport, health and quality fact replay;
+- `FinancialFactRestorer` / conflict and reversal fact replay;
+- `PayoutFactRestorer` / intent and policy registration fact replay;
+- `OpportunityEvaluationFactRestorer` / recomputed historical evaluation replay;
+- `DecisionFactRestorer` / assignment and recovery decision replay;
+- `DecisionTraceValidator` / cross-fact decision proof;
+- `RestoredStateValidator` / final durable working-state invariants;
+- `ObservationLedger` / observation identity and provider-event ordering;
+- `FactRepository` / durable state repository.
 
-The operation must retain enough phase/evidence to distinguish:
+The names are not normative. Responsibility ownership is.
 
-- committed but not dispatched;
-- dispatch in progress;
-- definitely not sent;
-- possibly sent / ambiguous;
-- provider observation received;
-- pending/unknown unresolved;
-- terminal/released.
+### Provider port and adapters
 
-A duplicate command during original dispatch cannot start status resolution or same-provider retry merely because ownership exists.
+The provider port represents economic operations, not transport convenience.
 
-Health reads are pure snapshots for unknown providers; provider registration and
-operational signals are the explicit state-materialization paths. This prevents a
-read-only inspection from creating health state that is absent from the fact log.
+Required concepts:
 
-## 6. Opportunity versus live feasibility
+- stable operation/idempotency identity;
+- initiate;
+- status/resolve when supported;
+- definitely-not-sent classification;
+- ambiguous-after-possible-send classification;
+- provider-specific raw response/webhook normalization;
+- terminal/pending/unknown semantics;
+- provider sequence semantics only when contractual;
+- cancellation semantics when supported.
 
-Do not store all provider routing state in one `feasible?` boolean.
+Core code never trusts an external caller to directly declare `safe_to_release`.
 
-Conceptually:
+A demo simulator may implement this port. It must be named as a simulator/demo provider, not as a real PSP integration.
 
-`Provider Profile + Payout Context -> Opportunity`
+### Durable state repository
 
-then:
+Durability is a correctness feature, not a file-output feature.
 
-`Opportunity + Availability + Capacity + Health + Hard Operational Rules -> Live Feasibility`
+A durable implementation is only acceptable if a fresh process can reconstruct a working state machine that safely continues unresolved payouts.
 
-Temporary outage/capacity/quarantine does not rewrite historical opportunity or silently reset allocation accounting.
+The current restart evidence includes an actual separate Ruby process opening
+the `FileJournal` without the original runtime opportunity/policy catalog and
+continuing the committed operation through the public `Application::Service`;
+the parent reopens the journal and verifies the persisted terminal attempt.
+Same-process coordinator reconstruction is retained for the broader
+deterministic crash campaign.
 
-## 7. Allocation and recovery separation
+Required continuation material includes, as applicable:
 
-Maintain distinct logical views:
+- intents;
+- policy bindings/fingerprints;
+- operations/attempts/phases;
+- economic ownership;
+- provider contracts/idempotency identity;
+- deduplication/event-order state;
+- allocation reservations/state;
+- admission/capacity reservations;
+- health state needed for routing correctness;
+- settlement/reconciliation/conflict state.
 
-- opportunity;
-- primary allocation assignment;
-- recovery assignment/attempt;
-- settlement.
+A replay projection alone is insufficient if the returned live coordinator forgets unresolved ownership.
 
-The allocator is responsible for primary target adherence under the active accounting strategy. Recovery is responsible for safely completing the payout after primary failure.
+Persistence corruption/truncation must fail explicitly or enter a controlled recovery state. Silent dropping of malformed financial history is forbidden.
 
-Under the current primary-assignment default, recovery does not alter primary allocation state.
+### Application layer
 
-## 8. Capacity
+Owns user/system commands and queries:
 
-Capacity is mutable reservable correctness state, not merely a ranking hint.
+- submit payout;
+- get payout;
+- resume/advance unresolved payout;
+- reconcile provider observation;
+- update provider/policy configuration;
+- query analytics/audit.
 
-Generic v0.2 primitives:
+Application commands use domain services; they do not build `NormalizedOutcome` from untrusted generic external fields.
 
-- concurrent money-moving slots;
-- optional count budget;
-- optional amount budget.
+Current implementation: `Application::Service` composes focused `Commands` and
+`Queries` over `Orchestrator` and `State::Coordinator`. Queries expose payout,
+provider, policy, projection and audit views without mutating routing state.
+Analytics queries use the coordinator clock as their default age boundary, while
+historical callers can pass an explicit `as_of` value or `nil`.
 
-Reservation/release semantics must be deterministic and duplicate-safe. `UNKNOWN`/pending may retain capacity while the operation can still produce the monetary effect.
+Decision audit facts include the allocation candidate trace and the separate
+constrained-optimization trace: every candidate records whether it survived
+allocation authority, its quality evidence/ranking key when applicable, and
+whether it was selected.
 
-Provider opportunity registration facts preserve budget configuration changes,
-including an explicit transition to an unbounded (`nil`) budget, so capacity
-replay follows the live projection.
+### API / webhook gateway
 
-## 9. Health and ranking
+`Application::HttpApp` is a minimal Rack-compatible adapter that maps transport
+to application commands/queries. It is deliberately not a second routing
+engine.
 
-Operational health is derived from attributable signals and controls exposure before ranking.
+Its provider normalizer configuration is validated at construction: every
+configured normalizer must provide an executable `#normalize` implementation,
+so an exposed webhook route cannot defer a dead adapter failure until its first
+event.
 
-A provider may transition through equivalent states to:
+Provider webhook route:
 
-`HEALTHY -> DEGRADED -> QUARANTINED -> PROBING -> HEALTHY`
+`raw request -> provider-specific adapter verification/normalization -> ProviderObservation -> application/core`.
 
-Health must use hysteresis/minimum evidence and controlled recovery. Recipient-caused failure is not provider-health failure.
+Do not expose Ruby backtraces or internal exception details in normal API responses.
+The transport boundary bounds method, path, query-string and JSON-body sizes and
+returns a stable 413 response for oversized input before parsing it. Audit facts
+are returned through bounded pages with strict `limit`/`offset` validation and
+explicit continuation metadata, so a durable journal cannot become one
+unbounded API response.
 
-Health observations tied to a payout operation do not release a probe slot by
-themselves. Operation-owned exposure reservations are keyed by operation and
-released exactly once when that operation reaches a safe terminal/released
-outcome. Standalone controller reservations and signals use a separate direct
-exposure count, so an unrelated health signal cannot release an in-flight
-payout probe.
+The direct application reconciliation command is a provider-event ingress that
+requires `provider_id`, raw payload and an executable provider-specific
+normalizer. It is not a raw callback escape hatch and does not accept a
+caller-constructed `ProviderObservation`; transport certainty and
+`safe_to_release` are domain evidence produced by that boundary. In-process
+provider/orchestrator callbacks still use the typed observation path after the
+provider adapter has produced the evidence.
 
-Ranking happens only after hard elimination. A ranker may use configured priority, health/quality, cost or latency when present, but cannot override safety/eligibility/capacity/quarantine.
+`Demo::ScriptedProvider` and `Demo::Scenario` are explicitly simulated and
+exercise the same provider port and application path; they are not real PSP
+integrations.
 
-## 10. Lifecycle reducer and event ordering
+`State::FactStore` appends one coordinator mutation as one durable batch when
+the configured journal supports `append_many`. If a durable append fails before
+visibility, the coordinator rebuilds working projections from the accepted fact
+prefix; if a complete batch is visible despite a post-write error, the store
+reconciles it before allowing another fact identity. If the journal exposes a
+partial or non-prefix append, it is poisoned and cannot accept further writes;
+the corruption is explicit in the current process and on fresh open. Working restoration rejects
+unsupported lifecycle facts and validates provider-system, operation, settlement,
+conflict, reversal and final payout-state linkage rather than silently dropping
+semantically malformed history. `FactCodec` rejects floating-point values on
+both encode and decode paths, including nested payloads. Durable provider IDs
+remain canonical strings and timestamp fields remain controlled `Time` values;
+malformed identity/time payloads are rejected during restore.
 
-Do not order observations by semantic status severity.
+The final restored-state validator also binds an in-flight attempt phase to its
+latest operation action and applied observation chronology. A pending/unknown
+outcome without its corresponding phase transition is therefore treated as
+durable corruption instead of being replayed as a misleading dispatching or
+resolving state that could suppress safe restart recovery.
 
-Reducer decisions use:
+TTL, deadline and throughput-window decisions compare exact monotonic values.
+Wall timestamps remain audit fields; new lifecycle/admission facts persist
+monotonic anchors, and the default system clock translates older wall-time
+facts to the current process timeline only at restore. This translation is not
+a wall-clock duration calculation.
 
-- immutable observation identity;
-- operation identity;
-- explicit legal transition rules;
-- provider sequence/version only if the provider contract guarantees its ordering meaning;
-- conservative conflict/reconciliation behavior when chronology is unknowable.
+### Analytics and audit
 
-Late observations remain facts even when they cannot replace the current main projection.
+Facts/projections should answer:
 
-## 11. Economic conflict and reversal
+- what providers were opportunities;
+- what was excluded and why;
+- which provider was assigned primary;
+- allocation target vs actual;
+- what attempts happened;
+- where settlement occurred;
+- first-attempt/eventual success;
+- fallback recovery;
+- provider-attributable reliability;
+- unknown/pending/reconciliation age;
+- capacity/availability/health effects;
+- deviation attribution;
+- whether recorded deviation is recoverable or unavoidable;
+- conflicts/reversals;
+- exact decision rationale.
 
-Two distinct concepts:
+## 3. Atomic provider-operation protocol
 
-- **return/reversal** — a previously completed economic effect later comes back/is reversed;
-- **economic conflict** — evidence indicates more than one provider operation may have produced a payout effect for one economic intent.
+Before provider I/O, under one atomic state boundary:
 
-Neither is ordinary fallback continuation. Both must remain visible in facts/projections/analytics.
+`validate payout + policy`
+→ `build/revalidate opportunity`
+→ `revalidate admission`
+→ `compute allocation/optimization decision`
+→ `reserve required allocation/admission state`
+→ `create operation/attempt`
+→ `acquire economic ownership`
+→ `pin provider operation contract`
+→ `mark committed dispatch token`
+→ `append durable facts/state`
 
-Analytics can project unresolved age for ordinary `pending`/`unknown` states
-when the caller supplies an explicit controlled `as_of` timestamp. Without
-that reference, only an explicit reconciliation-blocked elapsed value is
-reported; the projection never invents wall-clock time.
+Then release the lock/transaction.
 
-## 12. Refactoring boundary
+Immediately before external I/O, claim the dispatch token. A stale/invalidated commit is a non-action.
 
-`State::Coordinator` can be decomposed internally as responsibilities become concrete, but do not use its size alone to justify:
+After external result/callback, re-enter the state transaction and apply normalized evidence.
 
-- microservices;
-- database/event-store migration;
-- queues/background jobs;
-- distributed locking;
-- framework introduction.
+## 4. Allocation versus optimization
 
-A refactor is earned when it improves invariant ownership, replayability, deterministic testing or removes meaningful duplicated semantics.
+This separation is mandatory.
 
-`Routing::Recovery` and recovery decisions in the main decision engine should converge to one authoritative recovery rule set rather than drift.
+Allocation answers:
 
-## 13. Architecture completion check
+**Which providers are currently acceptable with respect to the business distribution contract?**
 
-Before v0.2 closure, verify:
+Optimization answers:
 
-- no provider I/O under coordinator lock;
-- no hidden mutable correctness state outside intended owners;
-- primary allocation/capacity/ownership commits are atomic where required;
-- operation contract survives new-route disablement;
-- lifecycle state can be replayed from facts;
-- health/capacity cannot be bypassed by allocation/ranking;
-- recovery does not mutate primary allocation under current semantics;
-- duplicate/out-of-order/late observations are safe and explainable;
-- application workflow supports unresolved continuation explicitly;
-- no speculative external infrastructure entered the core.
+**Which of those acceptable providers is preferable now?**
+
+When exact targets cannot be met because payouts are indivisible or providers are unavailable, record the least-bad achievable deviation and its cause. Do not silently erase history or allow an optimizer to create arbitrary target drift.
+
+## 5. Fast health versus slow quality
+
+Keep two feedback loops:
+
+### Fast operational health
+
+Uses transport/5xx/timeouts/latency/capacity rejection and can rapidly reduce exposure.
+The typed `ProviderHealthSnapshot` boundary rejects malformed counters, non-positive
+or non-integer probe limits and `probe_in_flight > probe_limit` before health state
+is used for admission or exposed to projections.
+
+### Slow quality estimate
+
+Uses mature comparable outcomes and confidence. It should not compare providers using incomparable delayed-feedback populations.
+
+Fast-down/slow-up, bounded probing and traffic-ramp constraints are preferable to instant full recovery.
+
+## 6. Repository boundaries
+
+Core production code must not contain speculative provider-brand trivia.
+
+Allowed:
+
+- generic `payment_method`, `rail`, `destination_bank`, `currency`, `segment` context fields;
+- explicit demo/plugin mapping outside core;
+- provider-specific adapter behavior when backed by an actual provider contract/TZ.
+
+Not allowed in core by default:
+
+- hardcoded card BIN tables;
+- assuming unknown cards are one network;
+- fake “real-world” adapters that always return success;
+- alternate provider APIs inconsistent with the canonical port.
+
+## 7. Refactoring strategy
+
+Do not rewrite the whole core.
+
+Use strangler-style internal convergence:
+
+1. lock current behavior with tests;
+2. extract one responsibility behind the existing coordinator facade;
+3. prove replay/concurrency equivalence;
+4. remove duplicate old path;
+5. continue.
+
+Refactoring must improve invariant ownership or testability, not merely file size.
+
+## 8. External infrastructure
+
+Do not introduce Rails, microservices, queues or distributed locks by default.
+
+A minimal embedded durable database/library is acceptable only when it directly solves restart/transaction correctness and remains compatible with likely hackathon constraints. Exact dependency choice is a later implementation decision, not a reason to postpone the durability contract.
+
+## 9. Architecture closure checks
+
+Before v0.3 completion prove:
+
+- one canonical routing pipeline;
+- no provider I/O under atomic state lock;
+- one unresolved owner max;
+- allocation/admission reservations are atomic and replayable/recoverable where claimed;
+- optimizer cannot violate hard/admission/allocation constraints;
+- recovery and provider normalization are single-source semantics;
+- durable restart can continue UNKNOWN/pending payouts safely;
+- raw webhooks cannot forge economic safety semantics;
+- analytics reconcile opportunity/assignment/attempt/settlement;
+- no disconnected production feature hooks remain;
+- demo/provider-specific code is explicitly separated from generic core.

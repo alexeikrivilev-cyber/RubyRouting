@@ -102,6 +102,107 @@ class OrchestratorSimulatorTest < Minitest::Test
     assert_equal 1, second.payout.attempt_count
   end
 
+  def test_delayed_callback_is_delivered_without_creating_a_second_operation
+    provider = TestSupport::Simulator::ScriptedProvider.new(
+      provider_id: "A",
+      steps: [TestSupport::Simulator::Step.delayed_success]
+    )
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+    app = orchestrator(coordinator, "A" => provider)
+    payout = intent("delayed-callback")
+
+    first = app.submit(intent: payout, policy: one_provider_policy)
+    assert_equal 1, provider.pending_callbacks.length
+    callback = provider.drain_callbacks.first
+    second = app.reconcile(observation: callback)
+
+    assert_equal :pending, first.status
+    assert_equal :wait, first.action
+    assert_equal :success, second.payout.status
+    assert_equal 1, second.payout.attempt_count
+    assert_equal [[:initiate, "delayed-callback:delayed-callback:operation:1"]], provider.calls
+  end
+
+  def test_duplicate_callback_is_exactly_replayed_and_has_no_second_settlement
+    provider = TestSupport::Simulator::ScriptedProvider.new(
+      provider_id: "A",
+      steps: [TestSupport::Simulator::Step.delayed_success]
+    )
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+    app = orchestrator(coordinator, "A" => provider)
+    payout = intent("duplicate-callback")
+    app.submit(intent: payout, policy: one_provider_policy)
+    callback = provider.drain_callbacks.first
+
+    settled = app.reconcile(observation: callback)
+    duplicate = app.reconcile(observation: provider.duplicate(callback))
+
+    assert_equal :success, settled.payout.status
+    assert duplicate.duplicate
+    assert_equal 1, coordinator.facts.count { |fact| fact.type == :settlement_recorded }
+    assert_equal 1, provider.calls.count { |call| call.first == :duplicate }
+  end
+
+  def test_out_of_order_callbacks_follow_provider_sequence_without_regressing_lifecycle
+    provider = TestSupport::Simulator::ScriptedProvider.new(
+      provider_id: "A",
+      capabilities: RubyRouting::ProviderCapabilities.new(authoritative_sequence: true),
+      steps: [
+        TestSupport::Simulator::Step.delayed(
+          callbacks: [
+            RubyRouting::NormalizedOutcome.pending(attribution: :provider),
+            RubyRouting::NormalizedOutcome.success(attribution: :provider)
+          ]
+        )
+      ]
+    )
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        capabilities: RubyRouting::ProviderCapabilities.new(authoritative_sequence: true)
+      )]
+    )
+    app = orchestrator(coordinator, "A" => provider)
+    payout = intent("out-of-order-callback")
+    app.submit(intent: payout, policy: one_provider_policy)
+
+    delayed = provider.drain_callbacks(order: :lifo)
+    settled_first = app.reconcile(observation: delayed.first)
+    old_pending = app.reconcile(observation: delayed.last)
+
+    assert_equal :success, settled_first.payout.status
+    assert_equal :success, old_pending.payout.status
+    assert_nil old_pending.payout.ownership
+    assert_equal 1, coordinator.facts.count { |fact| fact.payload[:applied] == false }
+  end
+
+  def test_reversal_helper_preserves_provider_and_settlement_linkage
+    provider = TestSupport::Simulator::ScriptedProvider.new(
+      provider_id: "A",
+      steps: [TestSupport::Simulator::Step.success]
+    )
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+    app = orchestrator(coordinator, "A" => provider)
+    payout = app.submit(intent: intent("simulated-reversal"), policy: one_provider_policy).payout
+    reversal = provider.reversal_for(
+      payout: payout,
+      amount: RubyRouting::Money.new(40, "RUB"),
+      reversal_id: "simulated-return-1"
+    )
+
+    reversed = app.record_reversal(**reversal_attributes(reversal))
+
+    assert_equal :reversed, reversed.status
+    assert_equal "A", reversal.provider_id
+    assert_equal payout.settlement_operation_id, reversal.operation_id
+  end
+
   def test_unresolved_operation_keeps_contract_after_provider_is_disabled_for_new_routes
     provider_a = TestSupport::Simulator::ScriptedProvider.new(
       provider_id: "A",
@@ -274,7 +375,7 @@ class OrchestratorSimulatorTest < Minitest::Test
       .submit(intent: intent("not-sent"), policy: one_provider_policy)
 
     assert_equal :defer, result.action
-    assert_equal :safe_route_failure, result.status
+    assert_equal :deferred, result.status
     assert_nil result.payout.ownership
     assert_equal 1, result.payout.attempt_count
   end
@@ -297,14 +398,14 @@ class OrchestratorSimulatorTest < Minitest::Test
     assert_equal :unknown, result.payout.current_operation_phase
   end
 
-  def test_unclassified_adapter_fault_is_conservatively_ambiguous_and_resolvable
+  def test_explicit_transport_error_is_conservatively_ambiguous_and_resolvable
     provider = Class.new do
       def initialize
         @resolved = false
       end
 
       def initiate(_request)
-        raise RuntimeError, "adapter exploded"
+        raise RubyRouting::ProviderTransportError.ambiguous_after_possible_send("adapter timeout")
       end
 
       def resolve(request)
@@ -336,7 +437,33 @@ class OrchestratorSimulatorTest < Minitest::Test
     assert_equal({ ambiguous_after_possible_send: 1 }, analytics.transport_count_by_kind)
   end
 
-  def test_malformed_provider_observation_is_not_applied_to_another_operation
+  def test_unclassified_adapter_fault_surfaces_without_losing_resumable_operation
+    provider = Class.new do
+      def initiate(_request)
+        raise RuntimeError, "adapter exploded"
+      end
+
+      def resolve(_request)
+        raise "not used"
+      end
+    end.new
+    capabilities = RubyRouting::ProviderCapabilities.new(status_lookup: true)
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A", capabilities: capabilities)]
+    )
+    app = orchestrator(coordinator, "A" => provider)
+    payout = intent("unclassified-adapter-fault")
+
+    assert_raises(RuntimeError) { app.submit(intent: payout, policy: one_provider_policy) }
+    snapshot = coordinator.payout_snapshot(payout.id)
+    assert_equal :dispatching, snapshot.current_operation_phase
+    assert_equal "A", snapshot.ownership.provider_id
+
+    assert_raises(RuntimeError) { app.resume(payout_id: payout.id, policy: one_provider_policy) }
+    assert_equal :resolving, coordinator.payout_snapshot(payout.id).current_operation_phase
+  end
+
+  def test_malformed_provider_observation_surfaces_without_synthetic_unknown
     provider = Class.new do
       def initiate(request)
         RubyRouting::ProviderObservation.new(
@@ -367,16 +494,15 @@ class OrchestratorSimulatorTest < Minitest::Test
     app = orchestrator(coordinator, "A" => provider)
     payout = intent("malformed-observation")
 
-    first = app.submit(intent: payout, policy: one_provider_policy)
+    assert_raises(ArgumentError) { app.submit(intent: payout, policy: one_provider_policy) }
     second = app.resume(payout_id: payout.id, policy: one_provider_policy)
     analytics = RubyRouting::Projections::Analytics.from_facts(coordinator.facts)
 
-    assert_equal :unknown, first.status
     assert_equal :success, second.status
-    assert_equal({ ambiguous_after_possible_send: 1 }, analytics.transport_count_by_kind)
+    assert_empty analytics.transport_count_by_kind
   end
 
-  def test_not_implemented_adapter_fault_is_conservatively_ambiguous
+  def test_not_implemented_adapter_fault_surfaces_as_contract_error
     provider = Class.new do
       def initiate(_request)
         raise NotImplementedError, "adapter has no initiate implementation"
@@ -390,15 +516,10 @@ class OrchestratorSimulatorTest < Minitest::Test
       opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
     )
 
-    result = orchestrator(coordinator, "A" => provider)
-      .submit(intent: intent("not-implemented-adapter"), policy: one_provider_policy)
-
-    assert_equal :unknown, result.status
-    assert_equal :wait, result.action
-    assert_equal :unknown, result.payout.current_operation_phase
-    assert_equal 1, result.payout.provider_interaction_count
-    assert_equal({ ambiguous_after_possible_send: 1 },
-                  RubyRouting::Projections::Analytics.from_facts(coordinator.facts).transport_count_by_kind)
+    assert_raises(NotImplementedError) do
+      orchestrator(coordinator, "A" => provider)
+        .submit(intent: intent("not-implemented-adapter"), policy: one_provider_policy)
+    end
   end
 
   private
@@ -418,6 +539,17 @@ class OrchestratorSimulatorTest < Minitest::Test
       end
       RubyRouting::ProviderOpportunity.new(provider_id: provider_id, capabilities: capabilities)
     end
+  end
+
+  def reversal_attributes(reversal)
+    {
+      payout_id: reversal.payout_id,
+      reversal_id: reversal.reversal_id,
+      provider_id: reversal.provider_id,
+      operation_id: reversal.operation_id,
+      amount: reversal.amount,
+      reason: reversal.reason
+    }
   end
 
   def intent(id)

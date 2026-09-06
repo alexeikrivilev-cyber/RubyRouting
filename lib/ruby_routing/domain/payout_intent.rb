@@ -30,14 +30,19 @@ module RubyRouting
       case value
       when Hash
         value.each_with_object({}) do |(key, nested), copy|
-          copy[key.freeze] = freeze_nested(nested)
+          copy[freeze_nested(key)] = freeze_nested(nested)
         end.freeze
       when Array
         value.map { |nested| freeze_nested(nested) }.freeze
       when String
         value.dup.freeze
       else
-        value.freeze
+        if value.respond_to?(:each)
+          RubyRouting::Collection.to_array(value, "intent nested collection")
+            .map { |nested| freeze_nested(nested) }.freeze
+        else
+          value.freeze
+        end
       end
     end
   end

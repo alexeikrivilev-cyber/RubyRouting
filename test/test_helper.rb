@@ -10,3 +10,15 @@ require_relative "support/simulator/scripted_provider"
 require_relative "support/simulator/normalizer"
 require_relative "support/synchronization"
 require_relative "support/acceptance_evidence"
+
+module TestSupport
+  class EachOnlyCollection
+    def initialize(values)
+      @values = values
+    end
+
+    def each(&block)
+      @values.each(&block)
+    end
+  end
+end

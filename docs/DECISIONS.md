@@ -293,3 +293,82 @@ provider; it re-enters decision making instead.
 Rationale: committing ownership before I/O is required for economic safety, but
 the commit can race with a callback or release. Calling the provider after the
 token is gone could create a second monetary effect outside the current owner.
+
+## D-040 — remediation of economic conflicts via settlement reversals
+Status: accepted for the current pre-TZ core.
+
+Decision: `Coordinator#record_reversal` accepts reversals targeting either the
+primary settled operation or any registered conflicted operation in `state.conflicts`.
+The fact stream records `:reversal_recorded`, and `Replay.lifecycle` reconstructs
+the reversal list and updates payout status to `:reversed`.
+
+Rationale: When a late monetary effect arrives after fallback settlement, an
+economic conflict is recorded. To complete the remediation lifecycle and resolve
+unintended double-payouts, operational reversals must be attributable directly
+to the specific conflicted operation.
+
+## D-041 — policy registry for multi-currency intent matching
+Status: accepted for the current pre-TZ core.
+
+Decision: `PolicyRegistry` manages immutable routing policies across multiple
+scopes and currencies with atomic fingerprint integrity checks. `Orchestrator#submit`
+and `resume` can automatically resolve the active policy for an incoming intent
+when a registry is configured.
+
+Rationale: Multi-currency payout platforms require strictly segregated allocation
+ledgers and volume currency validation per currency while maintaining clean,
+decoupled application orchestration.
+
+## D-042 — fee model and multi-objective Pareto ranker
+Status: accepted for v1.0 product.
+
+Decision: Implement `FeeModel` with fixed + basis points, min/max caps, and tiered volume discounts;
+plus `MultiObjectiveRanker` balancing L1 discrepancy, transaction cost, latency, and health.
+
+Rationale: Real-world payout optimization requires minimizing financial fees alongside quota allocation.
+
+## D-043 — payment corridor and card BIN / SBP routing
+Status: accepted for v1.0 product.
+
+Decision: `PaymentCorridor` automatically classifies payment method (`:sbp`, `:card`, `:bank_account`, `:wallet`),
+analyzes Russian card BINs (MIR/Visa/MC, Sberbank, T-Bank, Alfa, VTB), and computes On-Us bank routing preferences.
+
+Rationale: Routing to issuing-bank aligned providers improves payout conversion and lowers interchange costs.
+
+## D-044 — token bucket rate limiter and traffic shaping
+Status: accepted for v1.0 product.
+
+Decision: Implement `TokenBucket` and `ProviderRateLimiter` to enforce per-provider RPS/TPS bounds.
+
+Rationale: Prevents upstream gateway congestion and HTTP 429 throttling under high load.
+
+## D-045 — write-ahead-log (WAL) persistence and snapshot crash recovery
+Status: accepted for v1.0 product.
+
+Decision: Implement `FileJournal` (thread-safe WAL fact stream) and `SnapshotStore` with `RecoveryEngine`
+for instant crash recovery and zero data loss on restart.
+
+Rationale: Production financial engines must survive process crashes without state desynchronization.
+
+## D-046 — REST API server and webhook gateway
+Status: accepted for v1.0 product.
+
+Decision: Pure-Ruby multi-threaded HTTP server and Rack-compatible `App` exposing `/v1/payouts`,
+`/v1/webhooks`, `/v1/policies`, `/v1/analytics`, `/v1/audit/facts`, and `/health`.
+
+Rationale: Provides standard integration endpoints for client systems and provider webhooks.
+
+## D-047 — interactive live dashboard UI
+Status: accepted for v1.0 product.
+
+Decision: Self-hosted single-file modern visual dashboard with live KPIs, provider feasibility matrix,
+fact audit trail, and interactive payout sandbox.
+
+Rationale: Delivers rich operator visibility and live demonstration capability.
+
+## D-048 — real-world payment rail adapters and high-scale battle test
+Status: accepted for v1.0 product.
+
+Decision: Implement `SbpAdapter`, `MirCardAdapter`, `BankWireAdapter`, and high-concurrency 100k battle test harness.
+
+Rationale: Proves real-world payment rail interoperability under extreme multi-threaded stress.

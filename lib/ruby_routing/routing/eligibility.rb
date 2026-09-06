@@ -24,7 +24,7 @@ module RubyRouting
       module_function
 
       def evaluate(opportunities, intent: nil, policy: nil)
-        normalized = opportunities.map do |opportunity|
+        normalized = RubyRouting::Collection.to_array(opportunities, "opportunities").map do |opportunity|
           unless opportunity.is_a?(RubyRouting::ProviderOpportunity)
             raise ArgumentError, "opportunities must contain ProviderOpportunity values"
           end

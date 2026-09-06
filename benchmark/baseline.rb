@@ -67,6 +67,22 @@ measure("coordinator lifecycle", 2_000) do |index|
   app.submit(intent: intent, policy: policy)
 end
 
+service_coordinator = RubyRouting::State::Coordinator.new(
+  opportunities: %w[A B C].map { |id| RubyRouting::ProviderOpportunity.new(provider_id: id) }
+)
+service = RubyRouting::Application::Service.new(
+  coordinator: service_coordinator,
+  providers: { "A" => BenchmarkProvider.new, "B" => BenchmarkProvider.new, "C" => BenchmarkProvider.new }
+)
+measure("application service", 2_000) do |index|
+  intent = RubyRouting::PayoutIntent.new(
+    id: "application-benchmark-#{index}",
+    money: RubyRouting::Money.new(125, "RUB")
+  )
+  result = service.submit(intent: intent, policy: policy)
+  raise "unexpected application result #{result.status}" unless result.status == :success
+end
+
 facts = coordinator.facts
 measure("fact analytics replay", 250) do
   RubyRouting::Projections::Replay.analytics(facts)

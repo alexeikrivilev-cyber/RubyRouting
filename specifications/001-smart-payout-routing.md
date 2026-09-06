@@ -15,7 +15,7 @@ The core problem is not “pick the highest-score PSP”. It is a constrained on
 
 This document fixes domain logic that should survive most reasonable versions of the full TZ. It intentionally does **not** choose a framework, storage technology, API shape, queue, deployment topology, provider SDK, or ML algorithm.
 
-The repository is **not waiting for the full TZ before coding**. Stable/reversible parts of this baseline are being implemented now according to `docs/exec-plans/active/pre-tz-comprehensive-core.md` and verified under `docs/TESTING.md`.
+The repository is **not waiting for the full TZ before coding**. Stable/reversible parts of this baseline are being implemented now according to the current v0.3 plan, `docs/exec-plans/active/product-convergence.md`, and verified under `docs/TESTING.md`.
 
 Safe pre-TZ implementation includes:
 

@@ -63,13 +63,13 @@ module RubyRouting
 
     def initialize(idempotent_retry: false, status_lookup: false, ttl_seconds: nil,
                    deadline_seconds: nil, version: "1", authoritative_sequence: false)
-      @idempotent_retry = !!idempotent_retry
-      @status_lookup = !!status_lookup
+      @idempotent_retry = normalize_boolean(idempotent_retry, "idempotent_retry")
+      @status_lookup = normalize_boolean(status_lookup, "status_lookup")
       @ttl_seconds = normalize_duration(ttl_seconds, "ttl_seconds")
       @deadline_seconds = normalize_duration(deadline_seconds, "deadline_seconds")
       @version = version.to_s.strip.freeze
       raise ArgumentError, "version must be non-empty" if @version.empty?
-      @authoritative_sequence = !!authoritative_sequence
+      @authoritative_sequence = normalize_boolean(authoritative_sequence, "authoritative_sequence")
       freeze
     end
 
@@ -98,24 +98,55 @@ module RubyRouting
 
       value
     end
+
+    def normalize_boolean(value, label)
+      return value if value == true || value == false
+
+      raise ArgumentError, "#{label} must be boolean"
+    end
+  end
+
+  class ThroughputBudget
+    attr_reader :max_operations, :window_seconds
+
+    def initialize(max_operations:, window_seconds:)
+      unless max_operations.is_a?(Integer) && max_operations.positive?
+        raise ArgumentError, "max_operations must be a positive Integer"
+      end
+      unless window_seconds.is_a?(Integer) && window_seconds.positive?
+        raise ArgumentError, "window_seconds must be a positive Integer"
+      end
+
+      @max_operations = max_operations
+      @window_seconds = window_seconds
+      freeze
+    end
+
+    def to_h
+      {
+        max_operations: max_operations,
+        window_seconds: window_seconds
+      }.freeze
+    end
   end
 
   class ProviderOpportunity
     attr_reader :provider_id, :functional_eligible, :available, :capacity_available,
                 :capabilities, :exclusion_reason, :supported_currencies,
                 :minimum_amount_minor, :maximum_amount_minor,
-                :required_context_labels, :enabled, :capacity, :health_available
+                :required_context_labels, :enabled, :capacity, :health_available,
+                :throughput, :throughput_available
 
     def initialize(provider_id:, functional_eligible: true, available: true,
                    capacity_available: true, capabilities: ProviderCapabilities.new,
                    exclusion_reason: nil, supported_currencies: nil,
                    minimum_amount_minor: nil, maximum_amount_minor: nil,
                    required_context_labels: [], enabled: true, capacity: nil,
-                   health_available: true)
+                   health_available: true, throughput: nil, throughput_available: true)
       @provider_id = normalize_id(provider_id)
-      @functional_eligible = !!functional_eligible
-      @available = !!available
-      @capacity_available = !!capacity_available
+      @functional_eligible = normalize_boolean(functional_eligible, "functional_eligible")
+      @available = normalize_boolean(available, "available")
+      @capacity_available = normalize_boolean(capacity_available, "capacity_available")
       unless capabilities.is_a?(ProviderCapabilities)
         raise ArgumentError, "capabilities must be ProviderCapabilities"
       end
@@ -129,17 +160,22 @@ module RubyRouting
         raise ArgumentError, "minimum amount cannot exceed maximum amount"
       end
       @required_context_labels = normalize_labels(required_context_labels)
-      @enabled = !!enabled
+      @enabled = normalize_boolean(enabled, "enabled")
       unless capacity.nil? || capacity.is_a?(CapacityBudget)
         raise ArgumentError, "capacity must be CapacityBudget"
       end
       @capacity = capacity
-      @health_available = !!health_available
+      @health_available = normalize_boolean(health_available, "health_available")
+      unless throughput.nil? || throughput.is_a?(ThroughputBudget)
+        raise ArgumentError, "throughput must be ThroughputBudget"
+      end
+      @throughput = throughput
+      @throughput_available = normalize_boolean(throughput_available, "throughput_available")
       freeze
     end
 
     def feasible?
-      functional_eligible && enabled && health_available && available && capacity_available
+      functional_eligible && enabled && health_available && available && capacity_available && throughput_available
     end
 
     def functional_eligible_for?(intent:, policy: nil)
@@ -155,11 +191,12 @@ module RubyRouting
     end
 
     def feasible_for?(intent:, policy: nil)
-      functional_eligible_for?(intent: intent, policy: policy) && enabled && health_available && available && capacity_available
+      functional_eligible_for?(intent: intent, policy: policy) && enabled && health_available && available && capacity_available && throughput_available
     end
 
     def with_runtime(available: self.available, capacity_available: self.capacity_available,
-                     enabled: self.enabled, health_available: self.health_available)
+                     enabled: self.enabled, health_available: self.health_available,
+                     throughput_available: self.throughput_available)
       self.class.new(
         provider_id: provider_id,
         functional_eligible: functional_eligible,
@@ -173,8 +210,30 @@ module RubyRouting
         required_context_labels: required_context_labels,
         enabled: enabled,
         capacity: capacity,
-        health_available: health_available
+        health_available: health_available,
+        throughput: throughput,
+        throughput_available: throughput_available
       )
+    end
+
+    def to_h
+      {
+        provider_id: provider_id,
+        functional_eligible: functional_eligible,
+        available: available,
+        capacity_available: capacity_available,
+        capabilities: capabilities.to_h,
+        exclusion_reason: exclusion_reason,
+        supported_currencies: supported_currencies,
+        minimum_amount_minor: minimum_amount_minor,
+        maximum_amount_minor: maximum_amount_minor,
+        required_context_labels: required_context_labels,
+        enabled: enabled,
+        capacity: capacity&.to_h,
+        health_available: health_available,
+        throughput: throughput&.to_h,
+        throughput_available: throughput_available
+      }.freeze
     end
 
     def reason_for(intent:, policy: nil)
@@ -187,6 +246,7 @@ module RubyRouting
       return :quarantined unless health_available
       return :unavailable unless available
       return :capacity_exhausted unless capacity_available
+      return :throughput_exhausted unless throughput_available
 
       nil
     end
@@ -198,6 +258,7 @@ module RubyRouting
       return :quarantined unless health_available
       return :unavailable unless available
       return :capacity_exhausted unless capacity_available
+      return :throughput_exhausted unless throughput_available
 
       nil
     end
@@ -215,13 +276,16 @@ module RubyRouting
       normalized.freeze
     end
 
+    def normalize_boolean(value, label)
+      return value if value == true || value == false
+
+      raise ArgumentError, "#{label} must be boolean"
+    end
+
     def normalize_currencies(value)
       return [].freeze if value.nil?
-      unless value.respond_to?(:map)
-        raise ArgumentError, "supported_currencies must be enumerable or nil"
-      end
 
-      value.map do |currency|
+      RubyRouting::Collection.to_array(value, "supported_currencies").map do |currency|
         normalized = currency.to_s.strip.upcase
         raise ArgumentError, "supported currencies must be three-letter codes" unless /\A[A-Z]{3}\z/.match?(normalized)
 
@@ -239,11 +303,7 @@ module RubyRouting
     end
 
     def normalize_labels(value)
-      unless value.respond_to?(:map)
-        raise ArgumentError, "required_context_labels must be enumerable"
-      end
-
-      value.map { |label| label.to_s.strip.freeze }.tap do |labels|
+      RubyRouting::Collection.to_array(value, "required_context_labels").map { |label| label.to_s.strip.freeze }.tap do |labels|
         raise ArgumentError, "context labels must be non-empty" if labels.any?(&:empty?)
       end.uniq.freeze
     end
@@ -252,7 +312,8 @@ module RubyRouting
       return [] unless context.is_a?(Hash)
 
       raw = context[:labels] || context["labels"] || []
-      Array(raw).map { |label| label.to_s }
+      raw = [raw] if raw.is_a?(String) || raw.is_a?(Symbol)
+      RubyRouting::Collection.to_array(raw, "context labels").map { |label| label.to_s.strip }
     end
   end
 end

@@ -141,6 +141,41 @@ class CoordinatorRacesTest < Minitest::Test
     assert_equal 1, coordinator.capacity_snapshot("A").used_slots
   end
 
+  def test_concurrent_throughput_reservations_consume_only_configured_rate
+    clock = TestSupport::ControlledClock.new
+    coordinator = RubyRouting::State::Coordinator.new(
+      clock: clock,
+      opportunities: [RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        throughput: RubyRouting::ThroughputBudget.new(max_operations: 1, window_seconds: 60)
+      )]
+    )
+    throughput_policy = RubyRouting::RoutingPolicy.new(
+      id: "throughput-race",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1 }
+    )
+    payouts = [intent("throughput-race-a"), intent("throughput-race-b")]
+    barrier = TestSupport::Synchronization::Barrier.new(2)
+    results = Array.new(2)
+    threads = payouts.each_with_index.map do |payout, index|
+      Thread.new do
+        barrier.wait
+        results[index] = coordinator.prepare_and_commit_decision(
+          intent: payout,
+          policy: throughput_policy
+        )
+      end
+    end
+    threads.each(&:join)
+
+    assert_equal 1, results.count { |result| result.proposal.assignment? }
+    assert_equal 1, results.count { |result| result.proposal.action == :defer }
+    assert_equal 1, coordinator.throughput_snapshot("A").consumed_count
+    assert_equal 1, coordinator.facts.count { |fact| fact.type == :throughput_consumed }
+  end
+
   def test_missing_adapter_is_rejected_before_assignment_commit
     coordinator = RubyRouting::State::Coordinator.new(opportunities: opportunities)
     app = RubyRouting::Application::Orchestrator.new(coordinator: coordinator, providers: {})

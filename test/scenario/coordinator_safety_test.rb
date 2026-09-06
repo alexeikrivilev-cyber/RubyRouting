@@ -20,6 +20,7 @@ class CoordinatorSafetyTest < Minitest::Test
     second = coordinator.prepare_and_commit_decision(intent: intent, policy: policy)
     assert_equal :defer, second.proposal.action
     assert_equal "unresolved ownership blocks cross-provider fallback", second.proposal.reasons.first
+    assert_equal :unknown, second.payout.status
     assert_equal 1, coordinator.payout_snapshot(intent.id).attempt_count
     assert_equal 1, coordinator.active_unresolved_owners
   end
@@ -208,6 +209,119 @@ class CoordinatorSafetyTest < Minitest::Test
     refute coordinator.mark_resolution_started(resolution)
     assert_equal :success, coordinator.payout_snapshot(payout.id).status
     assert_equal 1, coordinator.payout_snapshot(payout.id).provider_interaction_count
+  end
+
+  def test_dispatch_rejects_commit_with_mismatched_operation_identity
+    coordinator = coordinator_with(["A"])
+    payout = intent("forged-dispatch-identity")
+    commit = coordinator.prepare_and_commit_decision(intent: payout, policy: count_policy)
+    forged_proposal = RubyRouting::DecisionProposal.new(
+      action: :assign,
+      provider_id: "B",
+      operation_id: commit.proposal.operation_id,
+      attempt_id: "forged-attempt",
+      role: :primary,
+      policy_epoch: commit.proposal.policy_epoch
+    )
+    forged = RubyRouting::State::DecisionCommit.new(
+      proposal: forged_proposal,
+      request: RubyRouting::ProviderOperationRequest.new(
+        payout_id: payout.id,
+        provider_id: "B",
+        operation_id: commit.proposal.operation_id,
+        attempt_id: "forged-attempt",
+        money: payout.money
+      ),
+      payout: commit.payout
+    )
+
+    assert_raises(ArgumentError) { coordinator.mark_attempt_started(forged) }
+    assert_empty coordinator.facts.select { |fact| fact.type == :attempt_started }
+    assert_equal :committed, coordinator.payout_snapshot(payout.id).attempts.first.phase
+    assert coordinator.mark_attempt_started(commit)
+  end
+
+  def test_dispatch_rejects_commit_with_mismatched_provider_request
+    coordinator = coordinator_with(["A"])
+    payout = intent("forged-dispatch-request")
+    commit = coordinator.prepare_and_commit_decision(intent: payout, policy: count_policy)
+    forged = RubyRouting::State::DecisionCommit.new(
+      proposal: commit.proposal,
+      request: RubyRouting::ProviderOperationRequest.new(
+        payout_id: payout.id,
+        provider_id: commit.proposal.provider_id,
+        operation_id: commit.proposal.operation_id,
+        attempt_id: commit.proposal.attempt_id,
+        money: RubyRouting::Money.new(999, "RUB")
+      ),
+      payout: commit.payout
+    )
+
+    assert_raises(ArgumentError) { coordinator.mark_attempt_started(forged) }
+    assert_empty coordinator.facts.select { |fact| fact.type == :attempt_started }
+    assert coordinator.mark_attempt_started(commit)
+  end
+
+  def test_resolution_rejects_commit_with_mismatched_operation_identity
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true)
+      )]
+    )
+    payout = intent("forged-resolution-identity")
+    first = coordinator.prepare_and_commit_decision(intent: payout, policy: count_policy)
+    coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(observation(first, :unknown, attribution: :provider))
+    resolution = coordinator.prepare_and_commit_decision(intent: payout, policy: count_policy)
+    forged_proposal = RubyRouting::DecisionProposal.new(
+      action: :resolve,
+      provider_id: "B",
+      operation_id: resolution.proposal.operation_id,
+      attempt_id: resolution.proposal.attempt_id,
+      role: :resolution,
+      policy_epoch: resolution.proposal.policy_epoch
+    )
+    forged = RubyRouting::State::DecisionCommit.new(
+      proposal: forged_proposal,
+      request: RubyRouting::ProviderOperationRequest.new(
+        payout_id: payout.id,
+        provider_id: "B",
+        operation_id: resolution.proposal.operation_id,
+        attempt_id: resolution.proposal.attempt_id,
+        money: payout.money
+      ),
+      payout: resolution.payout
+    )
+
+    assert_raises(ArgumentError) { coordinator.mark_resolution_started(forged) }
+    assert_equal 1, coordinator.payout_snapshot(payout.id).provider_interaction_count
+    assert coordinator.mark_resolution_started(resolution)
+  end
+
+  def test_decision_engine_accepts_each_only_available_provider_ids
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(
+        provider_id: "A",
+        capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true)
+      )]
+    )
+    payout = intent("each-only-decision-engine")
+    first = coordinator.prepare_and_commit_decision(intent: payout, policy: count_policy)
+    coordinator.mark_attempt_started(first)
+    coordinator.apply_observation(observation(first, :unknown, attribution: :provider))
+
+    decision = RubyRouting::Routing::DecisionEngine.decide(
+      intent: payout,
+      policy: count_policy,
+      opportunities: coordinator.provider_opportunities,
+      allocation_snapshot: RubyRouting::Routing::AllocationSnapshot.empty,
+      payout_state: coordinator.payout_snapshot(payout.id),
+      available_provider_ids: TestSupport::EachOnlyCollection.new([" A "])
+    )
+
+    assert_equal :resolve, decision.action
+    assert_equal "A", decision.provider_id
   end
 
   private

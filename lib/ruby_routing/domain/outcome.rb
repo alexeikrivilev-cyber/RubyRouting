@@ -20,7 +20,7 @@ module RubyRouting
       @attribution = normalize(attribution, ATTRIBUTIONS, "outcome attribution")
       @provider_reference = provider_reference&.to_s&.freeze
       @message = message&.to_s&.freeze
-      @safe_to_release = safe_to_release.nil? ? default_safe_to_release? : !!safe_to_release
+      @safe_to_release = safe_to_release.nil? ? default_safe_to_release? : normalize_boolean(safe_to_release, "safe_to_release")
       freeze
     end
 
@@ -76,16 +76,23 @@ module RubyRouting
     end
 
     def normalize(value, allowed, label)
-      normalized = value.to_sym
-      raise ArgumentError, "unsupported #{label}" unless allowed.include?(normalized)
+      RubyRouting::Enum.normalize(value, allowed, label)
+    end
 
-      normalized
-    rescue NoMethodError
-      raise ArgumentError, "unsupported #{label}"
+    def normalize_boolean(value, label)
+      return value if value == true || value == false
+
+      raise ArgumentError, "#{label} must be boolean"
     end
   end
 
   class ProviderObservation
+    DEFINITELY_NOT_SENT_STATUSES = %i[
+      safe_route_failure
+      temporary_provider_failure
+      terminal_payout_failure
+    ].freeze
+
     attr_reader :observation_id, :payout_id, :provider_id, :operation_id, :attempt_id,
                 :outcome, :provider_reference, :sequence, :observed_at,
                 :transport_kind
@@ -104,15 +111,16 @@ module RubyRouting
       unless sequence.nil? || (sequence.is_a?(Integer) && sequence >= 0)
         raise ArgumentError, "sequence must be a non-negative Integer"
       end
+      unless observed_at.nil? || observed_at.is_a?(Time)
+        raise ArgumentError, "observed_at must be a Time or nil"
+      end
 
       @outcome = outcome
       @provider_reference = provider_reference&.to_s&.freeze
       @sequence = sequence
-      @observed_at = observed_at&.freeze
-      if transport_kind && !RubyRouting::ProviderTransportResult::KINDS.include?(transport_kind.to_sym)
-        raise ArgumentError, "unsupported transport kind"
-      end
-      @transport_kind = transport_kind&.to_sym
+      @observed_at = observed_at&.utc&.freeze
+      @transport_kind = normalize_transport_kind(transport_kind)
+      validate_transport_outcome!
       freeze
     end
 
@@ -128,6 +136,28 @@ module RubyRouting
 
       normalized.freeze
     end
+
+    def validate_transport_outcome!
+      return unless transport_kind
+
+      valid = case transport_kind
+      when :definitely_not_sent
+        DEFINITELY_NOT_SENT_STATUSES.include?(outcome.status) && outcome.safe_to_release?
+      when :ambiguous_after_possible_send
+        %i[pending unknown].include?(outcome.status) && !outcome.safe_to_release?
+      else
+        false
+      end
+      return if valid
+
+      raise ArgumentError, "transport kind is inconsistent with normalized outcome"
+    end
+
+    def normalize_transport_kind(value)
+      return nil if value.nil?
+
+      RubyRouting::Enum.normalize(value, RubyRouting::ProviderTransportResult::KINDS, "transport kind")
+    end
   end
 
   class EconomicConflict
@@ -138,7 +168,7 @@ module RubyRouting
       @provider_id = normalize_id(provider_id, "provider id")
       @operation_id = normalize_id(operation_id, "operation id")
       @attempt_id = normalize_id(attempt_id, "attempt id")
-      @reason = reason.to_sym
+      @reason = reason.is_a?(Symbol) ? reason : reason.to_s.freeze
       freeze
     end
 

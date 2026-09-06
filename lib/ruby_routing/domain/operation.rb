@@ -9,13 +9,13 @@ module RubyRouting
                    idempotency_key:, ttl_seconds: nil, deadline_seconds: nil,
                    version: "1", authoritative_sequence: false)
       @provider_id = normalize_id(provider_id, "provider id")
-      @idempotent_retry = !!idempotent_retry
-      @status_lookup = !!status_lookup
+      @idempotent_retry = normalize_boolean(idempotent_retry, "idempotent_retry")
+      @status_lookup = normalize_boolean(status_lookup, "status_lookup")
       @idempotency_key = normalize_id(idempotency_key, "idempotency key")
       @ttl_seconds = normalize_duration(ttl_seconds, "ttl_seconds")
       @deadline_seconds = normalize_duration(deadline_seconds, "deadline_seconds")
       @version = normalize_id(version, "contract version")
-      @authoritative_sequence = !!authoritative_sequence
+      @authoritative_sequence = normalize_boolean(authoritative_sequence, "authoritative_sequence")
       freeze
     end
 
@@ -58,6 +58,12 @@ module RubyRouting
 
       value
     end
+
+    def normalize_boolean(value, label)
+      return value if value == true || value == false
+
+      raise ArgumentError, "#{label} must be boolean"
+    end
   end
 
   class ProviderTransportResult
@@ -66,8 +72,7 @@ module RubyRouting
     attr_reader :kind, :message, :provider_reference
 
     def initialize(kind:, message: nil, provider_reference: nil)
-      @kind = kind.to_sym
-      raise ArgumentError, "unsupported transport result" unless KINDS.include?(@kind)
+      @kind = normalize_kind(kind, "transport result")
 
       @message = message&.to_s&.freeze
       @provider_reference = provider_reference&.to_s&.freeze
@@ -81,16 +86,19 @@ module RubyRouting
     def self.ambiguous_after_possible_send(message: nil, provider_reference: nil)
       new(kind: :ambiguous_after_possible_send, message: message, provider_reference: provider_reference)
     end
+
+    private
+
+    def normalize_kind(value, label)
+      RubyRouting::Enum.normalize(value, KINDS, label)
+    end
   end
 
   class ProviderTransportError < StandardError
     attr_reader :kind, :provider_reference
 
     def initialize(kind:, message: nil, provider_reference: nil)
-      @kind = kind.to_sym
-      unless ProviderTransportResult::KINDS.include?(@kind)
-        raise ArgumentError, "unsupported transport error"
-      end
+      @kind = normalize_kind(kind)
 
       @provider_reference = provider_reference&.to_s&.freeze
       super(message)
@@ -102,6 +110,12 @@ module RubyRouting
 
     def self.ambiguous_after_possible_send(message = nil, provider_reference: nil)
       new(kind: :ambiguous_after_possible_send, message: message, provider_reference: provider_reference)
+    end
+
+    private
+
+    def normalize_kind(value)
+      RubyRouting::Enum.normalize(value, ProviderTransportResult::KINDS, "transport error")
     end
   end
 
@@ -118,7 +132,7 @@ module RubyRouting
       end
 
       @amount = amount
-      @reason = reason.to_sym
+      @reason = reason.is_a?(Symbol) ? reason : reason.to_s.freeze
       freeze
     end
 

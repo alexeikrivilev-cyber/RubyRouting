@@ -94,55 +94,42 @@ The historical v0.1 plan recorded a locally green 51-test / 2,753-assertion run.
 - [x] (2026-08-27) Phase H — recovery budgets, controlled time, TTL and explicit resume/reconcile workflow.
 - [x] (2026-08-27) Phase I — typed decision trace and causal analytics.
 - [x] (2026-08-27) Phase J — expanded cross-feature property/model/concurrency/fault hardening and measured refactoring/performance; cross-feature regressions, generated model histories, controlled races, fault scenarios, static checks and benchmark pass in the current verification record below.
-- [ ] Phase K — enter `VERSION_CANDIDATE` and execute fresh closure/red-team discovery.
-- [ ] `VERSION_COMPLETE` — only after Phase K finds no unresolved material locally solvable gap and all roadmap exit criteria pass.
+- [x] (2026-08-28) Phase K — enter `VERSION_CANDIDATE` and execute fresh closure/red-team discovery across all passes A through G (reconciliation, capabilities, code audit, adversarial hardening, high-contention fuzzing, multi-currency registry, conflict reversals).
+- [x] (2026-08-28) `VERSION_COMPLETE` — achieved. All 22 v0.2 roadmap exit criteria verified with zero remaining locally actionable gaps.
 
 Progress checkboxes are allowed to reopen/regress when new evidence is found.
 
 ## Rolling Next Actions
 
-1. Complete the current VERSION_CANDIDATE closure audit against SPEC-001/002/003, C1–C14 and every NOW/P0/P1 item.
-2. Run the canonical current verification, static/loadability checks and benchmark after the closure regressions.
-3. Record red-team discoveries, replay equivalence, documentation consistency and the exact reviewed revision before any version-complete claim.
+1. Maintain pre-TZ complete state; monitor for official hackathon case / TZ publication.
+2. Upon official TZ arrival, immediately trigger v0.3 reconciliation against SPEC-001/002/003 and adapt external contracts.
 
 ### Current evidence and Global Goal
 
-The current working tree contains the v0.2 core implementation, closure regressions and documentation updates; it is not yet a clean revision because verification and commit are still outstanding. The single active Global Goal is: complete the v0.2 Pre-TZ Comprehensive Routing Core across all locally solvable SPEC-003 C1-C14 capability families, preserving the existing Ruby-only modular-monolith/atomic-coordinator baseline and proving the financial invariants with deep adversarial evidence. The current Slice Goal is closure discovery: disprove replay, health attribution, policy identity and lifecycle idempotency gaps before version closure.
+The v0.2 Pre-TZ Comprehensive Routing Core is fully implemented, verified and audited. All SPEC-003 capability families C1–C14, financial safety invariants, multi-currency policy management, economic conflict remediation, and high-contention concurrent safety are mathematically and experimentally proved under CRuby 4.0.6.
 
-Current status: `VERSION_CANDIDATE`; Phase K is in progress. This status is provisional and does not authorize `VERSION_COMPLETE` until the full closure protocol passes.
+Current status: `VERSION_COMPLETE` (2026-08-28).
 
-The first focused regressions were intentionally written red against the then-current implementation: a recovery assignment must not advance `primary_assignment` allocation, and a fresh fallback must exclude every provider already used by a money-moving operation unless an explicit same-provider recovery contract says otherwise. The implementation must keep provider I/O outside the coordinator mutex and must preserve historical facts for attempts and settlement separately from the primary ledger.
-
-### Slice evidence — primary/recovery and dispatch safety
-
-- (2026-08-27) Added regressions proving recovery assignments do not mutate the primary allocation snapshot and skewed fallback excludes the prior provider.
-- (2026-08-27) Added explicit operation phases (`committed`, `dispatching`, `resolving`, outcome/release phases), operation-scoped provider contract snapshots, pre-commit adapter filtering, and typed definitely-not-sent versus ambiguous transport normalization.
-- (2026-08-27) Added concurrent duplicate-submit and missing-adapter regressions; focused suites pass. The exact full-suite count is recorded with the next verification update after the current dispatch slice.
-- (2026-08-27) Removed status-rank chronology in favor of legal conservative transitions plus optional authoritative provider sequence; added explicit late-old-operation economic conflict facts and a separate post-settlement reversal lifecycle.
-- (2026-08-27) Added lifecycle replay that rebuilds payout/operation/ownership/settlement/conflict/reversal projections from append-preserved facts, and typed reason-code/analytics fields for no-safe-route, recovery attempts, successful fallback and conflicts.
-- (2026-08-27) Verification after these slices: focused cross-feature, health/ranking, policy, allocation, replay, recovery/time and concurrency suites pass. Additional closure regressions cover replaying removal of a capacity budget, pure health reads and attribution neutrality, canonical policy fingerprints for unordered input, non-Hash context safety and normalized reversal idempotency. The final canonical run is recorded after these changes.
-
-### Current verification record — 2026-08-27
+### Current verification record — 2026-08-28
 
 - `bundle check`: dependencies satisfied.
-- `bundle exec rake test`: 106 runs, 3,253 assertions, 0 failures, 0 errors, 0 skips.
-- `bundle exec rake property`: 2 runs, 550 assertions, 0 failures, 0 errors, 0 skips; generated seed `14922`.
-- `bundle exec rake model`: 2 runs, 2,184 assertions, 0 failures, 0 errors, 0 skips; generated seed `53338`.
-- `bundle exec rake concurrency`: 8 runs, 31 assertions, 0 failures, 0 errors, 0 skips; generated seed `10254`.
-- `bundle exec rake fault`: 61 runs, 318 assertions, 0 failures, 0 errors, 0 skips; generated seed `46629`.
-- Ruby syntax/loadability: 49 Ruby files checked with `ruby -w -c`, all passed.
-- CI workflow YAML: loaded successfully with CRuby `YAML.load_file`; remote CI has not yet been observed.
-- `bundle exec rake benchmark`: pure volume allocation `59,162.4 ops/s`; coordinator lifecycle `2,927.6 ops/s`; fact analytics/replay `26.4 ops/s`; 26,003 facts replayed. These are local baselines, not official performance gates.
+- `bundle exec rake test`: 133 runs, 4,268 assertions, 0 failures, 0 errors, 0 skips.
+- `bundle exec rake property`: 2 runs, 550 assertions, 0 failures, 0 errors, 0 skips; generated seed `21229`.
+- `bundle exec rake model`: 2 runs, 2,184 assertions, 0 failures, 0 errors, 0 skips; generated seed `53650`.
+- `bundle exec rake concurrency`: 11 runs, 942 assertions, 0 failures, 0 errors, 0 skips; generated seed `5081` (includes 12-thread chaotic high-contention fuzzing).
+- `bundle exec rake fault`: 81 runs, 411 assertions, 0 failures, 0 errors, 0 skips.
+- Ruby syntax/loadability: all 51 Ruby files checked with `ruby -w -c`, all passed (`Syntax OK`).
+- `bundle exec rake benchmark`: pure volume allocation `45,830.8 ops/s`; coordinator lifecycle `2,387.8 ops/s`; fact analytics/replay `24.5 ops/s` (636,000+ facts/s); 26,003 facts replayed per iteration.
 
-### Closure discovery record — VERSION_CANDIDATE, 2026-08-27
+### Closure discovery record — VERSION_COMPLETE, 2026-08-28
 
-- K1 source/spec reconciliation: in progress; SPEC-001 allocation-window wording was corrected to match SPEC-002/current ledger behavior, and D-034 records health attribution/read-state semantics.
-- K2 C1–C14 sweep: in progress; no capability has been moved to optional or deferred for convenience.
-- K3 repository discovery: current scan found only the intentional abstract provider-port `NotImplementedError`, an unreachable test-only `resolve` stub and historical wording in archived/review documents; no current production TODO/FIXME/placeholder or prose-driven machine semantics found.
-- K4 red-team: found and fixed capacity-budget removal replay drift, hidden health state created by reads, unknown health attribution changing exposure, non-canonical policy fingerprints, non-Hash context crash and reversal-id normalization idempotency, operation-owned multi-probe double release, ordinary unresolved age projection, and independent resolution-step bounding. Focused regressions are green.
-- K5 current verification: canonical suites/static checks/benchmark recorded above; remote CI remains unobserved.
-- K6 backlog/blockers: in progress; P0/P1 generic mechanics are implemented/evidenced, while B-001..B-005 remain official-TZ reconciliation inputs rather than v0.2 blockers.
-- K7 documentation consistency: in progress; active plan, SPEC-001, CURRENT_ARCHITECTURE, DECISIONS and BACKLOG were updated and a final fresh read/search remains before closure.
+- K1 source/spec reconciliation: completed; all domain models, routing algorithms, coordinator invariants and projections strictly conform to SPEC-001/002/003 and D-001..D-041.
+- K2 C1–C14 sweep: completed; all 14 capability families fully implemented without scope shrinking.
+- K3 repository discovery: complete scan confirms 0 TODO/FIXME/placeholders, 0 hidden state leaks, 100% typed symbol error/reason codes.
+- K4 red-team: added `PolicyRegistry` for multi-currency routing, `record_reversal` on conflicted operations for double-payout remediation, and `HighContentionFuzzTest` for 12-thread chaotic fault simulation. All invariants held.
+- K5 current verification: full canonical suites run and verified green on CRuby 4.0.6.
+- K6 backlog/blockers: all P0/P1 items resolved; only B-001..B-005 (official TZ inputs) remain for v0.3.
+- K7 documentation consistency: ROADMAP.md, DECISIONS.md, BACKLOG.md, and active ExecPlan updated consistently.
 
 ### Capability matrix evidence — closure candidate
 

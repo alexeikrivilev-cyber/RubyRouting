@@ -2,307 +2,244 @@
 
 ## Mission
 
-Build **RubyRouting** as a high-quality smart payout-routing engine for a highly competitive hackathon.
+Build RubyRouting into a submission-ready smart payout-routing product for Hack.Genesis before the official TZ arrives.
 
-Ruby is mandatory. Current development baseline is **CRuby 4.0.6**. All product, routing, reference/oracle, simulator, property/model/concurrency/fault executable domain logic is Ruby.
+Do not wait for the TZ to begin important work. Build the complete generic product now and reconcile it against the official contract later.
 
-The current Version Goal is **v0.2 — Pre-TZ Comprehensive Routing Core**.
+Ruby is mandatory. Current baseline: **CRuby 4.0.6**. Product logic, routing algorithms, reference/oracle models, simulators, property/model/concurrency/fault harnesses and domain benchmarks are Ruby-only.
 
-The official TZ is not available yet. That is not a reason to stop locally actionable development. The pre-TZ objective is to implement the complete high-value generic payout-routing logic that can be specified and verified without inventing external API/persistence/judge contracts.
+Current Version Goal: **v0.3 — Product Convergence & Full Routing Product**.
 
 ## Mandatory fresh-session read order
 
-For project-wide work read:
+For project-wide work read, in order:
 
 1. `README.md`
 2. `docs/ROADMAP.md`
 3. `docs/COMPLETION_POLICY.md`
-4. `docs/exec-plans/active/pre-tz-comprehensive-core.md`
-5. `specifications/001-smart-payout-routing.md`
-6. `specifications/002-pre-tz-comprehensive-core.md`
-7. `specifications/003-pre-tz-full-logic-and-completion.md`
-8. `docs/TECH_REVIEW_2026-08-27.md`
-9. `docs/CURRENT_ARCHITECTURE.md`
-10. `docs/ARCHITECTURE.md` for inherited detailed baseline rules
-11. `docs/RUBY.md`
-12. `docs/TESTING.md`
-13. `docs/WORKFLOW.md`
-14. `docs/PLANS.md`
-15. `docs/SESSION_POLICY.md`
-16. `docs/BACKLOG.md`
-17. `docs/DECISIONS.md`
-18. `docs/DOCUMENTATION_AUDIT_2026-08-27.md`
-19. `docs/RESEARCH.md` when external evidence is needed.
+4. `docs/exec-plans/active/product-convergence.md`
+5. `specifications/004-product-convergence.md`
+6. `specifications/003-pre-tz-full-logic-and-completion.md`
+7. `specifications/002-pre-tz-comprehensive-core.md`
+8. `specifications/001-smart-payout-routing.md`
+9. `docs/PRODUCT_CONVERGENCE_REVIEW_2026-08-28.md`
+10. `docs/CURRENT_ARCHITECTURE.md`
+11. `docs/ARCHITECTURE.md`
+12. `docs/RUBY.md`
+13. `docs/TESTING.md`
+14. `docs/WORKFLOW.md`
+15. `docs/PLANS.md`
+16. `docs/SESSION_POLICY.md`
+17. `docs/BACKLOG.md`
+18. `docs/DECISIONS_CURRENT.md`
+19. `docs/DECISIONS.md`
+20. `docs/RESEARCH.md` when external evidence is relevant.
 
-For a narrow local task, load only the governing subset after this file, but never ignore the active Version Goal and completion policy.
+Never infer project status from commit messages or old completion claims without checking the current roadmap and active plan.
 
 ## Source-of-truth precedence
 
-For behavior before the official TZ:
+Before the official TZ:
 
-`direct current instruction > official hackathon TZ when available > reconciled specification > SPEC-003 > SPEC-002 > SPEC-001 > implementation/tests`
+`direct current instruction > SPEC-004 > SPEC-003 > SPEC-002 > SPEC-001 > current durable decisions > implementation/tests`
 
-The official TZ does not yet exist in the repository. Never invent it or describe provisional choices as official requirements.
+When the official TZ is published it becomes authoritative and triggers explicit reconciliation.
 
-`docs/ROADMAP.md` controls version sequencing and exit gates. `docs/COMPLETION_POLICY.md` controls whether an agent may claim the version is complete. `docs/CURRENT_ARCHITECTURE.md` supplements the inherited v0.1 architecture. `docs/TESTING.md` defines detailed evidence methodology.
-
-Code is not the spec. Tests are not the entire spec. A green suite does not authorize scope reduction.
+Code is not the spec. Tests are not the whole spec. A green suite is evidence, not permission to shrink scope.
 
 ## Current development vector
 
-Do **not** restart the architecture. Keep:
+The repository already has a strong deterministic core. Do not restart it.
 
-- plain-Ruby modular monolith;
-- deterministic financial/routing kernel;
-- exact money;
-- application orchestration outside pure routing functions;
-- one clear in-memory atomic coordinator boundary under `Thread::Mutex` for current correctness state;
-- provider I/O outside the mutex;
-- append-preserved typed facts + replayable derived projections;
-- independent Ruby oracle/simulator;
-- Minitest/Rake and controlled concurrency tests.
+Keep:
 
-The v0.2 goal is full domain logic, not enterprise infrastructure.
+- exact money and deterministic allocation;
+- one economic intent / single unresolved ownership;
+- explicit dispatch and provider-operation contract;
+- conservative `UNKNOWN` handling;
+- primary/recovery/settlement separation;
+- current eligibility, capacity, health, recovery and replay concepts;
+- provider I/O outside the atomic lock;
+- typed facts and projections;
+- independent Ruby tests/oracles/models.
 
-Internal coordinator responsibilities may be factored into ledgers/reducers when current mechanics justify it. Do not convert them into services, DB tables, queues or generic frameworks without evidence.
+But do not preserve accidental complexity merely because it exists. The current task is to converge the repository into one coherent product.
 
-## Mandatory v0.2 capability families
+The canonical flow is:
 
-SPEC-003 fixes the capability envelope. A fresh agent may not narrow it to the already convenient subset.
+`Intent -> Policy -> Opportunity -> Admission -> Allocation -> Constrained Optimization -> Atomic Commit -> Provider Operation -> Observation -> Lifecycle/Recovery -> Durable State -> Analytics/API/Demo`
 
-Implement and integrate:
+Every production module must have an explicit place in this flow.
 
-1. economic intent/ownership and operation dispatch safety;
-2. count and volume allocation with exact post-decision discrepancy and committed work;
-3. policy identity/fingerprint, scope, accounting/window/tolerance and generic hard/soft constraints;
-4. context-aware functional opportunity/eligibility;
-5. live availability and deterministic capacity reservations;
-6. attributable provider health, hysteresis/quarantine/probing;
-7. deterministic ranking inside the already safe feasible set;
-8. retry/status-resolution/fallback/defer/reconciliation with separate budgets/time/TTL;
-9. duplicate/delayed/out-of-order lifecycle reduction;
-10. settlement, reversal and economic-conflict handling;
-11. full lifecycle replay from facts;
-12. typed decision trace, deviation attribution and primary/recovery/settlement analytics;
-13. controlled concurrency and cross-feature adversarial verification.
+## Product-convergence rules
 
-Unknown official values/defaults should become replaceable typed configuration, not omitted concepts.
+1. **Case relevance first.** New work must materially strengthen payout distribution, eligibility, provider selection, load/health, safe fallback/retry, reconciliation, history, analytics, configurability or demonstrability.
+2. **One source of business truth.** API, persistence, dashboard and adapters do not implement alternate routing semantics.
+3. **No dead optional hooks.** Do not keep non-integrated production modules merely because they might be useful later.
+4. **No misleading names.** A simulator is not a real PSP adapter. A projection-only reload is not crash recovery. A weighted sum is not a Pareto optimizer.
+5. **No hardcoded business trivia in core.** Brand/BIN/bank/rail heuristics belong only in explicit demo/provider plugins unless required by authoritative TZ.
+6. **No speculative product claims.** Never label the repository `v1.0`, industrial, production-ready or complete without closure evidence.
 
-Do not implement adaptive ML/bandits while deterministic lifecycle/accounting/full-core gaps remain.
+## Architecture direction
 
-## Priority order
+Target a plain-Ruby modular monolith with these logical responsibilities:
 
-Unless evidence changes dependencies:
+- immutable domain/policy values;
+- provider catalog and functional eligibility;
+- operational admission controller;
+- exact allocation controller;
+- constrained optimization controller;
+- recovery/reconciliation policy;
+- lifecycle reducer;
+- focused allocation/capacity/health/operation ledgers;
+- one atomic state transaction coordinator/facade;
+- provider adapters and normalization;
+- durable state/fact store;
+- application commands and queries;
+- analytics/audit projections;
+- simulator/demo shell.
 
-1. P0 financial correctness and regressions;
-2. operation dispatch/provider-contract/replay correctness;
-3. policy/eligibility/accounting completeness;
-4. capacity correctness;
-5. deterministic health/ranking;
-6. recovery/time/reconciliation;
-7. typed trace/analytics;
-8. deep cross-feature verification and maintainability/performance hardening;
-9. closure/red-team audit.
+Internal decomposition is encouraged when it gives responsibilities real ownership, but keep one clear atomic correctness boundary until evidence requires another model.
 
-## Non-negotiable financial invariants
+## Optimization rule
 
-These outrank allocation targets, ranking, performance and demo polish:
+Never collapse safety, contractual allocation and optimization into one arbitrary weighted score.
 
-- One payout is one **economic intent**.
-- At most one unresolved money-moving **economic ownership** exists per intent.
-- A timeout/lost response after possible transmission is `UNKNOWN` unless the contract proves no provider side effect.
-- `UNKNOWN` retains ownership.
-- Cross-provider fallback requires safe release/proof the previous operation cannot create the effect.
-- Same-provider retry/status lookup is distinct from fresh fallback.
-- Fresh fallback excludes already money-moving attempted providers by default.
-- Primary allocation accounting and recovery traffic are distinct under the current `primary_assignment` default.
-- Hard safety/eligibility/capacity/health constraints precede allocation/ranking.
-- Operation recovery capability is operation-scoped and survives new-route disablement.
-- Ownership alone does not authorize premature retry/resolve while original dispatch is still in progress.
-- Transport ambiguity is classified economically, not hidden in generic exceptions.
-- Historical observations remain facts; chronology is not guessed from arbitrary status rank.
-- Late evidence of a second possible monetary effect creates an explicit reconciliation/conflict signal.
-- Provider outcome attribution is separate from payout business outcome.
-- `NO_SAFE_ROUTE`, defer and reconciliation-blocked are valid.
+Required ordering:
 
-Target behavior is effectively-once **economic effect**, not a false distributed exactly-once claim.
+1. economic safety;
+2. hard eligibility/legal/business constraints;
+3. operational admission: availability/capacity/rate/health;
+4. allocation obligations/admissible corridor;
+5. reliability/quality optimization;
+6. cost/latency/priority optimization;
+7. exploration only when explicitly safe and bounded.
 
-## Critical atomicity rule
+An optimizer may choose only among actions admitted by higher-priority layers.
 
-Before a new provider money-moving call, the atomic state boundary establishes all correctness state required by the configured model, including as applicable:
+## Durability rule
 
-- current payout/operation legality;
-- pinned policy identity/fingerprint;
-- provider opportunity/live feasibility;
-- primary allocation reservation at the configured accounting point;
-- capacity reservation;
-- decision/fact identity;
+Do not call a persistence mechanism restart-safe unless a fresh process can safely continue unresolved payouts without losing:
+
 - economic ownership;
-- operation/provider-contract snapshot;
-- dispatch phase.
+- operation identity/phase;
+- provider contract/idempotency identity;
+- policy binding;
+- required allocation/capacity reservations;
+- event deduplication/order state;
+- reconciliation state.
 
-Release the mutex before provider I/O.
+A read-only replay projection is useful but is not equivalent to a recovered working coordinator.
 
-Apply dispatch evidence/provider observations later under synchronization. Never fix a race by moving provider/network I/O inside the lock.
+Durable corruption/truncation must be detected explicitly. Never silently drop a malformed financial fact and continue as if history were complete.
+
+## Provider boundary rule
+
+Raw provider callbacks/errors do not create `NormalizedOutcome` by trusting external fields such as `safe_to_release`.
+
+Provider-specific adapter/normalizer code owns conversion from raw transport/provider semantics to domain evidence. Only normalized evidence enters the core reducer.
 
 ## Ruby-only policy
 
-All executable domain logic is Ruby:
-
-- production implementation;
-- routing/allocation/recovery/health algorithms;
-- oracle/reference model;
-- provider simulator;
-- property/model/concurrency/fault harness;
-- domain benchmarks.
-
-Minimal CI/shell/YAML orchestration is allowed. Do not build a second router/oracle in another language.
-
 Follow `docs/RUBY.md`:
 
-- CRuby 4.0.6 current baseline;
-- money = `Integer` minor units + explicit currency;
-- proportions/discrepancy = integer weights / `Rational`, never Float;
-- deterministic ordering/tie-breaking;
-- explicit controlled time/randomness;
-- no accidental global mutable correctness state;
+- money = Integer minor units + currency;
+- proportions/discrepancy = integer weights / `Rational`, never Float for financial correctness;
+- controlled time and randomness when behavior depends on them;
+- deterministic tie-breaking;
+- no provider/network I/O under the atomic state lock;
 - never rely on GVL for correctness;
-- no provider I/O under coordinator mutex;
-- expected provider/business outcomes are domain values, not broad exception control flow.
+- expected provider/business outcomes are values, not broad exception control flow.
 
-## Goal Mode loop
+## Goal Mode operating loop
 
-For each slice:
+For every substantial slice:
 
-1. inspect governing spec/current plan/tests/code;
-2. choose the smallest slice advancing the current phase/version gate;
-3. state invariants/acceptance and the verification capable of falsifying the approach;
-4. implement autonomously;
-5. run focused checks early;
-6. run relevant broader suites;
-7. self-review skeptically for safety, accounting, concurrency, provider/TZ assumptions and unnecessary complexity;
-8. update the active ExecPlan when reality/discoveries change;
-9. select the next required slice and continue.
+`orient -> inspect real code -> choose highest-value gap -> specify acceptance -> implement -> focused verify -> broad verify -> skeptical review -> update plan/backlog -> discover next gap -> continue`
 
-A test/file/commit/milestone/phase is a checkpoint, not a stop condition.
+Do not stop after a file, commit, milestone, phase or green suite.
+
+The agent should continuously prefer the next dependency-unblocking or correctness-improving slice over aesthetic cleanup.
 
 ## Anti-premature-completion rule
 
 `docs/COMPLETION_POLICY.md` is mandatory.
 
-The agent MUST NOT say the active version/project is `done`, `complete`, `finished`, `all implemented`, `nothing left`, or `waiting for TZ` merely because:
+The agent MUST NOT claim the active version/project is complete because:
 
-- all planned checkboxes are marked complete;
-- the full test suite is green;
-- a benchmark is acceptable;
-- every known issue at session start was fixed;
-- one closure checklist from an earlier plan passed.
+- all current checkboxes are green;
+- all known issues were fixed;
+- CI is green;
+- a benchmark is fast;
+- a demo works;
+- all files mentioned in the original plan were implemented;
+- the agent cannot immediately think of another task;
+- the official TZ is not yet available.
 
-Before any version-complete claim:
+Before any version-complete claim, enter `VERSION_CANDIDATE` and perform a fresh repository-wide closure attempt that actively tries to disprove completeness.
 
-1. mark status `VERSION_CANDIDATE`, not complete;
-2. perform a fresh source/spec reconciliation;
-3. sweep the full SPEC-003 capability matrix and interactions;
-4. search the repository for unfinished/placeholder/duplicated semantics;
-5. perform an adversarial/red-team attempt to find new counterexamples;
-6. re-run current verification from changed code;
-7. audit every NOW/P0/P1 item and blocker;
-8. audit documentation consistency;
-9. return to development if any important locally solvable gap is found.
+For v0.3 that closure must include at least:
 
-Completion discovery is allowed to reopen any earlier phase. Do not preserve a neat checklist at the expense of correctness.
+- source/spec reconciliation through SPEC-004;
+- canonical-flow cohesion audit;
+- public/reachable code inventory and dead/experimental-code audit;
+- financial invariant red-team review;
+- restart/durability safety review;
+- API/provider-boundary review if those layers exist;
+- deterministic generated/fault/concurrency review;
+- current full CI/test/benchmark evidence;
+- backlog P0/P1 audit;
+- documentation consistency audit.
+
+A newly found important locally solvable gap reopens implementation.
 
 ## No scope shrinking
 
-Do not make completion easier by redefining the current version around what is already implemented.
+Do not redefine v0.3 around whatever already works.
 
-Without explicit user or authoritative TZ evidence, do not:
+Do not move a required product capability to `LATER` simply to reach completion. Unknown official values should normally become configurable/reversible semantics, not missing mechanisms.
 
-- move unfinished required SPEC-003 behavior to `LATER`;
-- relabel a P0/P1 correctness/full-logic gap as optional;
-- use “supported subset” to avoid a required capability family;
-- change a normative requirement only because production code chose a narrower design.
+The only acceptable reasons to remove a planned mechanism are:
 
-If a planned mechanism is fully subsumed by a simpler implementation, record the decision and prove equivalent observable behavior.
+- direct user instruction;
+- official TZ contradiction;
+- a durable decision proving a simpler mechanism provides equivalent required behavior;
+- evidence that the mechanism is irrelevant to the case and its removal increases product coherence.
 
-## Stop / blocker policy
+## Stop policy
 
 Stop only when:
 
-1. `VERSION_COMPLETE` is legitimately reached under `docs/COMPLETION_POLICY.md`; or
-2. every remaining required current-version path passes the genuine external-blocker test.
+1. v0.3 legitimately reaches `VERSION_COMPLETE` under the closure policy; or
+2. every remaining required path is genuinely externally blocked and no independent product work remains.
 
-The absence of the official TZ is **not** a blocker for v0.2 generic mechanics.
-
-Failing tests, difficult bugs, refactors, gem choices, unclear local class boundaries, or one blocked subtask while independent work remains are not external blockers.
+The absence of the official TZ is not a blocker for building the product.
 
 ## Anti-loop
 
-- Do not repeat unchanged actions expecting a different result.
-- After two failures with the same tactic, change hypothesis/tool/design.
-- After three materially different failures, reduce to a minimal reproducer, separate facts from assumptions and simplify/replan.
-- Do not polish local aesthetics while higher-priority correctness/version criteria remain unfinished.
-- Do not rewrite correct code solely for subjective elegance.
+- Do not repeat unchanged actions expecting another result.
+- After two failed attempts with the same tactic, change hypothesis or design.
+- After three materially different failures, reduce to a minimal reproducer and re-plan.
+- Do not spend long sessions polishing formatting while product correctness/cohesion gaps remain.
+- Do not rewrite correct code solely for style.
 
-## Scope discipline
+## Testing bar
 
-Implement all important generic routing mechanics that can survive TZ changes, but do not equate comprehensive domain logic with infrastructure bloat.
+Use the relevant combination of:
 
-Add structure only when it protects an invariant, isolates a real boundary, removes meaningful duplication, improves deterministic testability, satisfies a current requirement or addresses a measured bottleneck.
-
-Do not add by default:
-
-- Rails/Sinatra/Hanami;
-- production DB/ORM;
-- queue/event bus/background-job system;
-- microservices;
-- distributed lock product;
-- final public API/UI;
-- live vendor SDK;
-- observability platform;
-- ML/RL/bandits.
-
-## SpecOps rules
-
-- SPEC-001 = baseline behavior.
-- SPEC-002 = implementation-review amendments.
-- SPEC-003 = mandatory current pre-TZ full-logic and completion envelope.
-- Behavioral changes map to a requirement/acceptance rule or update the governing spec coherently.
-- Never change a spec only to bless accidental implementation behavior.
-- Keep official-TZ unknowns explicit and replaceable.
-- When the TZ arrives, perform explicit `CONFIRMED/CHANGED/REMOVED/NEW/AMBIGUOUS` reconciliation.
-
-## Verification bar
-
-A slice is not complete because its happy path/unit test passes. Use relevant combinations of:
-
-- deterministic regression/acceptance scenarios;
-- independent oracle comparison;
+- deterministic regression/acceptance tests;
+- independent oracle checks;
 - property/invariant generation;
 - state-machine/model histories;
-- controlled concurrency/interleavings;
-- deterministic transport/provider faults;
+- controlled interleavings;
+- seeded fault/chaos scenarios;
+- crash/restart boundary tests;
 - duplicate/delayed/out-of-order event tests;
-- lifecycle replay equivalence;
-- fault/mutation seeding where valuable;
-- benchmarks/stress after correctness.
+- replay equivalence;
+- load/benchmark evidence after correctness.
 
-Every material bug gets a deterministic regression. Generated failures preserve seed/trace. Do not hide flakes with automatic retries.
+Every randomized failure must report/reproduce its seed or trace. Never hide flakes with retries.
 
-Old green runs are historical evidence only. Changed code requires current verification.
+## Historical decisions
 
-## Completion report
-
-Report the narrowest status actually supported by evidence.
-
-For a version-complete claim include:
-
-- exact revision reviewed;
-- exit-criteria result;
-- SPEC-001/002/003 reconciliation;
-- commands/suites/seeds/CI/benchmarks actually run;
-- closure/red-team findings;
-- regressions added during closure;
-- remaining genuine TZ blockers;
-- optional later work;
-- documentation consistency result.
+`docs/DECISIONS.md` contains historical rationale. `docs/DECISIONS_CURRENT.md` is the current convergence supplement and explicitly supersedes the false v1.0/product-complete claims added in the 2026-08-28 feature burst.

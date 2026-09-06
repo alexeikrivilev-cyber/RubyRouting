@@ -3,15 +3,20 @@
 module TestSupport
   module Simulator
     class Step
-      attr_reader :outcome, :accepted
+      attr_reader :outcome, :accepted, :callback_outcomes
 
-      def initialize(outcome:, accepted: true)
+      def initialize(outcome:, accepted: true, callback_outcomes: [])
         unless outcome.is_a?(RubyRouting::NormalizedOutcome)
           raise ArgumentError, "step outcome must be NormalizedOutcome"
+        end
+        unless callback_outcomes.respond_to?(:to_a) &&
+               callback_outcomes.to_a.all? { |callback| callback.is_a?(RubyRouting::NormalizedOutcome) }
+          raise ArgumentError, "callback_outcomes must contain NormalizedOutcome values"
         end
 
         @outcome = outcome
         @accepted = !!accepted
+        @callback_outcomes = callback_outcomes.to_a.dup.freeze
         freeze
       end
 
@@ -43,6 +48,17 @@ module TestSupport
       def self.terminal(attribution: :recipient)
         new(outcome: RubyRouting::NormalizedOutcome.terminal_payout_failure(attribution: attribution))
       end
+
+      def self.delayed(initial: RubyRouting::NormalizedOutcome.pending(attribution: :provider), callbacks:)
+        new(outcome: initial, callback_outcomes: callbacks)
+      end
+
+      def self.delayed_success(attribution: :provider)
+        delayed(
+          callbacks: [RubyRouting::NormalizedOutcome.success(attribution: attribution)]
+        )
+      end
+
     end
 
     class ScriptedProvider
@@ -61,11 +77,58 @@ module TestSupport
         @capabilities = capabilities
         @operations = {}
         @calls = []
+        @callbacks = []
         @observation_sequence = 0
       end
 
       def calls
         @calls.dup.freeze
+      end
+
+      def pending_callbacks
+        @callbacks.dup.freeze
+      end
+
+      def drain_callbacks(order: :fifo)
+        callbacks = case order.to_sym
+        when :fifo
+          @callbacks
+        when :lifo
+          @callbacks.reverse
+        else
+          raise ArgumentError, "unsupported callback order #{order.inspect}"
+        end
+        @callbacks = []
+        callbacks.freeze
+      end
+
+      def duplicate(observation)
+        unless observation.is_a?(RubyRouting::ProviderObservation)
+          raise ArgumentError, "observation must be ProviderObservation"
+        end
+
+        @calls << [:duplicate, observation.observation_id].freeze
+        observation
+      end
+
+      def reversal_for(payout:, amount:, reason: :returned, reversal_id: nil)
+        unless payout.is_a?(RubyRouting::State::PayoutSnapshot)
+          raise ArgumentError, "payout must be State::PayoutSnapshot"
+        end
+        operation_id = payout.settlement_operation_id
+        raise ArgumentError, "payout has no settlement operation" unless operation_id
+        unless payout.settlement_provider_id == provider_id
+          raise ArgumentError, "payout was not settled by this simulator provider"
+        end
+
+        RubyRouting::SettlementReversal.new(
+          reversal_id: reversal_id || "#{provider_id}:reversal:#{payout.id}:#{payout.reversals.length + 1}",
+          payout_id: payout.id,
+          provider_id: provider_id,
+          operation_id: operation_id,
+          amount: amount,
+          reason: reason
+        )
       end
 
       def initiate(request)
@@ -79,7 +142,9 @@ module TestSupport
         step = take_step
         reference = "#{provider_id}:operation:#{@operations.length + 1}".freeze
         @operations[request.idempotency_key] = { reference: reference, outcome: step.outcome }
-        observation_for(request, step.outcome, reference, "initiate")
+        observation = observation_for(request, step.outcome, reference, "initiate")
+        schedule_callbacks(request, reference, step.callback_outcomes)
+        observation
       end
 
       def resolve(request)
@@ -90,10 +155,8 @@ module TestSupport
         end
         step = take_step
         operation[:outcome] = step.outcome
-        observation_for(request, step.outcome, operation[:reference], "resolve")
-      end
-
-      def duplicate(observation)
+        observation = observation_for(request, step.outcome, operation[:reference], "resolve")
+        schedule_callbacks(request, operation[:reference], step.callback_outcomes)
         observation
       end
 
@@ -101,6 +164,12 @@ module TestSupport
 
       def take_step
         @steps.shift || raise(ArgumentError, "scripted provider has no response step left")
+      end
+
+      def schedule_callbacks(request, reference, outcomes)
+        outcomes.each_with_index do |outcome, index|
+          @callbacks << observation_for(request, outcome, reference, "callback-#{index + 1}")
+        end
       end
 
       def validate_request!(request)

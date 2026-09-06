@@ -33,6 +33,21 @@ class HealthRankingTest < Minitest::Test
     assert_empty controller.provider_ids
   end
 
+  def test_coordinator_rejects_manual_health_signal_for_unknown_provider
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+
+    assert_raises(ArgumentError) do
+      coordinator.record_health_signal(
+        provider_id: "B",
+        signal: :provider_failure,
+        attribution: :provider
+      )
+    end
+    refute coordinator.facts.any? { |fact| fact.type == :health_signal && fact.payload[:provider_id] == "B" }
+  end
+
   def test_static_health_exclusion_cannot_be_overridden_by_default_controller_state
     coordinator = RubyRouting::State::Coordinator.new(
       opportunities: [
@@ -97,6 +112,117 @@ class HealthRankingTest < Minitest::Test
     controller.observe(provider_id: "A", signal: :operational_success, attribution: :provider)
     assert_equal :healthy, controller.snapshot("A").state
     assert_equal 0, controller.snapshot("A").probe_in_flight
+  end
+
+  def test_recovery_does_not_become_healthy_while_another_probe_is_in_flight
+    controller = RubyRouting::Routing::HealthController.new(
+      policy: RubyRouting::Routing::HealthPolicy.new(
+        degrade_after: 1,
+        quarantine_after: 1,
+        recover_after: 2,
+        probe_limit: 2
+      )
+    )
+
+    controller.observe(provider_id: "A", signal: :provider_failure, attribution: :provider)
+    controller.observe(provider_id: "A", signal: :operational_success, attribution: :provider)
+    assert controller.reserve_exposure("A", owner: "probe-1")
+    assert controller.reserve_exposure("A", owner: "probe-2")
+
+    controller.observe(
+      provider_id: "A",
+      signal: :operational_success,
+      attribution: :provider,
+      release_exposure: false
+    )
+    controller.release_exposure("A", owner: "probe-1")
+    assert_equal :probing, controller.snapshot("A").state
+    assert_equal 1, controller.snapshot("A").probe_in_flight
+
+    controller.observe(
+      provider_id: "A",
+      signal: :operational_success,
+      attribution: :provider,
+      release_exposure: false
+    )
+    assert_equal :probing, controller.snapshot("A").state
+    controller.release_exposure("A", owner: "probe-2")
+    assert_equal :healthy, controller.snapshot("A").state
+    assert_equal 0, controller.snapshot("A").probe_in_flight
+  end
+
+  def test_probe_owner_identity_is_canonicalized_for_reservation_release
+    controller = RubyRouting::Routing::HealthController.new(
+      policy: RubyRouting::Routing::HealthPolicy.new(
+        degrade_after: 1,
+        quarantine_after: 1,
+        recover_after: 2,
+        probe_limit: 1
+      )
+    )
+    controller.observe(provider_id: "A", signal: :provider_failure, attribution: :provider)
+    controller.observe(provider_id: "A", signal: :operational_success, attribution: :provider)
+
+    assert controller.reserve_exposure(" A ", owner: " probe-1 ")
+    controller.release_exposure("A", owner: "probe-1")
+
+    assert_equal 0, controller.snapshot(" A ").probe_in_flight
+  end
+
+  def test_health_snapshot_rejects_blank_provider_identity
+    assert_raises(ArgumentError) do
+      RubyRouting::Routing::ProviderHealthSnapshot.new(provider_id: " ")
+    end
+  end
+
+  def test_health_enum_inputs_report_argument_errors
+    assert_raises(ArgumentError) do
+      RubyRouting::Routing::ProviderHealthSnapshot.new(provider_id: "A", state: Object.new)
+    end
+
+    controller = RubyRouting::Routing::HealthController.new
+    assert_raises(ArgumentError) do
+      controller.observe(provider_id: "A", signal: Object.new)
+    end
+    assert_raises(ArgumentError) do
+      controller.observe(provider_id: "A", signal: :provider_failure, attribution: Object.new)
+    end
+    assert_empty controller.provider_ids
+  end
+
+  def test_health_snapshot_rejects_malformed_counters_and_probe_limit
+    invalid_values = [
+      { operational_failure_count: -1 },
+      { consecutive_failure_count: "1" },
+      { consecutive_success_count: nil },
+      { probe_in_flight: -1 },
+      { probe_limit: 0 },
+      { probe_limit: "1" },
+      { probe_in_flight: 2, probe_limit: 1 }
+    ]
+
+    invalid_values.each do |attributes|
+      assert_raises(ArgumentError, attributes.inspect) do
+        RubyRouting::Routing::ProviderHealthSnapshot.new(
+          provider_id: "A",
+          **attributes
+        )
+      end
+    end
+  end
+
+  def test_health_observation_rejects_truthy_non_boolean_exposure_flag
+    controller = RubyRouting::Routing::HealthController.new
+
+    assert_raises(ArgumentError) do
+      controller.observe(
+        provider_id: "A",
+        signal: :operational_failure,
+        attribution: :provider,
+        release_exposure: "false"
+      )
+    end
+    assert_equal :healthy, controller.snapshot("A").state
   end
 
   def test_coordinator_persists_probe_reservation_and_blocks_second_probe
@@ -260,11 +386,18 @@ class HealthRankingTest < Minitest::Test
       ranking: RubyRouting::RankingPolicy.new(priority_by_provider: { "B" => 10, "A" => 1 })
     )
 
-    decision = RubyRouting::Routing::Allocation.choose(
+    allocation = RubyRouting::Routing::Allocation.choose(
       policy: policy,
       candidates: %w[A B],
       snapshot: RubyRouting::Routing::AllocationSnapshot.empty,
       incoming_measure: 1
+    )
+    assert_equal "A", allocation.chosen_provider
+    assert_equal %w[A B], allocation.allocation_tie_candidates
+
+    decision = RubyRouting::Routing::ConstrainedOptimizer.choose(
+      policy: policy,
+      allocation: allocation
     )
 
     assert_equal "B", decision.chosen_provider

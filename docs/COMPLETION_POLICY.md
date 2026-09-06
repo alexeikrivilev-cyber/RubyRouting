@@ -1,122 +1,162 @@
 # Completion Policy — no premature "done"
 
-This document is a normative operating contract for coding agents working on RubyRouting. It exists because a green implementation checkpoint was previously described as the end of useful pre-TZ work before a second technical review found important locally solvable gaps.
+This is the normative completion contract for RubyRouting coding agents.
 
 ## 1. Core rule
 
-Completion is an **evidence claim**, not an agent feeling and not a consequence of finishing a checklist.
+Completion is an evidence claim, never a feeling, checklist result, commit message or test count.
 
-The words `complete`, `done`, `finished`, `all implemented`, `nothing left`, `wait for TZ`, or equivalent may be used for the active Version Goal only after the **Version Closure Protocol** below passes.
+Use precise states:
 
-A file, class, test, commit, slice, milestone, phase, benchmark or green suite proves only that local scope. It never proves the whole version by itself.
+- `SLICE_IMPLEMENTED`
+- `SLICE_VERIFIED`
+- `PHASE_VERIFIED`
+- `VERSION_CANDIDATE`
+- `VERSION_COMPLETE`
+- `EXTERNALLY_BLOCKED`
 
-## 2. Allowed status vocabulary
+Do not jump from a local status to `VERSION_COMPLETE`.
 
-Use precise status language:
+## 2. What never proves completion by itself
 
-- `SLICE_IMPLEMENTED` — code for a slice exists, verification may still be incomplete.
-- `SLICE_VERIFIED` — slice acceptance and relevant broader checks pass.
-- `PHASE_VERIFIED` — every required phase outcome is implemented and cross-checked.
-- `VERSION_CANDIDATE` — planned phases appear complete; closure audit has started.
-- `VERSION_COMPLETE` — closure protocol passed with evidence.
-- `EXTERNALLY_BLOCKED` — every remaining required path depends on an external dependency and the blocker test passed.
+None of these are sufficient:
 
-Do not jump from `SLICE_VERIFIED` or `PHASE_VERIFIED` to `VERSION_COMPLETE`.
+- all planned checkboxes green;
+- all currently known issues fixed;
+- CI/test/property/model/concurrency/fault suites green;
+- benchmark/load run passes;
+- demo/API works;
+- a large assertion count;
+- the agent cannot immediately think of another task;
+- a previous closure pass succeeded on an earlier revision;
+- official TZ is not available.
 
-## 3. Green tests are necessary but not sufficient
+All are evidence only.
 
-A green test suite demonstrates only behavior represented by that suite. It does not prove:
+## 3. Active-version closure protocol
 
-- that the specification is complete;
-- that all important interactions are represented;
-- that no hidden state bypasses replay;
-- that documentation matches implementation;
-- that no locally solvable generic mechanism is missing;
-- that the current architecture has no correctness gap outside existing tests.
-
-Test counts, assertion counts, line coverage and benchmark throughput are evidence, not a definition of completeness.
-
-## 4. Mandatory Version Closure Protocol
-
-Before declaring a version complete, enter `VERSION_CANDIDATE` and perform all passes below from current repository state.
+Before `VERSION_COMPLETE`, set status to `VERSION_CANDIDATE` and perform a fresh closure attempt from current repository state.
 
 ### Pass A — source/spec reconciliation
 
-Read the current code and compare it against every governing specification and durable decision, not only acceptance tests.
+Read current production code and reconcile every governing requirement through SPEC-004 plus applicable inherited SPEC-003/002/001 behavior.
 
-For v0.2 this means at least SPEC-001, SPEC-002 and SPEC-003.
-
-For every normative requirement classify it:
+Classify each requirement:
 
 - implemented and evidenced;
-- intentionally not applicable with a governing reason;
-- externally blocked;
+- intentionally superseded with durable rationale;
+- genuinely external;
 - missing.
 
-Any missing locally actionable requirement reopens implementation.
+Any important missing locally solvable requirement reopens development.
 
-### Pass B — capability matrix sweep
+### Pass B — canonical-flow cohesion
 
-Inspect the complete current-version capability matrix, including interactions:
+Verify every reachable production module belongs to the canonical product flow:
 
-- economic intent / ownership;
-- dispatch / transport ambiguity;
-- provider-operation contract and idempotency;
-- allocation by count and volume;
-- policy identity, constraints, feasibility and deviation;
-- functional eligibility / opportunity;
-- live availability;
-- capacity reservations;
-- provider health / quarantine / probing;
-- deterministic ranking;
-- retry / resolve / fallback / defer / reconciliation;
-- time, budgets, deadlines and TTL;
-- duplicate / delayed / out-of-order observations;
-- settlement / return / reversal / economic conflict;
-- facts / lifecycle replay;
-- decision trace / analytics;
-- concurrency and stale-decision behavior.
+`Intent -> Policy -> Opportunity -> Admission -> Allocation -> Optimization -> Atomic Commit -> Provider -> Observation -> Lifecycle/Recovery -> Durable State -> Analytics/API`.
 
-A capability is not complete if only its isolated happy path works while a required interaction is still unmodeled.
+Find and classify:
 
-### Pass C — repository discovery sweep
+- dead production modules;
+- unintegrated optional hooks;
+- duplicate algorithms;
+- alternate provider interfaces;
+- demo code masquerading as core;
+- hardcoded case-irrelevant business trivia.
 
-Search the repository for evidence of unfinished behavior:
+Material findings reopen development or are removed/demoted.
 
-- TODO/FIXME/XXX and temporary comments;
-- `NotImplementedError` and placeholder branches in reachable current-version paths;
-- public/domain methods with no meaningful tests;
-- duplicated recovery/allocation semantics that can drift;
-- human-readable strings parsed as machine semantics;
-- hidden mutable state not represented in facts/replay;
-- stale active-plan or backlog references;
-- assumptions that were accidentally hardened into code.
+### Pass C — financial safety red-team
 
-Not every TODO is a blocker, but every discovered item must be classified before closure.
+Actively attempt counterexamples for:
 
-### Pass D — adversarial/red-team review
-
-Assume the implementation is incomplete and deliberately try to break it.
-
-Construct counterexamples around:
-
-- skewed allocation plus fallback;
-- large indivisible volume;
-- provider outage/recovery and capacity pressure;
+- duplicate economic effects;
+- UNKNOWN followed by cross-provider fallback;
 - duplicate submit during dispatch;
-- UNKNOWN plus concurrent fallback attempts;
-- provider disablement while an old operation is unresolved;
+- stale commit/provider call race;
+- fallback to an already attempted provider;
 - late old-provider success after newer settlement;
-- policy update during concurrent decisions;
-- health quarantine versus allocation pressure;
-- callback/reconciliation races;
-- replay after complex multi-provider histories.
+- provider disablement while unresolved;
+- idempotency TTL expiry;
+- policy changes while work is in flight;
+- return/reversal/conflict histories.
 
-A newly found material defect becomes a regression and returns the version to active implementation.
+### Pass D — policy/allocation/admission review
 
-### Pass E — verification gate
+Challenge:
 
-Run the canonical full suite plus the relevant focused suites from current code. For v0.2 normally:
+- count and volume distribution;
+- large indivisible amounts;
+- opportunity-aware denominator;
+- policy epochs/windows;
+- target tolerance/min/max share semantics;
+- temporary outage and debt/catch-up behavior;
+- concurrent committed primary work;
+- concurrency exposure versus time-based throughput limits;
+- health/quarantine/probing;
+- impossible/static/runtime infeasibility.
+
+### Pass E — optimization integrity
+
+Prove optimization cannot violate higher-priority constraints.
+
+Specifically verify that reliability/cost/latency/priority logic cannot:
+
+- resurrect hard-excluded providers;
+- exceed operational admission;
+- bypass allocation obligations/tolerance;
+- treat pending/UNKNOWN as arbitrary provider failure;
+- use one undocumented weighted score as the complete correctness policy.
+
+### Pass F — durability/restart safety
+
+If durable mode exists, crash/restart the system at adversarial boundaries and prove the new process safely continues unresolved work.
+
+Required checks include:
+
+- ownership restored;
+- operation phase/contract/idempotency restored;
+- policy binding restored;
+- dedup/order state restored;
+- required allocation/admission reservations restored;
+- settlement/reconciliation state restored;
+- no second provider operation becomes legal solely because the process restarted.
+
+Also test truncated/corrupted durable history. Silent fact loss is a closure defect.
+
+A replay projection that looks correct while the working coordinator forgets ownership fails this pass.
+
+### Pass G — provider/application boundary review
+
+If API/webhooks/provider integrations exist, prove:
+
+- raw external input cannot directly assert trusted `safe_to_release` semantics;
+- provider-specific normalization owns raw status mapping;
+- internal backtraces are not exposed as normal API errors;
+- API/dashboard do not implement alternate routing logic;
+- demo providers are clearly labeled and satisfy the canonical provider port.
+
+### Pass H — repository discovery
+
+Search for:
+
+- TODO/FIXME/XXX;
+- `NotImplementedError` in reachable paths;
+- dead public methods;
+- broad exception swallowing;
+- real `Time.now`/`sleep`/global randomness in correctness-sensitive tests/code without explicit reason;
+- Float in money/allocation correctness;
+- ignored warnings;
+- misleading names/claims;
+- stale docs/active plans;
+- generated/random tests without reproducible seeds.
+
+Every finding is classified before closure.
+
+### Pass I — current verification
+
+Run current canonical checks on the exact candidate revision:
 
 - `bundle check`
 - `bundle exec rake test`
@@ -124,70 +164,67 @@ Run the canonical full suite plus the relevant focused suites from current code.
 - `bundle exec rake model`
 - `bundle exec rake concurrency`
 - `bundle exec rake fault`
-- benchmark/static/loadability checks required by the active plan
-- CI evidence when CI exists.
+- `bundle exec rake benchmark`
+- CI on current revision
+- additional crash/load checks required by the active plan.
 
-Never reuse an old run as proof for changed code. Never claim an unavailable check passed.
+Do not reuse old results for changed code.
 
-### Pass F — backlog and blocker audit
+### Pass J — product load/evidence review
 
-Review every `NOW`, P0 and P1 item and every unresolved discovery in the active ExecPlan.
+Any performance or scale claim must match an actual reproducible benchmark/test.
 
-For anything remaining, classify it as:
+If docs say 100k payouts, evidence must actually execute the stated scale in an appropriate non-default load campaign. Do not turn marketing numbers into fake tests.
 
-- required and locally actionable -> continue development;
-- genuinely external-TZ dependent -> blocker/next-version input;
-- optional optimization with no correctness/completeness gap -> later.
+### Pass K — backlog/blocker audit
 
-The absence of the official TZ is not itself a blocker while generic routing logic can still be improved without inventing the external contract.
+Review all NOW/P0/P1 items and active-plan discoveries.
 
-### Pass G — documentation consistency
+Remaining work is only:
 
-Verify that README, AGENTS, ROADMAP, active ExecPlan, specifications, completion/session/workflow rules, backlog, decisions, architecture guidance and testing guidance all describe the same current version and stop conditions.
+- required and locally actionable -> continue;
+- genuinely external -> record blocker;
+- optional and non-blocking -> later.
 
-A stale document that can direct a fresh agent incorrectly is a version-closure defect.
+Unknown TZ is not a blanket blocker.
 
-## 5. No scope shrinking at closure
+### Pass L — documentation consistency
 
-An agent may not make completion easier by silently redefining the active version to match what is already implemented.
+README, AGENTS, ROADMAP, SPEC-004/003/002/001, CURRENT_ARCHITECTURE, TESTING, WORKFLOW, PLANS, SESSION_POLICY, BACKLOG, DECISIONS_CURRENT and active ExecPlan must describe the same current goal and stop rules.
 
-The current Version Goal and mandatory capability scope are defined by `docs/ROADMAP.md` and governing specifications. Narrowing them requires an explicit durable decision justified by authoritative TZ evidence or a deliberate user instruction.
+## 4. No scope shrinking
 
-Do not change `required` to `optional`, move an unfinished P0/P1 item to `LATER`, or rename a missing mechanism as "out of scope" merely to close the version.
+Do not make closure easier by redefining the version around existing code.
 
-## 6. Discovery can reopen a phase
+A required capability may be removed only by direct user instruction, authoritative TZ evidence, or a durable decision proving equivalent behavior through a simpler case-relevant design.
 
-Phases are dependency/organization aids, not sealed boxes.
+## 5. Discovery may reopen any phase
 
-If Phase K/closure discovers that Phase B, D, G or another earlier capability is incomplete, reopen that phase or create a new slice. There is no requirement to preserve a monotonic checklist.
+Phases are organizational, not sealed. A closure finding may reopen an earlier phase or create a new one.
 
-Correct project state is more important than a neat progress table.
-
-## 7. External blocker test
+## 6. External blocker test
 
 `EXTERNALLY_BLOCKED` is valid only if all are true:
 
-1. the missing requirement is necessary for the current version;
-2. it cannot be resolved from repository/runtime/research/ordinary engineering judgment;
-3. proceeding would require inventing authoritative external semantics or unavailable access/service;
-4. no independent required current-version work remains;
+1. the missing capability is required;
+2. it cannot be resolved from current repository/runtime/research/ordinary engineering judgment;
+3. proceeding requires unavailable authoritative semantics/access/service;
+4. no independent required work remains;
 5. the exact blocker and affected exit criterion are recorded.
 
-"We do not have the TZ yet" fails this test for generic policy, lifecycle, safety, capacity, health, replay, analytics and verification work already specified for v0.2.
+## 7. Completion report
 
-## 8. Completion report requirements
+A `VERSION_COMPLETE` report includes:
 
-A `VERSION_COMPLETE` report must include:
+- exact revision;
+- requirement reconciliation;
+- canonical-flow/module inventory result;
+- commands/CI actually run;
+- seeds/traces for generated evidence;
+- concurrency/fault/crash/restart evidence;
+- scale/benchmark evidence for any scale claims;
+- closure findings/regressions;
+- remaining genuine external blockers;
+- documentation consistency result.
 
-- exact commit/revision reviewed;
-- version exit criteria result;
-- specifications/requirements reconciled;
-- full commands actually run and their results;
-- important property/model seeds/traces;
-- concurrency/fault evidence;
-- closure/red-team findings and regressions created;
-- remaining TZ-blocked items;
-- remaining optional later work;
-- documentation reconciliation result.
-
-If this evidence is unavailable, report the narrower verified status instead of saying the project is complete.
+If this evidence does not exist, report the narrower status and continue.

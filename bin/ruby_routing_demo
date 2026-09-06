@@ -1,0 +1,22 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "json"
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
+require "ruby_routing"
+
+demo = RubyRouting::Demo::Scenario.run
+result = demo.fetch(:result)
+analytics = demo.fetch(:service).queries.analytics
+
+puts JSON.pretty_generate(
+  status: result.status,
+  action: result.action,
+  payout_id: result.payout.id,
+  settlement_provider_id: result.payout.settlement_provider_id,
+  attempts: result.payout.attempts.map do |attempt|
+    { provider_id: attempt.provider_id, role: attempt.role, phase: attempt.phase, outcome: attempt.outcome&.status }
+  end,
+  fallback_recovery_count: analytics.fallback_recovery_count,
+  provider_failure_count: analytics.provider_failure_count
+)

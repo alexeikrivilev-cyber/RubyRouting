@@ -67,6 +67,89 @@ class ProjectionReplayTest < Minitest::Test
     assert_equal({ "analytics-transport" => 1 }, analytics.attempt_count_by_payout)
   end
 
+  def test_analytics_distinguishes_fallback_attempt_from_successful_recovery
+    provider_a = TestSupport::Simulator::ScriptedProvider.new(
+      provider_id: "A",
+      steps: [TestSupport::Simulator::Step.safe_failure]
+    )
+    provider_b = TestSupport::Simulator::ScriptedProvider.new(
+      provider_id: "B",
+      steps: [TestSupport::Simulator::Step.terminal]
+    )
+    coordinator = RubyRouting::State::Coordinator.new(opportunities: opportunities("A", "B"))
+    result = RubyRouting::Application::Orchestrator.new(
+      coordinator: coordinator,
+      providers: { "A" => provider_a, "B" => provider_b }
+    ).submit(intent: intent("analytics-fallback-failure"), policy: policy)
+
+    live = RubyRouting::Projections::Analytics.from_facts(coordinator.facts)
+    replay = RubyRouting::Projections::Replay.analytics(coordinator.facts)
+
+    assert_equal :terminal_payout_failure, result.status
+    assert_equal 1, live.fallback_recovery_count
+    assert_equal 0, live.successful_fallback_recovery_count
+    assert_equal 1, live.recovery_attempt_count
+    assert_equal live.to_h, replay.to_h
+  end
+
+  def test_analytics_preserves_fallback_role_across_idempotent_retry
+    provider_a = RubyRouting::ProviderOpportunity.new(provider_id: "A")
+    provider_b = RubyRouting::ProviderOpportunity.new(
+      provider_id: "B",
+      capabilities: RubyRouting::ProviderCapabilities.new(idempotent_retry: true)
+    )
+    coordinator = RubyRouting::State::Coordinator.new(opportunities: [provider_a, provider_b])
+    payout = intent("analytics-fallback-retry")
+
+    primary = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
+    coordinator.mark_attempt_started(primary)
+    coordinator.apply_observation(observation(primary, "fallback-retry-primary-failure", :safe_route_failure))
+
+    fallback = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
+    coordinator.mark_attempt_started(fallback)
+    coordinator.apply_observation(observation(fallback, "fallback-retry-unknown", :unknown, :provider))
+
+    retry_commit = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
+    assert_equal :retry_same, retry_commit.proposal.action
+    coordinator.mark_attempt_started(retry_commit)
+    coordinator.apply_observation(observation(retry_commit, "fallback-retry-success", :success, :provider))
+
+    live = RubyRouting::Projections::Analytics.from_facts(coordinator.facts)
+    replay = RubyRouting::Projections::Replay.analytics(coordinator.facts)
+
+    assert_equal :success, coordinator.payout_snapshot(payout.id).status
+    assert_equal 1, live.fallback_recovery_count
+    assert_equal 1, live.successful_fallback_recovery_count
+    assert_equal 1, live.recovery_attempt_count
+    assert_equal live.to_h, replay.to_h
+  end
+
+  def test_analytics_is_idempotent_for_an_exact_duplicate_observation_fact
+    coordinator = RubyRouting::State::Coordinator.new(
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+    payout = intent("analytics-duplicate-observation")
+    commit = coordinator.prepare_and_commit_decision(intent: payout, policy: one_provider_policy)
+    coordinator.mark_attempt_started(commit)
+    coordinator.apply_observation(observation(commit, "duplicate-observation", :success))
+
+    observation_fact = coordinator.facts.find { |fact| fact.type == :provider_observed }
+    duplicate = RubyRouting::Fact.new(
+      sequence: coordinator.facts.length + 1,
+      type: observation_fact.type,
+      fact_id: "fact:#{coordinator.facts.length + 1}",
+      payout_id: observation_fact.payout_id,
+      payload: observation_fact.payload
+    )
+    analytics = RubyRouting::Projections::Replay.analytics(coordinator.facts)
+    duplicated_analytics = RubyRouting::Projections::Replay.analytics(
+      coordinator.facts + [duplicate]
+    )
+
+    assert_equal 1, analytics.first_attempt_success_count
+    assert_equal analytics.to_h, duplicated_analytics.to_h
+  end
+
   def test_analytics_projects_age_for_pending_and_unknown_at_explicit_as_of
     clock = TestSupport::ControlledClock.new
     coordinator = RubyRouting::State::Coordinator.new(
@@ -114,7 +197,9 @@ class ProjectionReplayTest < Minitest::Test
     replayed = coordinator.lifecycle_projection.payout(payout.id)
 
     assert_equal :defer, result.proposal.action
+    assert_equal :deferred, result.payout.status
     assert_equal payout_signature(result.payout), payout_signature(replayed)
+    assert_equal :deferred, replayed.status
     assert_equal result.payout.policy_epoch, replayed.policy_epoch
     assert_equal result.payout.policy_fingerprint, replayed.policy_fingerprint
   end

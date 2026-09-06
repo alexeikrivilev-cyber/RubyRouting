@@ -7,7 +7,7 @@ module RubyRouting
 
       def initialize(payout:, action:)
         @payout = payout
-        @action = action.to_sym
+        @action = action.is_a?(Symbol) ? action : action.to_s.freeze
         freeze
       end
 
@@ -17,15 +17,21 @@ module RubyRouting
     end
 
     class Orchestrator
-      def initialize(coordinator:, providers:)
+      attr_reader :policy_registry
+
+      def initialize(coordinator:, providers:, policy_registry: nil)
         unless coordinator.is_a?(RubyRouting::State::Coordinator)
           raise ArgumentError, "coordinator must be State::Coordinator"
         end
         unless providers.is_a?(Hash)
           raise ArgumentError, "providers must be a Hash"
         end
+        if policy_registry && !policy_registry.is_a?(RubyRouting::PolicyRegistry)
+          raise ArgumentError, "policy_registry must be PolicyRegistry or nil"
+        end
 
         @coordinator = coordinator
+        @policy_registry = policy_registry
         @providers = providers.each_with_object({}) do |(id, provider), copy|
           normalized_id = id.to_s.strip
           raise ArgumentError, "provider id must be non-empty" if normalized_id.empty?
@@ -39,13 +45,18 @@ module RubyRouting
         end.freeze
       end
 
-      def submit(intent:, policy:)
+      def submit(intent:, policy: nil, scope: :default)
+        resolved_policy = policy || @policy_registry&.find_for_intent(intent, scope: scope)
+        unless resolved_policy.is_a?(RubyRouting::RoutingPolicy)
+          raise ArgumentError, "policy must be provided or resolvable from policy_registry"
+        end
+
         # Each money-moving operation and each resolution/retry interaction can
         # consume one loop turn. Keep the guard derived from both independent
         # budgets so a deliberately larger resolution budget cannot be cut off
         # by the operation budget.
-        max_steps = policy.recovery.max_operations +
-          policy.recovery.max_resolution_interactions + 2
+        max_steps = resolved_policy.recovery.max_operations +
+          resolved_policy.recovery.max_resolution_interactions + 2
         steps = 0
 
         loop do
@@ -57,7 +68,7 @@ module RubyRouting
 
           commit = @coordinator.prepare_and_commit_decision(
             intent: intent,
-            policy: policy,
+            policy: resolved_policy,
             available_provider_ids: @providers.keys
           )
           proposal = commit.proposal
@@ -90,9 +101,34 @@ module RubyRouting
         @coordinator.record_reversal(**attributes)
       end
 
-      def resume(payout_id:, policy:)
+      def resume(payout_id:, policy: nil, scope: :default)
         payout = @coordinator.payout_snapshot(payout_id)
-        submit(intent: payout.intent, policy: policy)
+        resolved_policy = policy || @policy_registry&.find_for_intent(payout.intent, scope: scope) ||
+          @coordinator.policy_for(payout_id)
+        if (resumed_operation = @coordinator.resume_operation(payout_id))
+          unless @providers.key?(resumed_operation.proposal.provider_id)
+            return RouteResult.new(payout: resumed_operation.payout, action: :defer)
+          end
+
+          observation = if resumed_operation.proposal.resolution?
+            resolve(resumed_operation, payout.intent)
+          else
+            initiate(resumed_operation)
+          end
+          return RouteResult.new(payout: resumed_operation.payout, action: :defer) unless observation
+
+          application = @coordinator.apply_observation(observation)
+          return RouteResult.new(payout: application.payout, action: application.next_action) unless application.next_action == :reroute
+
+          return submit(intent: payout.intent, policy: resolved_policy, scope: scope)
+        end
+
+        payout = @coordinator.payout_snapshot(payout_id)
+        if payout.ownership && !@providers.key?(payout.ownership.provider_id)
+          return RouteResult.new(payout: payout, action: :defer)
+        end
+
+        submit(intent: payout.intent, policy: resolved_policy, scope: scope)
       end
 
       alias advance resume
@@ -120,13 +156,6 @@ module RubyRouting
           classify_transport(provider.initiate(commit.request), commit.request)
         rescue RubyRouting::ProviderTransportError => error
           observation_from_transport(commit.request, error)
-        rescue NotImplementedError, StandardError => error
-          observation_from_transport(
-            commit.request,
-            RubyRouting::ProviderTransportResult.ambiguous_after_possible_send(
-              message: "unclassified provider adapter failure: #{error.class}"
-            )
-          )
         end
       end
 
@@ -146,13 +175,6 @@ module RubyRouting
           classify_transport(provider.resolve(request), request)
         rescue RubyRouting::ProviderTransportError => error
           observation_from_transport(request, error)
-        rescue NotImplementedError, StandardError => error
-          observation_from_transport(
-            request,
-            RubyRouting::ProviderTransportResult.ambiguous_after_possible_send(
-              message: "unclassified provider adapter failure: #{error.class}"
-            )
-          )
         end
       end
 

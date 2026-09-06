@@ -6,19 +6,32 @@ module RubyRouting
     ROLES = %i[primary recovery resolution].freeze
 
     attr_reader :action, :provider_id, :operation_id, :attempt_id, :role, :policy_epoch,
-                :reasons, :reason_codes, :allocation_decision
+                :reasons, :reason_codes, :allocation_decision, :runtime_feasibility,
+                :deviation_cause, :deviation_recoverability
 
     def initialize(action:, provider_id: nil, operation_id: nil, attempt_id: nil,
-                   role:, policy_epoch:, reasons: [], reason_codes: [], allocation_decision: nil)
+                   role:, policy_epoch:, reasons: [], reason_codes: [], allocation_decision: nil,
+                   runtime_feasibility: nil, deviation_cause: nil, deviation_recoverability: nil)
       @action = normalize(action, ACTIONS, "decision action")
-      @provider_id = provider_id&.to_s&.freeze
-      @operation_id = operation_id&.to_s&.freeze
-      @attempt_id = attempt_id&.to_s&.freeze
+      @provider_id = normalize_optional_id(provider_id, "provider id")
+      @operation_id = normalize_optional_id(operation_id, "operation id")
+      @attempt_id = normalize_optional_id(attempt_id, "attempt id")
       @role = normalize(role, ROLES, "decision role")
-      @policy_epoch = policy_epoch.to_s.freeze
-      @reasons = reasons.map(&:to_s).map(&:freeze).freeze
-      @reason_codes = reason_codes.map(&:to_sym).freeze
+      @policy_epoch = normalize_id(policy_epoch, "policy epoch")
+      @reasons = RubyRouting::Collection.to_array(reasons, "decision reasons").map { |reason| reason.to_s.freeze }.freeze
+      @reason_codes = RubyRouting::Collection.to_array(reason_codes, "decision reason codes").map do |reason_code|
+        reason_code.is_a?(Symbol) ? reason_code : reason_code.to_s.freeze
+      end.freeze
+      unless allocation_decision.nil? || allocation_decision.is_a?(RubyRouting::Routing::AllocationDecision)
+        raise ArgumentError, "allocation_decision must be AllocationDecision or nil"
+      end
       @allocation_decision = allocation_decision
+      unless runtime_feasibility.nil? || runtime_feasibility.is_a?(RubyRouting::Routing::RuntimeFeasibility)
+        raise ArgumentError, "runtime_feasibility must be RuntimeFeasibility or nil"
+      end
+      @runtime_feasibility = runtime_feasibility
+      @deviation_cause = normalize_optional_deviation_cause(deviation_cause)
+      @deviation_recoverability = normalize_optional_recoverability(deviation_recoverability)
       validate_shape!
       freeze
     end
@@ -45,7 +58,10 @@ module RubyRouting
         policy_epoch: policy_epoch,
         reasons: reasons,
         reason_codes: reason_codes,
-        allocation_decision: allocation_decision
+        allocation_decision: allocation_decision,
+        runtime_feasibility: runtime_feasibility,
+        deviation_cause: deviation_cause,
+        deviation_recoverability: deviation_recoverability
       )
     end
 
@@ -55,24 +71,70 @@ module RubyRouting
       if %i[assign retry_same].include?(action) && provider_id.nil?
         raise ArgumentError, "assignment decisions require a provider id"
       end
-      if action == :resolve && (provider_id.nil? || operation_id.nil? || attempt_id.nil?)
+      if %i[resolve retry_same].include?(action) &&
+         (provider_id.nil? || operation_id.nil? || attempt_id.nil?)
         raise ArgumentError, "resolution decisions require owner identifiers"
+      end
+      if action == :assign && !%i[primary recovery].include?(role)
+        raise ArgumentError, "assignment decisions require primary or recovery role"
+      end
+      if %i[resolve retry_same].include?(action) && role != :resolution
+        raise ArgumentError, "resolution decisions require resolution role"
+      end
+      if action == :defer && !%i[recovery resolution].include?(role)
+        raise ArgumentError, "defer decisions require recovery or resolution role"
+      end
+      if %i[already_final terminate].include?(action) && role != :resolution
+        raise ArgumentError, "terminal control decisions require resolution role"
+      end
+      if %i[defer terminate already_final].include?(action) &&
+         [provider_id, operation_id, attempt_id].any?
+        raise ArgumentError, "non-operation decisions cannot carry operation identifiers"
       end
     end
 
-    def normalize(value, allowed, label)
-      normalized = value.to_sym
-      raise ArgumentError, "unsupported #{label}" unless allowed.include?(normalized)
+    def normalize_optional_id(value, label)
+      return nil if value.nil?
 
-      normalized
-    rescue NoMethodError
-      raise ArgumentError, "unsupported #{label}"
+      normalize_id(value, label)
+    end
+
+    def normalize_id(value, label)
+      normalized = value.to_s.strip
+      raise ArgumentError, "#{label} must be non-empty" if normalized.empty?
+
+      normalized.freeze
+    end
+
+    def normalize(value, allowed, label)
+      RubyRouting::Enum.normalize(value, allowed, label)
+    end
+
+    def normalize_optional_deviation_cause(value)
+      return nil if value.nil?
+
+      RubyRouting::Enum.normalize(
+        value,
+        RubyRouting::Routing::Deviation::UNAVOIDABLE_CAUSES + RubyRouting::Routing::Deviation::RECOVERABLE_CAUSES,
+        "deviation cause"
+      )
+    end
+
+    def normalize_optional_recoverability(value)
+      return nil if value.nil?
+
+      RubyRouting::Enum.normalize(
+        value,
+        RubyRouting::Routing::Deviation::RECOVERABILITY,
+        "deviation recoverability"
+      )
     end
   end
 
   class Fact
     TYPES = %i[
       provider_opportunity_registered
+      provider_opportunity_removed
       intent_registered
       policy_registered
       opportunity_evaluated
@@ -94,7 +156,10 @@ module RubyRouting
       health_state_changed
       health_exposure_reserved
       health_exposure_released
+      quality_signal
       reconciliation_blocked
+      throughput_consumed
+      provider_runtime_changed
     ].freeze
 
     attr_reader :sequence, :type, :fact_id, :payout_id, :payload
@@ -114,12 +179,7 @@ module RubyRouting
     private
 
     def normalize_type(value)
-      normalized = value.to_sym
-      raise ArgumentError, "unsupported fact type" unless TYPES.include?(normalized)
-
-      normalized
-    rescue NoMethodError
-      raise ArgumentError, "unsupported fact type"
+      RubyRouting::Enum.normalize(value, TYPES, "fact type")
     end
 
     def normalize_id(value, label)
@@ -133,14 +193,19 @@ module RubyRouting
       case value
       when Hash
         value.each_with_object({}) do |(key, nested), copy|
-          copy[key.freeze] = freeze_nested(nested)
+          copy[freeze_nested(key)] = freeze_nested(nested)
         end.freeze
       when Array
         value.map { |nested| freeze_nested(nested) }.freeze
       when String
         value.dup.freeze
       else
-        value.freeze
+        if value.respond_to?(:each)
+          RubyRouting::Collection.to_array(value, "fact nested collection")
+            .map { |nested| freeze_nested(nested) }.freeze
+        else
+          value.freeze
+        end
       end
     end
   end

@@ -1,271 +1,152 @@
 # Goal Mode + SpecOps Workflow
 
-## Purpose
+Current Version Goal: **v0.3 — Product Convergence & Full Routing Product**.
 
-This document defines how a coding agent executes RubyRouting work with high autonomy and strong financial correctness.
-
-Current Version Goal: **v0.2 — Pre-TZ Comprehensive Routing Core**.
-
-The official TZ is not available yet. Development continues on the complete generic routing logic defined by SPEC-001/002/003. External API/persistence/judge contracts remain replaceable.
-
-## 1. Operating loop
-
-For non-trivial work:
+## Operating loop
 
 `Discover -> Specify -> Plan -> Implement -> Verify -> Review -> Reconcile -> Discover next gap`
 
-The final discovery step is mandatory. A verified slice does not imply that the surrounding phase/version is complete.
+The final discovery step is mandatory.
 
 ### Discover
 
-- Read `AGENTS.md`, `docs/ROADMAP.md`, `docs/COMPLETION_POLICY.md` and the active ExecPlan for project-wide work.
-- Read the smallest governing SPEC-001/002/003 sections for the change.
-- Inspect actual code/tests/reference/simulator before proposing structure.
-- Identify behavior, invariants, concurrency boundaries and existing assumptions.
-- Inspect current backlog/discoveries for interactions with the slice.
-- Use official/current external documentation only when behavior depends on a versioned external contract/library.
+For project-wide work read the current goal/plan/spec/architecture first. Inspect actual code and tests before deciding that a capability exists or is missing.
+
+Inventory which modules are:
+
+- canonical core;
+- integrated application/infrastructure;
+- test/demo support;
+- experimental/dead/misleading.
+
+Do not preserve experimental code merely because deleting it feels destructive.
 
 ### Specify
 
-Before behavior-changing code, ensure desired behavior is explicit and testable.
+Behavior changes must map to SPEC-004 or inherited requirements.
 
-- Durable domain rule -> update the governing specification if needed.
-- Reversible low-impact ambiguity -> choose a conservative typed/configurable assumption.
-- High-impact ambiguity involving money safety or authoritative external semantics -> investigate/escalate rather than inventing a contract.
+When an official value is unknown, prefer a reversible typed/configurable model. Do not invent provider-specific facts or case-irrelevant heuristics.
 
-SPEC-003 prevents scope shrink: unknown official defaults are normally represented as replaceable configuration, not omitted capability families.
+Safety ambiguity is resolved conservatively.
 
 ### Plan
 
-Small changes may use a short internal checklist. Complex/risky work updates the active ExecPlan.
+Use `docs/exec-plans/active/product-convergence.md` for substantial work.
 
-Current plan:
-
-`docs/exec-plans/active/pre-tz-comprehensive-core.md`
-
-Use `docs/PLANS.md` for plan protocol.
-
-A useful plan records:
-
-- Version/Phase/Slice Goal;
-- governing requirements;
-- acceptance/invariants;
-- verification layers;
-- current-state evidence;
-- implementation path;
-- discoveries/decisions;
-- rolling next actions;
-- blockers/risks.
-
-A plan is not allowed to make completion easier by narrowing the Version Goal around existing code.
+Plans are outcome-based and may reopen phases. They do not define completion by exhausting a checklist.
 
 ### Implement
 
-- Work in the smallest coherent vertical slice that produces observable behavior.
-- Fix P0 correctness before “smart” optimization.
-- Keep deterministic financial logic independent from provider transport/framework concerns.
-- Normalize provider-specific semantics at the boundary.
-- Keep all executable domain/reference/simulator/test logic Ruby-only.
-- Make time/random/provider I/O deterministic where domain behavior depends on them.
-- Add internal structure only when it protects an invariant, improves replay/testability or removes meaningful duplication.
-- Do not add framework/database/queue/microservice/ML infrastructure without current evidence/TZ need.
+Work in coherent vertical slices.
+
+Rules:
+
+- preserve financial invariants first;
+- integrate features through the canonical routing pipeline;
+- keep provider-specific semantics at provider adapters;
+- keep provider I/O outside atomic state transaction;
+- use exact Ruby arithmetic for money/allocation;
+- use controlled time/randomness in correctness-sensitive code/tests;
+- decompose internal responsibilities only when it improves invariant ownership;
+- remove duplicate/misleading paths after replacement is proven;
+- do not add new speculative infrastructure while existing product layers are incoherent.
 
 ### Verify
 
-Verification proves behavior, not activity.
+Use the relevant layers from `docs/TESTING.md`:
 
-Use relevant layers from `docs/TESTING.md` and SPEC-003:
-
-- unit/value tests;
-- deterministic acceptance/regressions;
-- independent oracle comparison;
-- property/invariant tests;
-- state-machine/model histories;
-- controlled concurrency/interleavings;
-- provider/transport fault simulation;
-- duplicate/delayed/out-of-order event scenarios;
+- unit/value;
+- deterministic acceptance/regression;
+- oracle/property;
+- model histories;
+- controlled concurrency;
+- seeded provider/fault scenarios;
 - replay equivalence;
-- stress/benchmarks after correctness;
-- fault/mutation seeding where valuable.
+- crash/restart tests;
+- corruption tests for durable state;
+- load/benchmark after correctness.
 
-A focused green test proves its slice only. Run the smallest broader suite capable of exposing interaction regressions before marking a slice/phase verified.
-
-Never claim an old or unavailable check passed.
+Every material randomized failure must be reproducible by seed/trace.
 
 ### Review
 
-Review changed code as a skeptical maintainer:
+Review as a skeptical payout-platform maintainer:
 
-- Does it preserve one economic intent / ownership safety?
-- Does it accidentally conflate primary allocation, recovery and settlement?
-- Can hard eligibility/capacity/health be bypassed by ranking/allocation pressure?
-- Are transport ambiguity and provider-operation semantics explicit?
-- Is hidden mutable state bypassing facts/replay?
-- Are event ordering rules actually justified?
-- Are duplicate/late/concurrent paths covered?
-- Is a provider/TZ assumption leaking into core behavior?
-- Did production/reference implementations accidentally share the same algorithm?
-- Did the change introduce unnecessary abstraction/infrastructure?
-
-Fix material findings before advancing.
+- Can this create a second monetary effect?
+- Can UNKNOWN release/switch accidentally?
+- Did we mix primary allocation, recovery and settlement?
+- Can optimization bypass eligibility/admission/allocation obligations?
+- Did a provider-specific assumption leak into generic core?
+- Can restart lose ownership or idempotency state?
+- Does raw external input get to declare trusted financial semantics?
+- Is a module actually integrated or merely required/instantiated in tests?
+- Is the claimed scale/product maturity supported by evidence?
+- Did we add complexity unrelated to the case?
 
 ### Reconcile
 
-After a slice:
+After each slice:
 
-- update active ExecPlan progress/evidence/discoveries;
-- update specs/decisions only for real durable behavior;
-- update backlog for discovered work outside the current slice but inside/later version;
-- preserve deterministic regressions/seeds;
-- ensure docs are not made stale by the change;
-- select the next required slice immediately.
+- update active ExecPlan;
+- update SPEC/decisions only for durable behavior;
+- update backlog for discoveries;
+- remove superseded code paths;
+- preserve regressions/seeds;
+- confirm docs still point to the current version;
+- choose the next required slice immediately.
 
-Do not stop simply because the originally selected task is done if the current Version Goal still has locally actionable work.
+## Product-convergence sequencing
 
-## 2. Status and completion discipline
+Default order:
 
-Use `docs/COMPLETION_POLICY.md` status vocabulary.
+1. clean coherent baseline;
+2. coordinator/internal responsibility convergence;
+3. policy/allocation semantics;
+4. admission controller;
+5. constrained smart optimization;
+6. provider lifecycle/reconciliation;
+7. durable restart safety;
+8. analytics/audit;
+9. application/API/demo;
+10. deep verification/performance;
+11. closure/red-team.
 
-Normal progression:
+Reorder only when dependency evidence justifies it.
 
-`SLICE_IMPLEMENTED -> SLICE_VERIFIED -> PHASE_VERIFIED -> ... -> VERSION_CANDIDATE -> closure audit -> VERSION_COMPLETE`
+## No fake progress
 
-`VERSION_CANDIDATE` is not a ceremonial label. It triggers a fresh repository-wide attempt to disprove completeness.
+Do not report product progress through names or marketing claims.
 
-The agent must not use “all done”, “nothing left”, or “wait for TZ” before closure protocol passes.
+Examples of forbidden substitutions:
 
-Green tests/checklists are necessary evidence but not proof that:
+- calling an always-success simulator a real PSP adapter;
+- calling weighted-sum ranking Pareto optimization;
+- calling replay projections crash recovery;
+- calling a 300-payout test a 100k battle test;
+- calling a generic webhook trusted because the request includes `safe_to_release`.
 
-- all normative behavior exists;
-- interactions are complete;
-- no untested design flaw exists;
-- no current-version backlog item remains;
-- docs match code.
+Fix the semantics or narrow the name/claim.
 
-## 3. Mandatory closure discovery
+## Autonomy
 
-When planned phases appear complete, perform the passes from `docs/COMPLETION_POLICY.md`.
+Proceed autonomously for reversible internal design, refactoring, tests, reference models, small dependencies and configuration defaults that preserve governing behavior.
 
-At minimum:
+Escalate only when the choice truly depends on authoritative external semantics and no generic reversible approach is valid.
 
-1. reconcile source against SPEC-001/002/003 requirement by requirement;
-2. inspect every mandatory SPEC-003 capability family and interaction;
-3. search repository for TODO/FIXME/NotImplemented/placeholders/prose-parsing/duplicate semantics/untested public behavior;
-4. perform deliberate adversarial counterexamples;
-5. run current full verification;
-6. review every NOW/P0/P1 item;
-7. classify remaining work as locally actionable, true TZ-blocked or optional later;
-8. audit documentation consistency.
+## Anti-loop
 
-Any material locally solvable finding reopens development. Phase checkboxes may move backwards or gain new slices.
+After two similar failures change tactic. After three materially different failures reduce to a minimal reproducer and re-plan.
 
-## 4. Goal Mode autonomy
+Do not optimize completion by weakening requirements.
 
-Proceed autonomously when choices are reversible and preserve governing semantics, including:
+## Official TZ transition
 
-- local Ruby organization;
-- tests/reference/simulator design;
-- internal refactors that clarify invariant ownership;
-- explicit conservative defaults for generic policy/health/budget configuration;
-- standard-library/small dependency choices with low runtime risk;
-- measured performance improvements preserving behavior.
+When the TZ arrives:
 
-Escalate only when proceeding would choose authoritative product semantics or create an irreversible external contract.
-
-The unknown official TZ does not require escalation for generic capabilities already defined by SPEC-003.
-
-## 5. Anti-loop protocol
-
-### No identical retries without changed state
-
-Repeat an action only after a meaningful fix/config/state change or to verify reproducibility.
-
-### Change tactic after two similar failures
-
-Reassess evidence/hypothesis/design instead of patching symptoms.
-
-### Reduce after three distinct failures
-
-Create the smallest reproducer, separate facts from assumptions, inspect authoritative evidence and choose a simpler route or document a real blocker.
-
-### Prevent local fixation
-
-Do not optimize style/one function while higher-priority Version Goal gaps remain.
-
-### Do not optimize completion
-
-Never respond to a difficult remaining requirement by weakening the requirement, moving it to `LATER`, or redefining the version around current implementation.
-
-## 6. Full pre-TZ development rule
-
-Before TZ, implement all mandatory SPEC-003 domain capability families.
-
-Examples of unknowns that should become configuration rather than omissions:
-
-- allocation window/tolerance;
-- provider capacity limits;
-- retry/switch/resolution budgets;
-- health thresholds/cooldowns;
-- provider priority/cost/latency inputs;
-- timeouts/TTL where provider contract supports them.
-
-Keep final API/storage/provider payload representation unfixed.
-
-This is the intended balance:
-
-**complete routing logic; minimal speculative infrastructure.**
-
-## 7. Scope control
-
-Add structure when earned by current behavior/invariants/testability/measurement.
-
-Do not add by default:
-
-- Rails/Sinatra/Hanami;
-- production DB/ORM;
-- queue/event bus/background jobs;
-- microservices;
-- distributed locks;
-- final public API/UI;
-- live vendor SDKs;
-- custom observability platform;
-- ML/RL/bandits.
-
-## 8. Backlog protocol
-
-`docs/BACKLOG.md` is durable priority state.
-
-- `NOW` / P0 / P1: must be reconciled before v0.2 closure unless explicitly superseded.
-- `BLOCKED`: genuinely official-TZ-specific unknowns.
-- `NEXT`: post-TZ integration.
-- `LATER`: optional optimization/evidence-driven work.
-
-An agent may not move a current required item to `LATER` solely to close the version.
-
-## 9. Official TZ transition
-
-When the official TZ arrives:
-
-1. read it fully;
-2. move to roadmap v0.3;
-3. classify SPEC-001/002/003 as `CONFIRMED/CHANGED/REMOVED/NEW/AMBIGUOUS`;
-4. update reference/oracle/tests with semantic changes before or alongside production code;
-5. adapt the core;
-6. choose only now-justified API/framework/persistence/provider architecture;
-7. turn official load/scoring constraints into executable gates.
-
-Do not discard the v0.2 core unless authoritative requirements genuinely invalidate it.
-
-## 10. Evidence hierarchy
-
-When uncertain prefer:
-
-1. direct current user instruction;
-2. official TZ/contracts when available;
-3. SPEC-003/002/001 and durable repository decisions;
-4. executable reference/tests/current runtime evidence;
-5. official language/provider/library documentation;
-6. established engineering evidence;
-7. assumptions/heuristics.
-
-A heuristic never overrides a financial invariant or authoritative contract.
+1. fully read it;
+2. create v0.4 reconciliation;
+3. classify current behavior `CONFIRMED/CHANGED/REMOVED/NEW/AMBIGUOUS`;
+4. update spec/tests/reference behavior coherently;
+5. adapt the product;
+6. implement only TZ-justified external integrations/limits;
+7. preserve the mature core wherever compatible.
