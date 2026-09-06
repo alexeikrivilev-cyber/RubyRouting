@@ -5,6 +5,28 @@ module RubyRouting
     # Owns append-only fact identity and delivery while the coordinator owns
     # synchronization and the mutable projections built from those facts.
     class FactStore
+      FactPage = Data.define(:facts, :offset, :limit, :total, :next_offset) do
+        def initialize(facts:, offset:, limit:, total:, next_offset:)
+          super(
+            facts: facts.freeze,
+            offset: offset,
+            limit: limit,
+            total: total,
+            next_offset: next_offset
+          )
+        end
+
+        def to_h
+          {
+            facts: facts,
+            offset: offset,
+            limit: limit,
+            total: total,
+            next_offset: next_offset
+          }.freeze
+        end
+      end
+
       def initialize(journal: nil, facts: nil)
         @journal = journal
         source = facts || (journal.respond_to?(:facts) ? journal.facts : [])
@@ -16,6 +38,9 @@ module RubyRouting
         end
 
         @facts = normalized_source.dup
+        @facts_by_payout_id = Hash.new { |index, payout_id| index[payout_id] = [] }
+        @facts_by_type = Hash.new { |index, type| index[type] = [] }
+        @facts.each { |fact| index_fact(fact) }
         @sequence = @facts.last&.sequence || 0
         @pending = nil
         @journal_unusable = false
@@ -80,7 +105,67 @@ module RubyRouting
         (@facts + (@pending || [])).dup.freeze
       end
 
+      def query(payout_id: nil, type: nil)
+        matching = matching_facts(payout_id: payout_id, type: type)
+        matching.dup.freeze
+      end
+
+      def page(payout_id: nil, type: nil, offset:, limit:)
+        validate_page_arguments!(offset: offset, limit: limit)
+        matching = matching_facts(payout_id: payout_id, type: type)
+        page = matching.slice(offset, limit) || []
+        next_offset = offset + limit if offset + page.length < matching.length
+        FactPage.new(
+          facts: page,
+          offset: offset,
+          limit: limit,
+          total: matching.length,
+          next_offset: next_offset
+        )
+      end
+
       private
+
+      def matching_facts(payout_id:, type:)
+        candidates = indexed_candidates(payout_id: payout_id, type: type)
+        pending = @pending || []
+        return candidates if pending.empty?
+
+        (candidates + pending.select do |fact|
+          (payout_id.nil? || fact.payout_id == payout_id) &&
+            (type.nil? || fact.type == type)
+        end).freeze
+      end
+
+      def index_fact(fact)
+        @facts_by_payout_id[fact.payout_id] << fact
+        @facts_by_type[fact.type] << fact
+      end
+
+      def indexed_candidates(payout_id:, type:)
+        return @facts if payout_id.nil? && type.nil?
+
+        if payout_id && type
+          payout_facts = @facts_by_payout_id.fetch(payout_id, [])
+          type_facts = @facts_by_type.fetch(type, [])
+          return payout_facts.select { |fact| fact.type == type } if payout_facts.length <= type_facts.length
+
+          return type_facts.select { |fact| fact.payout_id == payout_id }
+        end
+
+        return @facts_by_payout_id.fetch(payout_id, []) if payout_id
+
+        @facts_by_type.fetch(type, [])
+      end
+
+      def validate_page_arguments!(offset:, limit:)
+        unless offset.is_a?(Integer) && offset >= 0
+          raise ArgumentError, "fact page offset must be a non-negative Integer"
+        end
+        unless limit.is_a?(Integer) && limit.positive?
+          raise ArgumentError, "fact page limit must be a positive Integer"
+        end
+      end
 
       def validate_facts!(facts)
         facts.each_with_index do |fact, index|
@@ -123,6 +208,7 @@ module RubyRouting
 
       def publish(facts)
         @facts.concat(facts)
+        facts.each { |fact| index_fact(fact) }
         @sequence = @facts.last&.sequence || 0
       end
 

@@ -60,6 +60,8 @@ class CoordinatorSafetyTest < Minitest::Test
     second = coordinator.prepare_and_commit_decision(intent: intent, policy: policy)
 
     assert_equal :recovery, second.proposal.role
+    assert_includes second.proposal.reason_codes, :recovery_selection
+    assert_equal "selected by explicit recovery allocation authority", second.proposal.reasons.first
     assert_equal({ "A" => 1 }, coordinator.allocation_snapshot(policy: policy).measures)
     assert_equal [[:primary, "A"], [:recovery, "B"]], coordinator.facts
       .select { |fact| fact.type == :allocation_committed }

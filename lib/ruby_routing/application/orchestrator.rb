@@ -46,7 +46,7 @@ module RubyRouting
       end
 
       def submit(intent:, policy: nil, scope: :default)
-        resolved_policy = policy || @policy_registry&.find_for_intent(intent, scope: scope)
+        resolved_policy = policy || resolve_policy_for(intent, scope: scope)
         unless resolved_policy.is_a?(RubyRouting::RoutingPolicy)
           raise ArgumentError, "policy must be provided or resolvable from policy_registry"
         end
@@ -79,7 +79,7 @@ module RubyRouting
             observation = initiate(commit)
             next unless observation
           when :resolve
-            observation = resolve(commit, intent)
+            observation = resolve(commit)
             next unless observation
           else
             raise ArgumentError, "unsupported orchestrator action #{proposal.action.inspect}"
@@ -103,15 +103,15 @@ module RubyRouting
 
       def resume(payout_id:, policy: nil, scope: :default)
         payout = @coordinator.payout_snapshot(payout_id)
-        resolved_policy = policy || @policy_registry&.find_for_intent(payout.intent, scope: scope) ||
-          @coordinator.policy_for(payout_id)
+        resolved_policy = policy || @coordinator.policy_for(payout_id) ||
+          resolve_policy_for(payout.intent, scope: scope)
         if (resumed_operation = @coordinator.resume_operation(payout_id))
           unless @providers.key?(resumed_operation.proposal.provider_id)
             return RouteResult.new(payout: resumed_operation.payout, action: :defer)
           end
 
           observation = if resumed_operation.proposal.resolution?
-            resolve(resumed_operation, payout.intent)
+            resolve(resumed_operation)
           else
             initiate(resumed_operation)
           end
@@ -139,6 +139,25 @@ module RubyRouting
 
       private
 
+      def resolve_policy_for(intent, scope:)
+        return nil unless @policy_registry
+
+        resolution = @policy_registry.resolve_for_intent(intent, scope: scope)
+        return resolution.policy if resolution.matched?
+
+        error_class = if resolution.ambiguous?
+          RubyRouting::AmbiguousPolicyError
+        else
+          RubyRouting::NoMatchingPolicyError
+        end
+        message = if resolution.ambiguous?
+          "ambiguous policy resolution for scope #{resolution.scope.inspect}"
+        else
+          "no policy matches payout route for scope #{resolution.scope.inspect}"
+        end
+        raise error_class.new(message, resolution: resolution)
+      end
+
       def executable_provider_method?(provider, method_name)
         return false unless provider.respond_to?(method_name)
 
@@ -152,30 +171,26 @@ module RubyRouting
           raise ArgumentError, "no adapter configured for #{commit.proposal.provider_id}"
         end
         return nil unless @coordinator.mark_attempt_started(commit)
-        begin
-          classify_transport(provider.initiate(commit.request), commit.request)
-        rescue RubyRouting::ProviderTransportError => error
-          observation_from_transport(commit.request, error)
-        end
+        invoke_provider(provider, :initiate, commit)
       end
 
-      def resolve(commit, intent)
+      def resolve(commit)
         provider = @providers.fetch(commit.proposal.provider_id) do
           raise ArgumentError, "no adapter configured for #{commit.proposal.provider_id}"
         end
-        request = RubyRouting::ProviderOperationRequest.new(
-          payout_id: intent.id,
-          provider_id: commit.proposal.provider_id,
-          operation_id: commit.proposal.operation_id,
-          attempt_id: commit.proposal.attempt_id,
-          money: intent.money
-        )
         return nil unless @coordinator.mark_resolution_started(commit)
-        begin
-          classify_transport(provider.resolve(request), request)
+        invoke_provider(provider, :resolve, commit)
+      end
+
+      def invoke_provider(provider, method_name, commit)
+        started_monotonic_at = @coordinator.current_monotonic
+        observation = begin
+          classify_transport(provider.public_send(method_name, commit.request), commit.request)
         rescue RubyRouting::ProviderTransportError => error
-          observation_from_transport(request, error)
+          observation_from_transport(commit.request, error)
         end
+        finished_monotonic_at = @coordinator.current_monotonic
+        observation.with_interaction_duration(finished_monotonic_at - started_monotonic_at)
       end
 
       def classify_transport(result, request)

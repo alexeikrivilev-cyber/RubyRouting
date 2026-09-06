@@ -15,15 +15,25 @@ module RubyRouting
       freeze
     end
 
+    # A payout operation consumes one concurrent exposure unit. `max_count`
+    # remains accepted as a durable/backward-compatible cap, but it is not a
+    # second counter: the effective in-flight limit is the stricter configured
+    # bound. Time-window counts belong to ThroughputBudget.
+    def concurrent_limit
+      [max_slots, max_count].compact.min
+    end
+
     def constrained?
-      !max_slots.nil? || !max_count.nil? || !max_amount_minor.nil?
+      !concurrent_limit.nil? || !max_amount_minor.nil?
     end
 
     def allows?(money, used_slots:, used_count:, used_amount_minor:)
       return false unless money.is_a?(RubyRouting::Money)
       return false if currency && money.currency != currency
-      return false if max_slots && used_slots >= max_slots
-      return false if max_count && used_count >= max_count
+      # Both public snapshot names are retained for durable compatibility, but
+      # they must describe one canonical in-flight exposure value.
+      return false unless used_slots == used_count
+      return false if concurrent_limit && used_slots >= concurrent_limit
       return false if max_amount_minor && used_amount_minor + money.amount_minor > max_amount_minor
 
       true
@@ -135,14 +145,16 @@ module RubyRouting
                 :capabilities, :exclusion_reason, :supported_currencies,
                 :minimum_amount_minor, :maximum_amount_minor,
                 :required_context_labels, :enabled, :capacity, :health_available,
-                :throughput, :throughput_available
+                :throughput, :throughput_available, :route_capabilities
 
     def initialize(provider_id:, functional_eligible: true, available: true,
                    capacity_available: true, capabilities: ProviderCapabilities.new,
                    exclusion_reason: nil, supported_currencies: nil,
                    minimum_amount_minor: nil, maximum_amount_minor: nil,
                    required_context_labels: [], enabled: true, capacity: nil,
-                   health_available: true, throughput: nil, throughput_available: true)
+                   health_available: true, throughput: nil, throughput_available: true,
+                   route_capabilities: nil, supported_payment_methods: nil,
+                   supported_rails: nil, supported_destination_kinds: nil)
       @provider_id = normalize_id(provider_id)
       @functional_eligible = normalize_boolean(functional_eligible, "functional_eligible")
       @available = normalize_boolean(available, "available")
@@ -152,6 +164,25 @@ module RubyRouting
       end
 
       @capabilities = capabilities
+      direct_route_values = [
+        supported_payment_methods, supported_rails, supported_destination_kinds
+      ]
+      direct_route_capabilities = ProviderRouteCapabilities.new(
+        supported_payment_methods: supported_payment_methods,
+        supported_rails: supported_rails,
+        supported_destination_kinds: supported_destination_kinds
+      )
+      configured_route_capabilities = ProviderRouteCapabilities.from(route_capabilities)
+      direct_route_values_provided = direct_route_values.any? { |value| !value.nil? }
+      if route_capabilities && direct_route_values_provided &&
+         configured_route_capabilities != direct_route_capabilities
+        raise ArgumentError, "route_capabilities does not match supported route dimensions"
+      end
+      @route_capabilities = if direct_route_values_provided
+        direct_route_capabilities
+      else
+        configured_route_capabilities
+      end
       @exclusion_reason = exclusion_reason&.to_s&.freeze
       @supported_currencies = normalize_currencies(supported_currencies)
       @minimum_amount_minor = normalize_amount_limit(minimum_amount_minor, "minimum_amount_minor")
@@ -185,8 +216,9 @@ module RubyRouting
       return false if minimum_amount_minor && intent.money.amount_minor < minimum_amount_minor
       return false if maximum_amount_minor && intent.money.amount_minor > maximum_amount_minor
       return false if policy && !policy.hard_constraints.allows?(intent: intent, provider_id: provider_id)
+      return false unless route_capabilities.matches?(intent.routing_context)
 
-      labels = context_labels(intent.context)
+      labels = intent.routing_context.labels
       required_context_labels.all? { |label| labels.include?(label) }
     end
 
@@ -212,7 +244,8 @@ module RubyRouting
         capacity: capacity,
         health_available: health_available,
         throughput: throughput,
-        throughput_available: throughput_available
+        throughput_available: throughput_available,
+        route_capabilities: route_capabilities
       )
     end
 
@@ -228,6 +261,7 @@ module RubyRouting
         minimum_amount_minor: minimum_amount_minor,
         maximum_amount_minor: maximum_amount_minor,
         required_context_labels: required_context_labels,
+        route_capabilities: route_capabilities.to_h,
         enabled: enabled,
         capacity: capacity&.to_h,
         health_available: health_available,
@@ -238,9 +272,12 @@ module RubyRouting
 
     def reason_for(intent:, policy: nil)
       return exclusion_reason if exclusion_reason && !functional_eligible
+      return :functionally_ineligible unless intent.is_a?(RubyRouting::PayoutIntent)
       if policy && !policy.hard_constraints.allows?(intent: intent, provider_id: provider_id)
         return :hard_policy_constraint
       end
+      route_reason = route_capabilities.exclusion_reason(intent.routing_context)
+      return route_reason unless route_reason.nil?
       return :functionally_ineligible unless functional_eligible_for?(intent: intent, policy: policy)
       return :disabled unless enabled
       return :quarantined unless health_available
@@ -303,17 +340,7 @@ module RubyRouting
     end
 
     def normalize_labels(value)
-      RubyRouting::Collection.to_array(value, "required_context_labels").map { |label| label.to_s.strip.freeze }.tap do |labels|
-        raise ArgumentError, "context labels must be non-empty" if labels.any?(&:empty?)
-      end.uniq.freeze
-    end
-
-    def context_labels(context)
-      return [] unless context.is_a?(Hash)
-
-      raw = context[:labels] || context["labels"] || []
-      raw = [raw] if raw.is_a?(String) || raw.is_a?(Symbol)
-      RubyRouting::Collection.to_array(raw, "context labels").map { |label| label.to_s.strip }
+      RubyRouting::RoutingContext.normalize_labels(value)
     end
   end
 end

@@ -90,13 +90,13 @@ module RubyRouting
                   :primary_provider_id, :settlement_provider_id, :policy_epoch,
                   :policy_scope_key, :policy_fingerprint, :settlement_operation_id,
                   :provider_interaction_count, :resolution_interaction_count, :revision,
-                  :conflicts, :reversals, :created_at
+                  :conflicts, :reversals, :created_at, :recovery_schedule
 
       def initialize(intent:, status:, ownership:, last_outcome:, attempts:,
                      primary_provider_id:, settlement_provider_id:, policy_epoch:,
                      policy_scope_key: nil, policy_fingerprint: nil, settlement_operation_id: nil,
                      provider_interaction_count: 0, resolution_interaction_count: 0, revision:,
-                     conflicts: [], reversals: [], created_at: nil)
+                     conflicts: [], reversals: [], created_at: nil, recovery_schedule: nil)
         unless intent.is_a?(RubyRouting::PayoutIntent)
           raise ArgumentError, "intent must be PayoutIntent"
         end
@@ -110,6 +110,23 @@ module RubyRouting
           raise ArgumentError, "ownership payout id must match intent id"
         end
         @ownership = ownership
+        unless recovery_schedule.nil? || recovery_schedule.is_a?(RubyRouting::RecoverySchedule)
+          raise ArgumentError, "recovery_schedule must be RecoverySchedule or nil"
+        end
+        if recovery_schedule && ownership.nil?
+          raise ArgumentError, "recovery_schedule requires economic ownership"
+        end
+        if recovery_schedule && !%i[pending unknown].include?(@status)
+          raise ArgumentError, "recovery_schedule requires an unresolved payout"
+        end
+        if recovery_schedule && (
+          recovery_schedule.operation_id != ownership.operation_id ||
+          recovery_schedule.attempt_id != ownership.attempt_id ||
+          recovery_schedule.provider_id != ownership.provider_id
+        )
+          raise ArgumentError, "recovery_schedule must reference current ownership"
+        end
+        @recovery_schedule = recovery_schedule
         unless last_outcome.nil? || last_outcome.is_a?(RubyRouting::NormalizedOutcome)
           raise ArgumentError, "last_outcome must be NormalizedOutcome or nil"
         end
@@ -180,6 +197,18 @@ module RubyRouting
 
       def unresolved?
         !ownership.nil?
+      end
+
+      def next_action
+        recovery_schedule&.action
+      end
+
+      def next_action_at
+        recovery_schedule&.next_action_at
+      end
+
+      def next_action_due?(as_of:)
+        recovery_schedule ? recovery_schedule.due?(as_of: as_of) : false
       end
 
       def final?
@@ -269,6 +298,9 @@ module RubyRouting
         @budget = budget
         @used_slots = normalize_non_negative_integer(used_slots, "used_slots")
         @used_count = normalize_non_negative_integer(used_count, "used_count")
+        unless @used_slots == @used_count
+          raise ArgumentError, "capacity snapshot slots and count must describe the same in-flight exposure"
+        end
         @used_amount_minor = normalize_non_negative_integer(used_amount_minor, "used_amount_minor")
         freeze
       end

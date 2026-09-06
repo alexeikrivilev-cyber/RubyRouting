@@ -2,7 +2,154 @@
 
 module RubyRouting
   module Projections
+    class AnalyticsDimension
+      FIELDS = %i[
+        policy_id policy_epoch policy_scope window cohort measure currency provider_id
+      ].freeze
+
+      attr_reader :policy_id, :policy_epoch, :policy_scope, :window, :cohort,
+                  :measure, :currency, :provider_id
+
+      def initialize(policy_id:, policy_epoch:, policy_scope:, window:, cohort: nil,
+                     measure:, currency: nil, provider_id: nil)
+        @policy_id = normalize_identity(policy_id, "analytics policy id")
+        @policy_epoch = normalize_identity(policy_epoch, "analytics policy epoch")
+        @policy_scope = normalize_identity(policy_scope, "analytics policy scope")
+        @window = RubyRouting::Enum.normalize(
+          window,
+          %i[policy_epoch opportunity_cohort],
+          "analytics allocation window"
+        )
+        @cohort = normalize_cohort(cohort)
+        @measure = RubyRouting::Enum.normalize(measure, %i[count volume], "analytics measure")
+        @currency = normalize_currency(currency)
+        @provider_id = provider_id.nil? ? nil : normalize_identity(provider_id, "analytics provider id")
+        if @measure == :volume && @currency.nil?
+          raise ArgumentError, "volume analytics dimension requires a currency"
+        end
+        if @window == :opportunity_cohort && @cohort.nil?
+          raise ArgumentError, "opportunity-cohort analytics dimension requires a cohort"
+        end
+        if @window == :policy_epoch && !@cohort.nil?
+          raise ArgumentError, "policy-epoch analytics dimension cannot contain a cohort"
+        end
+        freeze
+      end
+
+      def with_provider(provider_id)
+        self.class.new(
+          policy_id: policy_id,
+          policy_epoch: policy_epoch,
+          policy_scope: policy_scope,
+          window: window,
+          cohort: cohort,
+          measure: measure,
+          currency: currency,
+          provider_id: provider_id
+        )
+      end
+
+      def to_h
+        {
+          policy_id: policy_id,
+          policy_epoch: policy_epoch,
+          policy_scope: policy_scope,
+          window: window,
+          cohort: cohort,
+          measure: measure,
+          currency: currency,
+          provider_id: provider_id
+        }.freeze
+      end
+
+      def ==(other)
+        other.is_a?(self.class) && to_h == other.to_h
+      end
+      alias eql? ==
+
+      def hash
+        to_h.hash
+      end
+
+      private
+
+      def normalize_identity(value, label)
+        unless value.is_a?(String) || value.is_a?(Symbol)
+          raise ArgumentError, "#{label} must be a String or Symbol"
+        end
+
+        normalized = value.to_s.strip
+        raise ArgumentError, "#{label} must be non-empty" if normalized.empty?
+
+        normalized.freeze
+      end
+
+      def normalize_cohort(value)
+        return nil if value.nil?
+        unless value.is_a?(Array)
+          raise ArgumentError, "analytics cohort must be an Array or nil"
+        end
+
+        value.map { |provider_id| normalize_identity(provider_id, "analytics cohort provider id") }
+          .uniq.sort.freeze
+      end
+
+      def normalize_currency(value)
+        return nil if value.nil?
+        unless value.is_a?(String)
+          raise ArgumentError, "analytics currency must be a String or nil"
+        end
+
+        normalized = value.strip.upcase
+        raise ArgumentError, "analytics currency must be a three-letter code" unless /\A[A-Z]{3}\z/.match?(normalized)
+
+        normalized.freeze
+      end
+    end
+
+    AnalyticsQueryRow = Data.define(:group, :value) do
+      def initialize(group:, value:)
+        super(
+          group: RubyRouting::ImmutableData.deep_freeze(group),
+          value: value
+        )
+      end
+
+      def to_h
+        { group: group, value: value }.freeze
+      end
+    end
+
+    AnalyticsQueryResult = Data.define(:metric, :filters, :group_by, :rows) do
+      def initialize(metric:, filters:, group_by:, rows:)
+        super(
+          metric: metric,
+          filters: RubyRouting::ImmutableData.deep_freeze(filters),
+          group_by: group_by.map(&:freeze).freeze,
+          rows: rows.freeze
+        )
+      end
+
+      def to_h
+        {
+          metric: metric,
+          filters: filters,
+          group_by: group_by,
+          rows: rows.map(&:to_h).freeze
+        }.freeze
+      end
+    end
+
     class Analytics
+      QUERY_METRICS = {
+        assignment_measure: :assignment_measure_by_dimension,
+        primary_assignment_measure: :primary_assignment_measure_by_dimension,
+        primary_target_measure: :primary_target_measure_by_dimension,
+        primary_deviation_measure: :primary_deviation_measure_by_dimension,
+        settlement_measure: :settlement_measure_by_dimension
+      }.freeze
+      DEVIATION_ATTRIBUTION_SEMANTICS = :deterministic_routing_reason
+      RUNTIME_INFEASIBILITY_ATTRIBUTION_SEMANTICS = :deterministic_exclusion_reason
       FAILURE_STATUSES = %i[
         safe_route_failure
         temporary_provider_failure
@@ -31,7 +178,12 @@ module RubyRouting
                   :unresolved_age_seconds_by_payout, :attempt_count_by_payout,
                   :provider_interaction_count_by_payout, :provider_switch_count_by_payout,
                   :deviation_by_cause, :deviation_by_recoverability,
-                  :runtime_infeasibility_count_by_cause
+                  :runtime_infeasibility_count_by_cause,
+                  :deviation_attribution_semantics, :runtime_infeasibility_attribution_semantics,
+                  :assignment_measure_by_dimension, :primary_assignment_measure_by_dimension,
+                  :primary_target_measure_by_dimension, :primary_deviation_measure_by_dimension,
+                  :settlement_measure_by_dimension, :deviation_by_cause_dimension,
+                  :deviation_by_recoverability_dimension
 
       def self.from_facts(facts, as_of: nil)
         new(facts, as_of: as_of)
@@ -46,9 +198,14 @@ module RubyRouting
         @primary_assignment_measure_by_provider = Hash.new(0)
         @primary_target_measure_by_provider = Hash.new(0)
         @primary_deviation_measure_by_provider = Hash.new(0)
+        @assignment_measure_by_dimension = Hash.new(0)
+        @primary_assignment_measure_by_dimension = Hash.new(0)
+        @primary_target_measure_by_dimension = Hash.new(0)
+        @primary_deviation_measure_by_dimension = Hash.new(0)
         @attempt_count_by_provider = Hash.new(0)
         @money_moving_operation_count_by_provider = Hash.new(0)
         @settlement_measure_by_provider = Hash.new(0)
+        @settlement_measure_by_dimension = Hash.new(0)
         @provider_failure_count = Hash.new(0)
         @first_attempt_success_count = 0
         @eventual_success_count = 0
@@ -75,7 +232,15 @@ module RubyRouting
         @deviation_by_recoverability = Hash.new do |hash, recoverability|
           hash[recoverability] = { count: 0, measure: 0 }
         end
+        @deviation_by_cause_dimension = Hash.new do |hash, key|
+          hash[key] = { count: 0, measure: 0 }
+        end
+        @deviation_by_recoverability_dimension = Hash.new do |hash, key|
+          hash[key] = { count: 0, measure: 0 }
+        end
         @runtime_infeasibility_count_by_cause = Hash.new(0)
+        @deviation_attribution_semantics = DEVIATION_ATTRIBUTION_SEMANTICS
+        @runtime_infeasibility_attribution_semantics = RUNTIME_INFEASIBILITY_ATTRIBUTION_SEMANTICS
         project
         freeze_collections
         freeze
@@ -89,9 +254,14 @@ module RubyRouting
           primary_assignment_measure_by_provider: primary_assignment_measure_by_provider,
           primary_target_measure_by_provider: primary_target_measure_by_provider,
           primary_deviation_measure_by_provider: primary_deviation_measure_by_provider,
+          assignment_measure_by_dimension: dimension_entries(assignment_measure_by_dimension),
+          primary_assignment_measure_by_dimension: dimension_entries(primary_assignment_measure_by_dimension),
+          primary_target_measure_by_dimension: dimension_entries(primary_target_measure_by_dimension),
+          primary_deviation_measure_by_dimension: dimension_entries(primary_deviation_measure_by_dimension),
           attempt_count_by_provider: attempt_count_by_provider,
           money_moving_operation_count_by_provider: money_moving_operation_count_by_provider,
           settlement_measure_by_provider: settlement_measure_by_provider,
+          settlement_measure_by_dimension: dimension_entries(settlement_measure_by_dimension),
           first_attempt_success_count: first_attempt_success_count,
           eventual_success_count: eventual_success_count,
           fallback_recovery_count: fallback_recovery_count,
@@ -116,11 +286,153 @@ module RubyRouting
           provider_switch_count_by_payout: provider_switch_count_by_payout,
           deviation_by_cause: deviation_by_cause,
           deviation_by_recoverability: deviation_by_recoverability,
-          runtime_infeasibility_count_by_cause: runtime_infeasibility_count_by_cause
+          deviation_by_cause_dimension: deviation_entries(deviation_by_cause_dimension),
+          deviation_by_recoverability_dimension: deviation_entries(deviation_by_recoverability_dimension),
+          runtime_infeasibility_count_by_cause: runtime_infeasibility_count_by_cause,
+          deviation_attribution_semantics: deviation_attribution_semantics,
+          runtime_infeasibility_attribution_semantics: runtime_infeasibility_attribution_semantics
         }
       end
 
+      # Query the already-computed dimensioned measures. This is deliberately
+      # not another fact aggregation path: filters and grouping only select
+      # and safely combine rows produced by the canonical projection.
+      def query(metric:, filters: {}, group_by: [])
+        normalized_metric = RubyRouting::Enum.normalize(
+          metric,
+          QUERY_METRICS.keys,
+          "analytics query metric"
+        )
+        normalized_filters = normalize_query_filters(filters)
+        normalized_group_by = normalize_query_group_by(group_by)
+        dimensioned = public_send(QUERY_METRICS.fetch(normalized_metric))
+        selected = dimensioned.select do |dimension, _value|
+          normalized_filters.all? do |field, expected|
+            dimension.public_send(field) == expected
+          end
+        end
+        validate_query_grouping!(selected.map(&:first), normalized_group_by)
+        grouped = selected.group_by do |dimension, _value|
+          normalized_group_by.map { |field| dimension.public_send(field) }
+        end
+        rows = grouped.sort_by { |key, _values| key.map { |value| query_sort_token(value) } }.map do |key, values|
+          group = normalized_group_by.each_with_index.each_with_object({}) do |(field, index), result|
+            result[field] = key.fetch(index)
+          end
+          AnalyticsQueryRow.new(group: group, value: values.sum { |_dimension, value| value })
+        end
+
+        AnalyticsQueryResult.new(
+          metric: normalized_metric,
+          filters: normalized_filters,
+          group_by: normalized_group_by,
+          rows: rows
+        )
+      end
+
       private
+
+      def normalize_query_filters(filters)
+        unless filters.is_a?(Hash)
+          raise ArgumentError, "analytics query filters must be a Hash"
+        end
+
+        normalized = RubyRouting::HashKeys.symbolize(
+          filters,
+          RubyRouting::Projections::AnalyticsDimension::FIELDS,
+          "analytics query filters"
+        ).each_with_object({}) do |(field, value), result|
+          result[field] = normalize_query_filter_value(field, value)
+        end
+        validate_query_filter_shape!(normalized)
+        normalized.freeze
+      end
+
+      def normalize_query_filter_value(field, value)
+        case field
+        when :policy_id, :policy_epoch, :policy_scope, :provider_id
+          normalize_identity(value, "analytics query #{field}")
+        when :window
+          RubyRouting::Enum.normalize(
+            value,
+            %i[policy_epoch opportunity_cohort],
+            "analytics query window"
+          )
+        when :measure
+          RubyRouting::Enum.normalize(value, %i[count volume], "analytics query measure")
+        when :currency
+          normalize_query_currency(value)
+        when :cohort
+          normalize_query_cohort(value)
+        else
+          raise ArgumentError, "unsupported analytics query filter"
+        end
+      end
+
+      def normalize_query_group_by(group_by)
+        RubyRouting::Collection.to_array(group_by, "analytics query group_by")
+          .each_with_object([]) do |field, result|
+            normalized = RubyRouting::Enum.normalize(
+              field,
+              RubyRouting::Projections::AnalyticsDimension::FIELDS,
+              "analytics query group dimension"
+            )
+            raise ArgumentError, "analytics query group_by contains a duplicate dimension" if result.include?(normalized)
+
+            result << normalized
+          end.freeze
+      end
+
+      def validate_query_filter_shape!(filters)
+        if filters[:measure] == :count && filters.key?(:currency) && !filters[:currency].nil?
+          raise ArgumentError, "count analytics cannot filter by a currency"
+        end
+        if filters[:measure] == :volume && filters.key?(:currency) && filters[:currency].nil?
+          raise ArgumentError, "volume analytics requires a currency filter or grouping"
+        end
+        if filters[:window] == :policy_epoch && filters.key?(:cohort) && !filters[:cohort].nil?
+          raise ArgumentError, "policy-epoch analytics cannot filter by a cohort"
+        end
+      end
+
+      def normalize_query_currency(value)
+        return nil if value.nil?
+        unless value.is_a?(String)
+          raise ArgumentError, "analytics query currency must be a String or nil"
+        end
+
+        normalized = value.strip.upcase
+        raise ArgumentError, "analytics query currency must be a three-letter code" unless /\A[A-Z]{3}\z/.match?(normalized)
+
+        normalized.freeze
+      end
+
+      def normalize_query_cohort(value)
+        return nil if value.nil?
+        unless value.is_a?(Array)
+          raise ArgumentError, "analytics query cohort must be an Array or nil"
+        end
+
+        value.map { |provider_id| normalize_identity(provider_id, "analytics query cohort provider id") }
+          .uniq.sort.freeze
+      end
+
+      def validate_query_grouping!(dimensions, group_by)
+        return if dimensions.empty?
+
+        (RubyRouting::Projections::AnalyticsDimension::FIELDS - group_by).each do |field|
+          values = dimensions.map { |dimension| dimension.public_send(field) }.uniq
+          next if values.length <= 1
+
+          raise ArgumentError, "analytics query must group by varying dimension #{field}"
+        end
+      end
+
+      def query_sort_token(value)
+        return value.map { |nested| query_sort_token(nested) }.join("\u0000") if value.is_a?(Array)
+
+        value.to_s
+      end
 
       def project
         roles_by_operation = {}
@@ -130,6 +442,8 @@ module RubyRouting
         fallback_payouts = {}
         successful_fallback_payouts = {}
         policies_by_scope = {}
+        allocation_context_by_payout = {}
+        operation_dimensions = {}
         primary_allocations = []
         status_by_payout = Hash.new(:new)
         attempt_providers_by_payout = Hash.new { |hash, payout_id| hash[payout_id] = [] }
@@ -144,6 +458,7 @@ module RubyRouting
           when :policy_registered
             policies_by_scope[policy_scope_key(payload)] = payload[:definition]
           when :opportunity_evaluated
+            allocation_context_by_payout[fact.payout_id] = payload
             collection_or_empty(payload[:opportunities], "opportunity provider ids").each do |provider_id|
               opportunity_count_by_provider[normalize_provider_id(provider_id)] += 1
             end
@@ -173,17 +488,27 @@ module RubyRouting
             if (payload[:action] == :assign && payload[:role] == :primary) ||
                (payload[:action] == :defer &&
                 collection_or_empty(payload[:reason_codes], "decision reason codes").include?(:no_safe_route))
-              record_deviation(payload)
+              record_deviation(
+                payload,
+                dimension: decision_dimension(
+                  payload,
+                  allocation_context_by_payout[fact.payout_id],
+                  policies_by_scope
+                )
+              )
             end
           when :allocation_committed
             provider_id = normalize_provider_id(payload.fetch(:provider_id))
             measure = payload.fetch(:measure)
-            assignment_measure_by_provider[provider_id] += measure
+            dimension = allocation_dimension(payload, policies_by_scope)
+            assignment_measure_by_dimension[dimension] += measure
             money_moving_operation_count_by_provider[provider_id] += 1
+            operation_id = normalize_identity(payload.fetch(:operation_id), "operation id")
+            operation_dimensions[operation_id] = dimension
             attempt_providers_by_payout[fact.payout_id] << provider_id
             if payload[:role] == :primary
-              primary_assignment_measure_by_provider[provider_id] += measure
-              primary_allocations << [allocation_key(payload), provider_id, measure]
+              primary_assignment_measure_by_dimension[dimension] += measure
+              primary_allocations << [allocation_key(payload), provider_id, measure, dimension]
             else
               if payload[:role] == :recovery
                 @recovery_attempt_count += 1
@@ -253,8 +578,11 @@ module RubyRouting
             )
             @transport_count_by_kind[transport_kind] += 1
           when :settlement_recorded
-            provider_id = normalize_provider_id(payload.fetch(:provider_id))
-            settlement_measure_by_provider[provider_id] += payload.fetch(:measure)
+            operation_id = normalize_identity(payload.fetch(:operation_id), "operation id")
+            dimension = operation_dimensions.fetch(operation_id) do
+              settlement_dimension(payload, policies_by_scope)
+            end
+            settlement_measure_by_dimension[dimension] += payload.fetch(:measure)
             status_by_payout[fact.payout_id] = :success
           when :reversal_recorded
             @reversal_count += 1
@@ -269,6 +597,8 @@ module RubyRouting
         end
 
         project_primary_targets(primary_allocations, policies_by_scope)
+        finalize_safe_provider_rollups
+        finalize_safe_deviation_rollups
         project_lifecycle_metrics(
           status_by_payout,
           attempt_providers_by_payout,
@@ -295,7 +625,7 @@ module RubyRouting
         end
       end
 
-      def record_deviation(payload)
+      def record_deviation(payload, dimension:)
         no_route = payload[:action] == :defer &&
           collection_or_empty(payload[:reason_codes], "decision reason codes").include?(:no_safe_route)
         if no_route
@@ -304,7 +634,8 @@ module RubyRouting
           record_deviation_metric(
             payload[:allocation_deviation_cause],
             payload[:allocation_deviation_recoverability],
-            payload.fetch(:measure)
+            payload.fetch(:measure),
+            dimension: dimension
           )
           return
         end
@@ -329,25 +660,34 @@ module RubyRouting
         record_deviation_metric(
           cause,
           payload[:allocation_deviation_recoverability],
-          payload.fetch(:measure)
+          payload.fetch(:measure),
+          dimension: dimension
         )
       end
 
-      def record_deviation_metric(cause, raw_recoverability, measure)
+      def record_deviation_metric(cause, raw_recoverability, measure, dimension:)
         unless measure.is_a?(Integer) && measure >= 0
           raise ArgumentError, "deviation measure must be a non-negative Integer"
+        end
+        unless dimension.is_a?(RubyRouting::Projections::AnalyticsDimension)
+          raise RubyRouting::State::DurableCorruptionError,
+            "dimensioned deviation is missing policy and measure identity"
         end
 
         entry = @deviation_by_cause[cause]
         entry[:count] += 1
-        entry[:measure] += measure
+        cause_key = [dimension, cause].freeze
+        @deviation_by_cause_dimension[cause_key][:count] += 1
+        @deviation_by_cause_dimension[cause_key][:measure] += measure
         recoverability = metric_code(
           raw_recoverability || :unknown,
           RubyRouting::Routing::Deviation::RECOVERABILITY
         )
         recovery_entry = @deviation_by_recoverability[recoverability]
         recovery_entry[:count] += 1
-        recovery_entry[:measure] += measure
+        recoverability_key = [dimension, recoverability].freeze
+        @deviation_by_recoverability_dimension[recoverability_key][:count] += 1
+        @deviation_by_recoverability_dimension[recoverability_key][:measure] += measure
       end
 
       def record_runtime_infeasibility(assessment)
@@ -410,11 +750,127 @@ module RubyRouting
           end
           weights.each do |provider_id, weight|
             target = Rational(total_measure * weight, total_weight)
-            primary_target_measure_by_provider[provider_id] += target
-            primary_deviation_measure_by_provider[provider_id] +=
+            dimension = rows.find { |row| row.fetch(1) == provider_id }&.fetch(3)
+            dimension ||= rows.fetch(0).fetch(3).with_provider(provider_id)
+            primary_target_measure_by_dimension[dimension.with_provider(provider_id)] += target
+            primary_deviation_measure_by_dimension[dimension.with_provider(provider_id)] +=
               (actual.fetch(provider_id, 0) - target).abs
           end
         end
+      end
+
+      def allocation_dimension(payload, policies_by_scope)
+        key = allocation_key(payload)
+        context = {
+          allocation_key: key,
+          policy_id: payload[:policy_id] || key[0],
+          policy_epoch: payload[:policy_epoch] || key[1],
+          policy_scope: payload[:policy_scope] || key[2],
+          measure_kind: payload[:measure_kind],
+          currency: payload[:currency]
+        }
+        dimension_from_context(
+          context,
+          provider_id: payload.fetch(:provider_id),
+          policies_by_scope: policies_by_scope
+        )
+      end
+
+      def settlement_dimension(payload, policies_by_scope)
+        unless payload[:allocation_key]
+          raise RubyRouting::State::DurableCorruptionError,
+            "settlement metric is missing allocation dimension"
+        end
+
+        allocation_dimension(payload, policies_by_scope)
+      end
+
+      def decision_dimension(payload, evaluation_payload, policies_by_scope)
+        context = payload[:allocation_key] ? payload : evaluation_payload
+        return nil unless context.is_a?(Hash) && context[:allocation_key]
+
+        dimension_from_context(context, provider_id: payload[:provider_id], policies_by_scope: policies_by_scope)
+      end
+
+      def dimension_from_context(context, provider_id:, policies_by_scope:)
+        key = normalize_nested_key(context.fetch(:allocation_key))
+        values = RubyRouting::Collection.to_array(key, "analytics allocation key")
+        unless [3, 4].include?(values.length)
+          raise RubyRouting::State::DurableCorruptionError,
+            "analytics allocation key must contain policy identity and optional cohort"
+        end
+        scope_key = values.first(3)
+        definition = policies_by_scope[scope_key] || {}
+        measure = context[:measure_kind] || context["measure_kind"] ||
+          definition[:measure] || definition["measure"]
+        currency = context[:currency] || context["currency"] ||
+          definition[:currency] || definition["currency"]
+        policy_id = context[:policy_id] || context["policy_id"] || scope_key[0]
+        policy_epoch = context[:policy_epoch] || context["policy_epoch"] || scope_key[1]
+        policy_scope = context[:policy_scope] || context["policy_scope"] || scope_key[2]
+        window = definition[:window] || definition["window"] ||
+          (values.length == 4 ? :opportunity_cohort : :policy_epoch)
+        cohort = values.length == 4 ? values.fetch(3) : nil
+        AnalyticsDimension.new(
+          policy_id: policy_id,
+          policy_epoch: policy_epoch,
+          policy_scope: policy_scope,
+          window: window,
+          cohort: cohort,
+          measure: measure,
+          currency: currency,
+          provider_id: provider_id
+        )
+      rescue KeyError, ArgumentError, TypeError => error
+        raise RubyRouting::State::DurableCorruptionError,
+          "malformed analytics dimension: #{error.message}"
+      end
+
+      def finalize_safe_provider_rollups
+        @assignment_measure_by_provider = safe_provider_rollup(assignment_measure_by_dimension)
+        @primary_assignment_measure_by_provider = safe_provider_rollup(primary_assignment_measure_by_dimension)
+        @primary_target_measure_by_provider = safe_provider_rollup(primary_target_measure_by_dimension)
+        @primary_deviation_measure_by_provider = safe_provider_rollup(primary_deviation_measure_by_dimension)
+        @settlement_measure_by_provider = safe_provider_rollup(settlement_measure_by_dimension)
+      end
+
+      def safe_provider_rollup(dimensioned)
+        grouped = dimensioned.group_by { |dimension, _value| dimension.provider_id }
+        grouped.each_with_object({}) do |(provider_id, rows), result|
+          dimensions = rows.map(&:first).uniq
+          next unless dimensions.length == 1
+
+          result[provider_id] = rows.sum { |(_dimension, value)| value }
+        end
+      end
+
+      def finalize_safe_deviation_rollups
+        @deviation_by_cause.each do |cause, entry|
+          rows = @deviation_by_cause_dimension.select { |(_dimension, row_cause), _| row_cause == cause }
+          dimensions = rows.map { |(dimension, _row_cause), _| dimension }.uniq
+          entry[:measure] = rows.sum { |(_key, value)| value.fetch(:measure) } if dimensions.length == 1
+          entry[:measure] = nil if dimensions.length > 1
+        end
+        @deviation_by_recoverability.each do |recoverability, entry|
+          rows = @deviation_by_recoverability_dimension.select do |(_dimension, row_recoverability), _|
+            row_recoverability == recoverability
+          end
+          dimensions = rows.map { |(dimension, _row_recoverability), _| dimension }.uniq
+          entry[:measure] = rows.sum { |(_key, value)| value.fetch(:measure) } if dimensions.length == 1
+          entry[:measure] = nil if dimensions.length > 1
+        end
+      end
+
+      def dimension_entries(dimensioned)
+        dimensioned.map do |dimension, value|
+          { dimension: dimension.to_h, value: value }.freeze
+        end.freeze
+      end
+
+      def deviation_entries(dimensioned)
+        dimensioned.map do |(dimension, reason), value|
+          { dimension: dimension.to_h, reason: reason, count: value.fetch(:count), measure: value.fetch(:measure) }.freeze
+        end.freeze
       end
 
       def allocation_cohort_provider_ids(allocation_key)
@@ -467,17 +923,10 @@ module RubyRouting
       end
 
       def reduced_status(status, safe_to_release)
-        normalized_status = RubyRouting::Enum.normalize(
+        RubyRouting::State::LifecycleLedger.reduce_status(
           status,
-          RubyRouting::NormalizedOutcome::STATUSES,
-          "outcome status"
+          safe_to_release: safe_to_release
         )
-        case normalized_status
-        when :safe_route_failure, :temporary_provider_failure
-          safe_to_release ? normalized_status : :unknown
-        else
-          normalized_status
-        end
       end
 
       def policy_scope_key(payload)
@@ -534,9 +983,14 @@ module RubyRouting
           :@primary_assignment_measure_by_provider,
           :@primary_target_measure_by_provider,
           :@primary_deviation_measure_by_provider,
+          :@assignment_measure_by_dimension,
+          :@primary_assignment_measure_by_dimension,
+          :@primary_target_measure_by_dimension,
+          :@primary_deviation_measure_by_dimension,
           :@attempt_count_by_provider,
           :@money_moving_operation_count_by_provider,
           :@settlement_measure_by_provider,
+          :@settlement_measure_by_dimension,
           :@provider_failure_count,
           :@reversal_measure_by_currency,
           :@failure_count_by_attribution,
@@ -559,6 +1013,12 @@ module RubyRouting
         end.freeze
         @deviation_by_recoverability = @deviation_by_recoverability.each_with_object({}) do |(recoverability, value), copy|
           copy[recoverability] = value.dup.freeze
+        end.freeze
+        @deviation_by_cause_dimension = @deviation_by_cause_dimension.each_with_object({}) do |(key, value), copy|
+          copy[key] = value.dup.freeze
+        end.freeze
+        @deviation_by_recoverability_dimension = @deviation_by_recoverability_dimension.each_with_object({}) do |(key, value), copy|
+          copy[key] = value.dup.freeze
         end.freeze
       end
     end

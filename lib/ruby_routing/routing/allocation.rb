@@ -278,7 +278,12 @@ module RubyRouting
 
       # L1 discrepancy is evaluated after adding the incoming assignment. This
       # makes committed work visible and lets indivisible amounts choose the
-      # least-bad achievable state with exact Rational arithmetic.
+      # least-bad achievable state with exact Rational arithmetic. When a
+      # policy tolerance is configured, it is an absolute L1 corridor in the
+      # policy's count or exact monetary-minor-unit measure. After share
+      # obligations, candidates inside that corridor win the
+      # allocation-authority tie-break; an over-corridor candidate remains
+      # selectable only when no candidate is inside it.
       def choose(policy:, candidates:, snapshot:, incoming_measure:, accounting_provider_ids: nil)
         unless policy.is_a?(RubyRouting::RoutingPolicy)
           raise ArgumentError, "policy must be RoutingPolicy"

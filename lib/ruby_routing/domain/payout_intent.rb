@@ -2,9 +2,9 @@
 
 module RubyRouting
   class PayoutIntent
-    attr_reader :id, :money, :recipient, :context
+    attr_reader :id, :money, :recipient, :context, :routing_context
 
-    def initialize(id:, money:, recipient: {}, context: {})
+    def initialize(id:, money:, recipient: {}, context: {}, routing_context: nil)
       @id = normalize_id(id, "payout id")
       unless money.is_a?(RubyRouting::Money)
         raise ArgumentError, "money must be RubyRouting::Money"
@@ -13,6 +13,15 @@ module RubyRouting
       @money = money
       @recipient = freeze_nested(recipient)
       @context = freeze_nested(context)
+      derived_routing_context = RubyRouting::RoutingContext.from(@context)
+      if routing_context
+        @routing_context = RubyRouting::RoutingContext.from(routing_context)
+        unless derived_routing_context.empty? || @routing_context == derived_routing_context
+          raise ArgumentError, "routing_context does not match payout context"
+        end
+      else
+        @routing_context = derived_routing_context
+      end
       freeze
     end
 
@@ -27,23 +36,7 @@ module RubyRouting
     end
 
     def freeze_nested(value)
-      case value
-      when Hash
-        value.each_with_object({}) do |(key, nested), copy|
-          copy[freeze_nested(key)] = freeze_nested(nested)
-        end.freeze
-      when Array
-        value.map { |nested| freeze_nested(nested) }.freeze
-      when String
-        value.dup.freeze
-      else
-        if value.respond_to?(:each)
-          RubyRouting::Collection.to_array(value, "intent nested collection")
-            .map { |nested| freeze_nested(nested) }.freeze
-        else
-          value.freeze
-        end
-      end
+      RubyRouting::ImmutableData.deep_freeze(value)
     end
   end
 end

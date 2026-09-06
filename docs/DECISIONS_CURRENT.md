@@ -2183,3 +2183,213 @@ constructed an invalid proposal in memory. Keeping the state-independent
 contract at construction prevents malformed control decisions from entering
 the coordinator or durable fact path while preserving the separation between
 domain shape validation and stateful recovery-role validation.
+
+## D-207 — close v0.3 only on an exact published revision
+
+Status: accepted.
+
+Decision: v0.3 is `VERSION_COMPLETE` on published `main` revision
+`000931b205a4ae932b532ada00f9eb21072884c7` after a fresh A–L closure/red-team
+pass found no material locally-solvable gap and GitHub Actions run `33333118660`
+passed both `Fast Ruby verification` and `Bounded product evidence` jobs.
+
+Rationale: local green tests, a working demo or a plan checklist are not enough
+to close the version. This decision preserves the exact-revision CI gate and
+records that the official TZ remains a separate v0.4 reconciliation input,
+without relabeling the completed v0.3 product as the future judged submission.
+
+## D-208 — tolerance is an absolute policy-measure L1 corridor
+
+Status: accepted for v0.3.1 pre-TZ hardening.
+
+Decision: `RoutingPolicy#tolerance` is a non-negative exact `Rational` defining
+the post-decision L1 discrepancy across the policy allocation universe. Its
+units are count units for `:count` policies and exact minor units of the policy
+currency for `:volume` policies. Share minimum/maximum obligations precede the
+tolerance comparison. Candidates within tolerance are preferred; when none is
+inside the corridor, the least-bad admissible candidate remains selectable and
+the allocation records `tolerance_exceeded`.
+
+Rationale: a single field must not silently alternate between normalized share
+error, per-provider corridor and absolute amount. Binding the exact discrepancy
+to the policy measure preserves indivisible-payout behavior, keeps count and
+monetary volume dimensionally honest, and leaves impossible allocation states
+observable rather than silently dropping them.
+
+## D-209 — recovery selection explicitly reuses allocation authority without ledger reuse
+
+Status: accepted for v0.3.1 pre-TZ hardening.
+
+Decision: once recovery safety, hard eligibility/admission and recovery budget
+gates permit a fresh fallback, `Routing::RecoverySelection` removes every
+provider that already hosted a money-moving attempt. It then calls the same
+exact `Allocation.choose` authority used by primary routing, with the full
+functional accounting universe, and returns the typed allocation evidence to
+the shared proposal/optimization path. Recovery assignments remain role
+`:recovery` and therefore do not advance the primary allocation ledger under
+`primary_assignment`.
+
+Rationale: recovery has a distinct legal boundary but still needs one source of
+truth for exact allocation obligations and discrepancy math. A small explicit
+wrapper makes the staged order auditable without duplicating allocation logic;
+the role-gated commit preserves separation between fallback selection and
+primary distribution accounting. A skewed-target regression proves that an
+already-used high-target provider cannot win merely because the allocator was
+reused implicitly.
+
+## D-210 — deterministic quality uses prior shrinkage and a bounded recent window
+
+Status: accepted for v0.3.1 pre-TZ hardening.
+
+Decision: slow provider quality is an exact Beta/Laplace posterior with a
+neutral `1/1` prior over the latest `evidence_window` provider-attributed
+terminal success/provider-failure outcomes. `minimum_samples` controls whether
+evidence is mature; context selection uses mature context, then mature global,
+then the prior/default. Pending, UNKNOWN and recipient/downstream outcomes do
+not enter the quality window. Quality policy and the exact snapshot evidence
+are durable, and each relevant outcome emits a quality fact even when a rolling
+window's numeric sample count remains unchanged.
+
+Rationale: raw ratios make a single success look perfect and permit sparse
+evidence to dominate mature evidence. Prior shrinkage makes uncertainty visible
+in the exact ranking score, while a bounded window prevents stale history from
+remaining authoritative forever. Retaining every relevant event preserves
+replay equivalence for the rolling state without changing economic safety,
+allocation authority or the separation from fast operational health.
+
+## D-211 — typed fast-health evidence is separate from payout outcome
+
+Status: accepted for v0.3.1 pre-TZ hardening.
+
+Decision: fast operational health accepts explicit provider-attributed
+`transport_failure`, `timeout_pressure`, `overload_rejection`,
+`provider_service_error`, `latency_pressure` and `deadline_pressure` signals.
+They share the existing hysteresis, quarantine, bounded-probe and slow-up
+recovery state machine. Recipient/downstream attribution remains neutral.
+
+At the normalized provider boundary, `definitely_not_sent` maps to
+`transport_failure`; `ambiguous_after_possible_send` maps to
+`timeout_pressure` for health only. An ambiguous payout remains normalized as
+UNKNOWN with its original single economic owner and cannot be released or
+fallback-routed because health changed. The observation-derived health fact
+stores the source and is replay-validated against the transport kind, with the
+health attribution explicitly provider operational evidence rather than a
+rewrite of the payout outcome attribution.
+
+Rationale: future admission needs fast, typed operational protection before
+slow quality evidence matures, but transport uncertainty is an economic safety
+boundary. Keeping the two projections separate prevents a useful health signal
+from becoming an unsafe ownership or fallback decision.
+
+## D-212 — live proposal construction consumes one prepared evaluation
+
+Status: accepted for v0.3.1 pre-TZ hardening.
+
+Decision: `DecisionEvaluator` materializes one immutable
+`DecisionEvaluator::Evaluation` containing the runtime opportunities,
+eligibility, allocation exclusions, runtime feasibility, allocation snapshot,
+allocation key and quality evidence. Live `DecisionEngine` proposal
+construction consumes that value and does not recalculate eligibility or
+runtime feasibility. Calls that use `DecisionEngine` directly retain an
+explicit compatibility path that computes those inputs when no prepared
+evaluation is supplied.
+
+The coordinator remains the sole atomic commit/revalidation boundary; this
+decision does not treat a stale evaluation as a reservation or allow an
+optimizer to bypass mutable admission checks.
+
+Rationale: duplicate live evaluation created unnecessary work and a drift risk
+between the evidence persisted in `opportunity_evaluated` and the proposal
+actually built. A frozen value removes that overlap without expanding the
+transaction model; restore-side recomputation remains a separately audited
+concern for PTZ-103.
+
+## D-213 — shared runtime-opportunity composition across live and restore
+
+Status: accepted for v0.3.1 pre-TZ hardening.
+
+Decision: `Routing::OpportunityRuntime.materialize` is the pure shared seam for
+turning a provider definition plus dynamic evidence into a runtime opportunity.
+It applies adapter availability, capacity, health and throughput evidence only
+through the provider's existing static gates. `DecisionEvaluator` supplies
+current ledger/controller evidence; `OpportunityEvaluationFactRestorer`
+supplies validated as-of evidence from the durable trace. Neither path owns a
+second copy of the final boolean composition.
+
+Rationale: the live and restore paths legitimately read different temporal
+sources, but duplicating their final runtime semantics allowed a small change to
+drift across the two paths. A small pure interface improves locality and keeps
+the temporal distinction visible without introducing another state machine or
+expanding durability.
+
+## D-214 — typed decision explanation is a whitelist projection
+
+Status: accepted for v0.3.1 pre-TZ hardening.
+
+Decision: `Projections::DecisionExplanation` is the single product read model
+for routing explanation. It projects each durable `decision_committed` against
+the preceding `opportunity_evaluated` evidence and exposes policy identity,
+opportunity/exclusion, admission, allocation, optimization, deterministic
+rationale, recovery and lifecycle-result fields. The projection copies only
+explicitly selected safe fields; it never copies raw fact payloads or recipient
+data and never recomputes a routing decision.
+
+`Application::Queries#explanation` and
+`GET /v1/payouts/:payout_id/explanation` use this projection. The rationale is
+labelled `deterministic_routing_reason`, not scientific causal attribution.
+
+Rationale: operators and judges need one coherent explanation surface, while
+the raw audit fact stream contains both sensitive payout data and transport
+details that should not become an accidental public contract.
+
+## D-215 — public audit is a fail-closed whitelist projection
+
+Status: accepted for v0.3.1 pre-TZ hardening.
+
+Decision: `GET /v1/audit/facts` maps each durable fact through
+`Projections::PublicAuditFact`. The projection preserves envelope metadata and
+explicitly safe routing evidence, while omitting recipient/context payload,
+provider references and provider messages by default. It reports omitted key
+names as `redacted_fields` for auditability. The internal raw fact query stays
+available only to trusted application/replay tooling and is not reused as the
+public API serializer.
+
+Rationale: durable facts legitimately retain data needed for recovery and
+reconciliation, but exposing that payload wholesale would make privacy depend
+on every future fact producer remembering to redact itself. A per-type
+allowlist gives the public boundary one owner and fails closed for new fields.
+
+## D-216 — cause-named metrics are deterministic reason attributions
+
+Status: accepted for v0.3.1 pre-TZ hardening.
+
+Decision: keep the existing `deviation_cause` and runtime-infeasibility cause
+vocabulary in durable facts and compatibility accessors, but publish explicit
+semantics with Analytics. `deviation_attribution_semantics` is
+`deterministic_routing_reason`; runtime infeasibility is labelled
+`deterministic_exclusion_reason`. The labels come from observed exclusion and
+allocation-rule precedence, not from a counterfactual experiment and must not
+be described as scientific causality. Decision explanations carry the same
+non-causal routing-reason label.
+
+Rationale: this removes an overstated product claim without duplicating the
+routing model or breaking the existing durable evidence vocabulary.
+
+## D-217 — bounded history profile is the pre-TZ performance evidence boundary
+
+Status: accepted for v0.3.1 pre-TZ hardening.
+
+Decision: keep full durable facts and the existing correctness/replay evidence,
+and use `benchmark/history_profile.rb` as the reproducible bounded profile for
+fact density, lifecycle/Analytics/restore latency, post-GC heap growth and
+concurrent canonical throughput. The clean CRuby 4.0.6 run covers 100/250/500
+payout samples plus 500 payouts across four workers. Restore is the measured
+history-sensitive cost center, but no product latency threshold currently
+justifies an incremental projection/index/checkpoint. The exact-candidate run
+measured 0.4329 seconds restore at 500 payouts and 959.8 concurrent ops/s with
+four workers. The profile is not a 100k campaign and must not be described as
+one.
+
+Rationale: measurement is now attached to the actual fact/replay path without
+removing reconciliation evidence or introducing speculative persistence
+complexity before authoritative workload limits exist.

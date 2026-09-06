@@ -265,10 +265,15 @@ class AllocationOpportunityTest < Minitest::Test
       coordinator.allocation_projection.snapshot(policy).measures
 
     analytics = RubyRouting::Projections::Analytics.from_facts(coordinator.facts)
-    assert_equal({ "A" => Rational(2, 1), "B" => Rational(1, 1) },
+    # Provider-only convenience totals intentionally omit A because its two
+    # values belong to distinct opportunity cohorts. The dimensioned view is
+    # the canonical metric surface.
+    assert_equal({ "B" => Rational(1, 1) },
       analytics.primary_target_measure_by_provider)
-    assert_equal({ "A" => Rational(0, 1), "B" => Rational(0, 1) },
+    assert_equal({ "B" => Rational(0, 1) },
       analytics.primary_deviation_measure_by_provider)
+    assert_equal 3, analytics.primary_target_measure_by_dimension.length
+    assert_equal 3, analytics.primary_deviation_measure_by_dimension.length
   end
 
   def test_same_policy_identity_cannot_be_reused_with_changed_definition

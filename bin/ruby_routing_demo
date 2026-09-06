@@ -14,6 +14,9 @@ puts JSON.pretty_generate(
   action: result.action,
   payout_id: result.payout.id,
   settlement_provider_id: result.payout.settlement_provider_id,
+  configured_policy_ids: demo.fetch(:configuration).policies.map(&:id),
+  configured_provider_ids: demo.fetch(:configuration).provider_opportunities.map(&:provider_id),
+  configured_recovery: demo.fetch(:configuration).policies.map { |policy| policy.recovery.to_h },
   attempts: result.payout.attempts.map do |attempt|
     { provider_id: attempt.provider_id, role: attempt.role, phase: attempt.phase, outcome: attempt.outcome&.status }
   end,

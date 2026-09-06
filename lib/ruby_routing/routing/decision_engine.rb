@@ -5,8 +5,8 @@ module RubyRouting
     module DecisionEngine
       module_function
 
-      def decide(intent:, policy:, opportunities:, allocation_snapshot:, payout_state:,
-                 available_provider_ids: nil, quality: nil)
+      def decide(intent:, policy:, opportunities: nil, allocation_snapshot: nil, payout_state:,
+                 available_provider_ids: nil, quality: nil, evaluation: nil)
         unless intent.is_a?(RubyRouting::PayoutIntent)
           raise ArgumentError, "intent must be PayoutIntent"
         end
@@ -108,39 +108,63 @@ module RubyRouting
           )
         end
 
-        eligibility = RubyRouting::Routing::Eligibility.evaluate(
-          opportunities,
-          intent: intent,
-          policy: policy
-        )
-
         attempted_provider_ids = if payout_state.respond_to?(:money_moving_provider_ids)
           payout_state.money_moving_provider_ids
         else
           payout_state.attempts.map(&:provider_id).uniq
         end
         attempted_provider_ids = normalize_provider_ids(attempted_provider_ids, "attempted_provider_ids")
+
+        if evaluation
+          unless evaluation.respond_to?(:eligibility) &&
+                 evaluation.respond_to?(:allocation_exclusions) &&
+                 evaluation.respond_to?(:runtime_feasibility) &&
+                 evaluation.respond_to?(:allocation_snapshot) &&
+                 evaluation.respond_to?(:quality_snapshots) &&
+                 evaluation.frozen?
+            raise ArgumentError, "evaluation must expose one immutable routing evaluation"
+          end
+
+          eligibility = evaluation.eligibility
+          allocation_exclusions = evaluation.allocation_exclusions
+          runtime_feasibility = evaluation.runtime_feasibility
+          allocation_snapshot = evaluation.allocation_snapshot
+          quality ||= evaluation.quality_snapshots
+        else
+          prepared = RubyRouting::Routing::DecisionEvaluator.prepare(
+            intent: intent,
+            policy: policy,
+            opportunities: opportunities,
+            attempted_provider_ids: attempted_provider_ids
+          )
+          eligibility = prepared.eligibility
+          allocation_exclusions = prepared.allocation_exclusions
+          runtime_feasibility = prepared.runtime_feasibility
+        end
+
         candidates = eligibility.feasible_provider_ids - attempted_provider_ids
-        allocation_exclusions = policy_measure_exclusions(
-          eligibility: eligibility,
-          policy: policy,
-          incoming_measure: policy.measure_for(intent.money)
-        )
 
-        allocation = RubyRouting::Routing::Allocation.choose(
-          policy: policy,
-          candidates: candidates,
-          snapshot: allocation_snapshot,
-          incoming_measure: policy.measure_for(intent.money),
-          accounting_provider_ids: eligibility.functional_provider_ids
-        )
-        runtime_feasibility = RubyRouting::Routing::RuntimeFeasibility.assess(
-          policy: policy,
-          eligibility: eligibility,
-          attempted_provider_ids: attempted_provider_ids,
-          measure_exclusions: allocation_exclusions
-        )
-
+        allocation = if payout_state.attempt_count.positive?
+          # Recovery has its own legal candidate boundary, then intentionally
+          # reuses the canonical primary allocation authority. This does not
+          # advance the primary ledger; commit role controls that boundary.
+          RubyRouting::Routing::RecoverySelection.choose(
+            policy: policy,
+            candidates: eligibility.feasible_provider_ids,
+            attempted_provider_ids: attempted_provider_ids,
+            snapshot: allocation_snapshot,
+            incoming_measure: policy.measure_for(intent.money),
+            accounting_provider_ids: eligibility.functional_provider_ids
+          )
+        else
+          RubyRouting::Routing::Allocation.choose(
+            policy: policy,
+            candidates: candidates,
+            snapshot: allocation_snapshot,
+            incoming_measure: policy.measure_for(intent.money),
+            accounting_provider_ids: eligibility.functional_provider_ids
+          )
+        end
         if allocation.no_route?
           deviation = no_route_deviation(
             eligibility: eligibility,
@@ -198,6 +222,7 @@ module RubyRouting
           )
         )
         reason_codes = [:allocation_choice]
+        reason_codes << :recovery_selection if role == :recovery
         reason_codes << :quality_optimization if quality &&
           allocation.chosen_provider != allocation_provider_before_optimization
         reason_codes << :tolerance_exceeded if allocation.deviation_exceeded?
@@ -210,7 +235,11 @@ module RubyRouting
           provider_id: allocation.chosen_provider,
           role: role,
           policy_epoch: policy.epoch,
-          reasons: ["selected by post-decision #{policy.measure} allocation"],
+          reasons: [
+            role == :recovery ?
+              "selected by explicit recovery allocation authority" :
+              "selected by post-decision #{policy.measure} allocation"
+          ],
           reason_codes: reason_codes,
           allocation_decision: allocation,
           runtime_feasibility: runtime_feasibility
@@ -289,11 +318,6 @@ module RubyRouting
         reasons
       end
       private_class_method :no_route_reasons
-
-      def policy_measure_exclusions(eligibility:, policy:, incoming_measure:)
-        policy.measure_exclusions(eligibility.feasible_provider_ids, incoming_measure)
-      end
-      private_class_method :policy_measure_exclusions
 
       def normalize_provider_ids(provider_ids, label)
         RubyRouting::Collection.to_array(provider_ids, label).map do |provider_id|

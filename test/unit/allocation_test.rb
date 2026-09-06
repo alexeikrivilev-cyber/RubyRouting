@@ -89,6 +89,39 @@ class AllocationTest < Minitest::Test
     assert_equal %w[A B], decision.candidate_discrepancies.keys
   end
 
+  def test_recovery_selection_excludes_attempted_provider_before_primary_allocation_authority
+    policy = count_policy("A" => 9, "B" => 1)
+
+    decision = RubyRouting::Routing::RecoverySelection.choose(
+      policy: policy,
+      candidates: %w[A B],
+      attempted_provider_ids: TestSupport::EachOnlyCollection.new([" A "]),
+      snapshot: RubyRouting::Routing::AllocationSnapshot.empty,
+      incoming_measure: 1,
+      accounting_provider_ids: %w[A B]
+    )
+
+    assert_equal "B", decision.chosen_provider
+    assert_equal ["B"], decision.candidate_discrepancies.keys
+    assert_equal({ "A" => 0, "B" => 1 }, decision.post_measures.fetch("B"))
+  end
+
+  def test_recovery_selection_dispatches_through_the_typed_allocation_constrained_objective
+    policy = count_policy("A" => 1, "B" => 1)
+    assert_equal :allocation_constrained, policy.recovery_objective.mode
+
+    decision = RubyRouting::Routing::RecoverySelection.choose(
+      policy: policy,
+      candidates: %w[A B],
+      attempted_provider_ids: ["A"],
+      snapshot: RubyRouting::Routing::AllocationSnapshot.empty,
+      incoming_measure: 1,
+      accounting_provider_ids: %w[A B]
+    )
+
+    assert_equal "B", decision.chosen_provider
+  end
+
   def test_allocation_snapshot_canonicalizes_provider_ids_and_rejects_collisions
     snapshot = RubyRouting::Routing::AllocationSnapshot.new(measures: { " A " => 2 })
 
@@ -187,6 +220,71 @@ class AllocationTest < Minitest::Test
     assert_equal "A", decision.chosen_provider
     assert_equal Rational(50), decision.discrepancy
     assert_equal Rational(150), decision.candidate_discrepancies.fetch("B")
+  end
+
+  def test_count_tolerance_is_an_absolute_post_decision_l1_measure
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "count-tolerance",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1, "B" => 1 },
+      tolerance: 0
+    )
+    decision = RubyRouting::Routing::Allocation.choose(
+      policy: policy,
+      candidates: %w[A B],
+      snapshot: RubyRouting::Routing::AllocationSnapshot.new(measures: { "A" => 1, "B" => 0 }),
+      incoming_measure: 1
+    )
+
+    assert_equal Rational(2), decision.candidate_discrepancies.fetch("A")
+    assert_equal Rational(0), decision.candidate_discrepancies.fetch("B")
+    assert_equal "B", decision.chosen_provider
+    assert_equal false, decision.candidate_trace.fetch("B").fetch(:tolerance_exceeded)
+  end
+
+  def test_volume_tolerance_is_in_exact_policy_currency_minor_units
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "volume-tolerance",
+      epoch: "1",
+      measure: :volume,
+      targets: { "A" => 1, "B" => 1 },
+      currency: "RUB",
+      tolerance: 40
+    )
+    decision = RubyRouting::Routing::Allocation.choose(
+      policy: policy,
+      candidates: %w[A B],
+      snapshot: RubyRouting::Routing::AllocationSnapshot.new(measures: { "A" => 70, "B" => 0 }),
+      incoming_measure: 30
+    )
+
+    assert_equal Rational(100), decision.candidate_discrepancies.fetch("A")
+    assert_equal Rational(40), decision.candidate_discrepancies.fetch("B")
+    assert_equal "B", decision.chosen_provider
+    assert_equal false, decision.deviation_exceeded?
+  end
+
+  def test_indivisible_assignment_can_exceed_tolerance_but_keeps_exact_evidence
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "indivisible-tolerance",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 3, "B" => 1 },
+      tolerance: 49
+    )
+    decision = RubyRouting::Routing::Allocation.choose(
+      policy: policy,
+      candidates: %w[A B],
+      snapshot: RubyRouting::Routing::AllocationSnapshot.empty,
+      incoming_measure: 100
+    )
+
+    assert_equal "A", decision.chosen_provider
+    assert_equal Rational(50), decision.discrepancy
+    assert_equal Rational(150), decision.candidate_discrepancies.fetch("B")
+    assert_equal true, decision.deviation_exceeded?
+    refute_predicate decision, :allocation_corridor_satisfied?
   end
 
   def test_tolerance_is_an_explicit_allocation_corridor_and_candidate_trace

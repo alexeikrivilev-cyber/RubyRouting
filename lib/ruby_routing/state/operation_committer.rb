@@ -32,6 +32,7 @@ module RubyRouting
       end
 
       def commit_assignment(state, intent, policy, proposal, eligibility, allocation_snapshot)
+        state.recovery_schedule = nil
         next_number = state.attempts.length + 1
         attempt_id = "#{intent.id}:attempt:#{next_number}".freeze
         operation_id = "#{intent.id}:operation:#{next_number}".freeze
@@ -95,6 +96,9 @@ module RubyRouting
           runtime_feasibility: committed_proposal.runtime_feasibility&.to_h,
           soft_constraint_violations: eligibility.soft_violations.fetch(committed_proposal.provider_id, []),
           measure: measure,
+          measure_kind: policy.measure,
+          currency: policy.currency,
+          allocation_key: allocation_key,
           committed_at: committed_at,
           committed_monotonic_at: committed_monotonic_at,
           contract: contract_payload(contract)
@@ -107,6 +111,8 @@ module RubyRouting
           policy_fingerprint: policy.fingerprint,
           allocation_key: allocation_key,
           policy_epoch: policy.epoch,
+          measure_kind: policy.measure,
+          currency: policy.currency,
           provider_id: committed_proposal.provider_id,
           operation_id: operation_id,
           attempt_id: attempt_id,
@@ -184,18 +190,20 @@ module RubyRouting
         end
         RubyRouting::State::DecisionCommit.new(
           proposal: committed_proposal,
-          request: RubyRouting::ProviderOperationRequest.new(
-            payout_id: intent.id,
+          request: RubyRouting::ProviderOperationRequest.from_intent(
+            intent: intent,
             provider_id: committed_proposal.provider_id,
             operation_id: operation_id,
             attempt_id: attempt_id,
-            money: intent.money
+            contract: contract
           ),
           payout: snapshot_for(state)
         )
       end
 
       def commit_resolution(state, intent, policy, proposal)
+        state.recovery_schedule = nil
+        attempt = state.operations.fetch(proposal.operation_id)
         append_fact(
           :decision_committed,
           intent.id,
@@ -218,12 +226,12 @@ module RubyRouting
         state.operation_actions[proposal.operation_id] = proposal.action
         RubyRouting::State::DecisionCommit.new(
           proposal: proposal,
-          request: RubyRouting::ProviderOperationRequest.new(
-            payout_id: intent.id,
+          request: RubyRouting::ProviderOperationRequest.from_intent(
+            intent: intent,
             provider_id: proposal.provider_id,
             operation_id: proposal.operation_id,
             attempt_id: proposal.attempt_id,
-            money: intent.money
+            contract: attempt.contract
           ),
           payout: snapshot_for(state)
         )

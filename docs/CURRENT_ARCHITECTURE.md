@@ -112,6 +112,20 @@ no business resources (admission reads may prune expired local window entries);
 the coordinator records its output and hands admitted assignment work to
 `State::OperationCommitter` inside the same atomic transaction.
 
+The evaluator now materializes one immutable `DecisionEvaluator::Evaluation`
+before proposal construction. `DecisionEngine` consumes its eligibility,
+allocation exclusions, runtime feasibility, allocation snapshot and quality
+evidence instead of recomputing eligibility/runtime feasibility. Standalone
+engine calls retain their compatibility path by computing the same inputs when
+no prepared evaluation is supplied. Atomic commit still revalidates mutable
+state at the coordinator boundary.
+
+The pure `Routing::OpportunityRuntime` module owns the shared composition of a
+provider definition with adapter availability, capacity, health and throughput
+evidence. Live evaluation and durable opportunity-trace validation use this
+same seam while retaining their distinct current-time and as-of evidence
+sources.
+
 ### Allocation controller
 
 Owns business distribution obligations independently from provider quality optimization.
@@ -131,6 +145,13 @@ Responsibilities:
 - recoverable/non-recoverable debt if enabled;
 - bounded recovery/catch-up only if an explicit debt policy is enabled; v0.3
   does not infer catch-up from recoverable deviation (D-059).
+
+`tolerance` has one meaning: the absolute post-decision L1 discrepancy across
+the policy allocation universe, in that policy's measure units. Count uses
+count units; volume uses exact minor units of the policy currency. It is a
+preferred corridor after share obligations, not a license to bypass them. If
+no candidate is inside the corridor, allocation chooses the least-bad
+admissible state and records `tolerance_exceeded`.
 
 Per-payout amount eligibility limits are not provider share minimum/maximum obligations. Keep these concepts separate.
 
@@ -200,7 +221,17 @@ Priority order:
 
 A simple deterministic lexicographic implementation is preferred before statistical/adaptive routing.
 
-Reliability estimates are separate from fast operational health. Slow quality must account for:
+Reliability estimates are separate from fast operational health. Slow quality
+uses an exact deterministic Beta/Laplace posterior over a bounded recent
+evidence window rather than a raw success ratio. The default neutral prior is
+`1/1`; sparse evidence therefore shrinks toward `1/2`, `minimum_samples`
+controls maturity, and `evidence_window` bounds the relevance of old outcomes.
+Context snapshots use mature context evidence, then mature global evidence,
+then the prior/default. Only provider-attributed terminal success/provider
+failure outcomes enter quality; pending/UNKNOWN and recipient/downstream
+outcomes remain neutral. Snapshot/fact payloads preserve counters, prior,
+window and exact Rational score for deterministic replay and optimization
+traceability. Slow quality must account for:
 
 - attribution;
 - comparable route/context cohort;
@@ -228,7 +259,13 @@ Owns legal action after a committed provider operation:
 - return/reversal;
 - economic conflict/remediation.
 
-Fresh fallback is a new routing decision over current opportunity/admission state and excludes already money-moving providers unless an explicit policy says otherwise.
+Fresh fallback is a new routing decision over current opportunity/admission
+state. `Routing::RecoverySelection` owns the recovery-only legality boundary:
+it excludes already money-moving providers, retains the full functional
+accounting universe for exact discrepancy evidence, and deliberately reuses
+the canonical allocation authority for the next legal fallback. Recovery
+assignments keep role `:recovery`, so `primary_assignment` accounting is not
+advanced by fallback work.
 
 A non-operation `defer` with no economic owner is a durable current-state
 transition to `:deferred`, so no-route and exhausted-budget payouts are
@@ -377,6 +414,20 @@ are returned through bounded pages with strict `limit`/`offset` validation and
 explicit continuation metadata, so a durable journal cannot become one
 unbounded API response.
 
+The public audit route applies `Projections::PublicAuditFact` to every page
+before serialization. This is a fail-closed whitelist of case-relevant
+routing evidence: recipient/context fields, provider references and provider
+messages are omitted by default, and the response reports only their field
+names in `redacted_fields`. Internal `Queries#audit_facts` remains a raw
+durable-fact view for trusted replay/restore tooling; it is not the public
+HTTP contract.
+
+`deviation_by_cause` and runtime-infeasibility cause counters are deterministic
+rule attributions, not causal inference. Analytics exposes this contract as
+`deviation_attribution_semantics: deterministic_routing_reason` and
+`runtime_infeasibility_attribution_semantics: deterministic_exclusion_reason`;
+the explanation projection carries the same routing-reason label.
+
 The direct application reconciliation command is a provider-event ingress that
 requires `provider_id`, raw payload and an executable provider-specific
 normalizer. It is not a raw callback escape hatch and does not accept a
@@ -435,6 +486,19 @@ Facts/projections should answer:
 - conflicts/reversals;
 - exact decision rationale.
 
+Distribution metrics use the immutable `Projections::AnalyticsDimension`
+(policy id/epoch/scope, allocation window/cohort, measure, currency and
+provider). Allocation, target, deviation and settlement are exposed as
+dimensioned projection rows and replay/JSON serialization preserve that key.
+Provider-only convenience totals are intentionally omitted when a provider's
+rows are not dimension-compatible.
+
+`Projections::DecisionExplanation` is the typed, whitelist-based read model for
+decision evidence. It groups policy, opportunity, admission, allocation,
+optimization, deterministic rationale, recovery and lifecycle-result fields
+without copying recipient-sensitive fact payloads. Application queries and the
+HTTP payout explanation route consume this same projection.
+
 ## 3. Atomic provider-operation protocol
 
 Before provider I/O, under one atomic state boundary:
@@ -453,6 +517,13 @@ Before provider I/O, under one atomic state boundary:
 Then release the lock/transaction.
 
 Immediately before external I/O, claim the dispatch token. A stale/invalidated commit is a non-action.
+
+The resulting `ProviderOperationRequest` is executable without an out-of-band
+intent lookup. It contains the immutable generic destination, full routing
+context, normalized method/rail values where present, amount/currency,
+operation/attempt/idempotency identity and the pinned `ProviderOperationContract`.
+Assignment, resolution/retry and restart reconstruction use the same canonical
+request factory; provider-specific mapping remains in the adapter boundary.
 
 After external result/callback, re-enter the state transaction and apply normalized evidence.
 
@@ -476,10 +547,16 @@ Keep two feedback loops:
 
 ### Fast operational health
 
-Uses transport/5xx/timeouts/latency/capacity rejection and can rapidly reduce exposure.
+Uses typed transport/5xx/timeout/overload/service-error/latency/deadline evidence and can rapidly reduce exposure. `HealthController` keeps explicit `transport_failure`, `timeout_pressure`, `overload_rejection`, `provider_service_error`, `latency_pressure` and `deadline_pressure` signals on the same hysteresis/probing path.
 The typed `ProviderHealthSnapshot` boundary rejects malformed counters, non-positive
 or non-integer probe limits and `probe_in_flight > probe_limit` before health state
 is used for admission or exposed to projections.
+
+Transport uncertainty is deliberately split at the provider boundary:
+`definitely_not_sent` is provider `transport_failure`, while
+`ambiguous_after_possible_send` is provider operational `timeout_pressure`.
+That health attribution does not alter the normalized UNKNOWN payout outcome or
+its economic owner; the source and typed signal are durably validated on restore.
 
 ### Slow quality estimate
 

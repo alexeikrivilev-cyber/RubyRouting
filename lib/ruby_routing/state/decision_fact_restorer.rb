@@ -134,6 +134,7 @@ module RubyRouting
             role: role,
             operation_id: operation_id
           )
+          state.recovery_schedule = nil if state.respond_to?(:recovery_schedule=)
           state.dispatch_pending[operation_id] = action == :resolve ? :resolution : true
           state.operation_actions[operation_id] = action
           state.operation_action_fact_sequences[operation_id] = fact.sequence

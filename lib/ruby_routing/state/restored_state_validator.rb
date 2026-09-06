@@ -29,6 +29,7 @@ module RubyRouting
           validate_throughput_reservations!(state)
           state.operations.each_value { |attempt| validate_attempt!(state, attempt) }
           validate_dispatch_pending!(state)
+          validate_recovery_schedule!(state)
           validate_payout!(state)
         end
         nil
@@ -94,6 +95,25 @@ module RubyRouting
           raise RubyRouting::State::DurableCorruptionError,
             "dispatch pending state is not linked to an operation for #{state.intent.id}"
         end
+      end
+
+      def validate_recovery_schedule!(state)
+        schedule = state.recovery_schedule
+        return unless schedule
+
+        attempt = state.operations[schedule.operation_id]
+        valid = state.ownership&.operation_id == schedule.operation_id &&
+          state.ownership.provider_id == schedule.provider_id &&
+          state.ownership.attempt_id == schedule.attempt_id &&
+          attempt && attempt.provider_id == schedule.provider_id &&
+          attempt.attempt_id == schedule.attempt_id &&
+          %i[pending unknown].include?(state.status) &&
+          state.dispatch_pending[schedule.operation_id].nil? &&
+          (schedule.action == :resolve ? attempt.contract&.status_lookup : attempt.contract&.idempotent_retry)
+        return if valid
+
+        raise RubyRouting::State::DurableCorruptionError,
+          "recovery schedule is not linked to an unresolved operation for #{state.intent.id}"
       end
 
       def validate_attempt!(state, attempt)

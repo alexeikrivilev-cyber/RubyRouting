@@ -77,6 +77,37 @@ class LifecycleLedgerTest < Minitest::Test
       ledger.status_for(RubyRouting::NormalizedOutcome.safe_route_failure)
   end
 
+  def test_pure_outcome_reduction_is_the_shared_status_phase_and_release_contract
+    cases = [
+      [RubyRouting::NormalizedOutcome.success, :settled, :success, true],
+      [RubyRouting::NormalizedOutcome.pending, :pending, :pending, false],
+      [RubyRouting::NormalizedOutcome.unknown, :unknown, :unknown, false],
+      [RubyRouting::NormalizedOutcome.safe_route_failure, :released, :safe_route_failure, true],
+      [RubyRouting::NormalizedOutcome.temporary_provider_failure, :unknown, :unknown, false],
+      [RubyRouting::NormalizedOutcome.temporary_provider_failure(safe_to_release: true), :released, :temporary_provider_failure, true],
+      [RubyRouting::NormalizedOutcome.terminal_payout_failure, :terminated, :terminal_payout_failure, true]
+    ]
+
+    cases.each do |outcome, phase, status, release_ownership|
+      reduction = RubyRouting::State::LifecycleLedger.reduce_outcome(outcome)
+
+      assert_equal phase, reduction.phase
+      assert_equal status, reduction.status
+      assert_equal release_ownership, reduction.release_ownership?
+      assert_equal status, RubyRouting::State::LifecycleLedger.reduce_status(
+        outcome.status,
+        safe_to_release: outcome.safe_to_release?
+      )
+      assert_equal status, RubyRouting::State::LifecycleLedger.new.status_for(outcome)
+      assert_predicate reduction, :frozen?
+    end
+
+    assert_equal :unknown, RubyRouting::State::LifecycleLedger.reduce_status(
+      :temporary_provider_failure,
+      safe_to_release: "true"
+    )
+  end
+
   def test_phase_transition_table_is_deeply_immutable
     transitions = RubyRouting::State::LifecycleLedger::PHASE_TRANSITIONS
 

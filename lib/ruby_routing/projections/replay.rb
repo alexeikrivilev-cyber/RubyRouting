@@ -137,6 +137,8 @@ module RubyRouting
             controller.observe(
               provider_id: normalize_identity(payload.fetch(:provider_id), "provider id"),
               context_key: normalize_context_key(payload.fetch(:context_key, [])),
+              routing_context: payload[:routing_context],
+              observed_at: payload[:observed_at],
               outcome: RubyRouting::NormalizedOutcome.new(
                 status: payload.fetch(:status),
                 attribution: payload.fetch(:attribution),
@@ -177,7 +179,7 @@ module RubyRouting
 
         values = RubyRouting::HashKeys.symbolize(
           payload,
-          %i[degrade_after quarantine_after recover_after probe_limit],
+          %i[degrade_after quarantine_after recover_after probe_limit latency_threshold_ms],
           "health policy"
         )
         RubyRouting::Routing::HealthPolicy.new(**values)
@@ -186,7 +188,11 @@ module RubyRouting
       def quality_policy_from(payload)
         return RubyRouting::Routing::QualityPolicy.new if payload.nil?
 
-        values = RubyRouting::HashKeys.symbolize(payload, %i[minimum_samples], "quality policy")
+        values = RubyRouting::HashKeys.symbolize(
+          payload,
+          %i[minimum_samples prior_successes prior_failures evidence_window max_evidence_age_seconds],
+          "quality policy"
+        )
         RubyRouting::Routing::QualityPolicy.new(**values)
       end
 
@@ -320,8 +326,7 @@ module RubyRouting
         def initialize(provider_id)
           @provider_id = Replay.send(:normalize_identity, provider_id, "provider id")
           @budget = nil
-          @used_slots = 0
-          @used_count = 0
+          @in_flight = 0
           @used_amount_minor = 0
         end
 
@@ -339,25 +344,23 @@ module RubyRouting
         end
 
         def reserve(money)
-          @used_slots += 1
-          @used_count += 1
+          @in_flight += 1
           @used_amount_minor += money.amount_minor
         end
 
         def release(money)
-          @used_slots -= 1
-          @used_count -= 1
+          @in_flight -= 1
           @used_amount_minor -= money.amount_minor
-          raise ArgumentError, "replayed capacity usage underflow" if @used_slots.negative? ||
-            @used_count.negative? || @used_amount_minor.negative?
+          raise ArgumentError, "replayed capacity usage underflow" if @in_flight.negative? ||
+            @used_amount_minor.negative?
         end
 
         def snapshot
           RubyRouting::State::CapacitySnapshot.new(
             provider_id: @provider_id,
             budget: @budget,
-            used_slots: @used_slots,
-            used_count: @used_count,
+            used_slots: @in_flight,
+            used_count: @in_flight,
             used_amount_minor: @used_amount_minor
           )
         end
@@ -425,11 +428,13 @@ module RubyRouting
           freeze
         end
 
-        def snapshot(provider_id, context: nil, context_key: nil)
+        def snapshot(provider_id, context: nil, context_key: nil, routing_context: nil, as_of: nil)
           @controller.snapshot(
             Replay.send(:normalize_identity, provider_id, "provider id"),
             context: context,
-            context_key: context_key
+            context_key: context_key,
+            routing_context: routing_context,
+            as_of: as_of
           )
         end
 
@@ -471,6 +476,7 @@ module RubyRouting
               policy_scope_key: payout.policy_scope_key,
               policy_fingerprint: payout.policy_fingerprint,
               provider_interaction_count: payout.provider_interaction_count,
+              recovery_schedule: payout.recovery_schedule,
               created_at: payout.created_at,
               conflicts: payout.conflicts.map { |conflict| [conflict.operation_id, conflict.reason] },
               reversals: payout.reversals.map { |reversal| [reversal.reversal_id, reversal.amount] }
@@ -502,6 +508,7 @@ module RubyRouting
           @conflicts = []
           @reversals = []
           @created_at = nil
+          @recovery_schedule = nil
         end
 
         def apply(fact)
@@ -512,7 +519,8 @@ module RubyRouting
               id: fact.payout_id,
               money: payload.fetch(:money),
               recipient: payload.fetch(:recipient, {}),
-              context: payload.fetch(:context, {})
+              context: payload.fetch(:context, {}),
+              routing_context: payload[:routing_context]
             )
             @created_at = payload[:created_at]
           when :policy_registered
@@ -537,6 +545,7 @@ module RubyRouting
               Replay.send(:normalize_identity, payload.fetch(:provider_id), "provider id")
             end
             if %i[assign retry_same].include?(action) && payload[:operation_id]
+              @recovery_schedule = nil
               ensure_attempt(
                 operation_id: payload[:operation_id],
                 attempt_id: payload[:attempt_id],
@@ -550,6 +559,7 @@ module RubyRouting
               end
             end
             @status = :deferred if action == :defer && @ownership.nil?
+            @recovery_schedule = nil if %i[resolve retry_same].include?(action)
           when :allocation_committed
             attempt = ensure_attempt(
               operation_id: payload[:operation_id],
@@ -594,11 +604,13 @@ module RubyRouting
             Replay.send(:normalize_identity, payload.fetch(:operation_id), "operation id")
             Replay.send(:normalize_identity, payload.fetch(:attempt_id), "attempt id")
             @ownership = nil
+            @recovery_schedule = nil
           when :settlement_recorded
             @status = :success
             @settlement_provider_id = Replay.send(:normalize_identity, payload.fetch(:provider_id), "provider id")
             @settlement_operation_id = Replay.send(:normalize_identity, payload.fetch(:operation_id), "operation id")
             @ownership = nil
+            @recovery_schedule = nil
           when :reconciliation_blocked
             @status = :reconciliation_blocked
           when :economic_conflict
@@ -642,7 +654,8 @@ module RubyRouting
             revision: @revision,
             conflicts: @conflicts,
             reversals: @reversals,
-            created_at: @created_at
+            created_at: @created_at,
+            recovery_schedule: @recovery_schedule
           )
         end
 
@@ -693,9 +706,16 @@ module RubyRouting
           Replay.send(:normalize_identity, payload.fetch(:provider_id), "provider id")
           Replay.send(:normalize_identity, payload.fetch(:attempt_id), "attempt id")
           operation_id = Replay.send(:normalize_identity, payload[:operation_id], "operation id")
+          schedule = RubyRouting::RecoverySchedule.from(payload[:recovery_schedule])
+          if schedule && !payload[:applied]
+            raise ArgumentError, "unapplied observation cannot carry recovery schedule"
+          end
           return unless payload[:applied]
 
           attempt = @operations[operation_id]
+          if schedule && attempt.nil?
+            raise ArgumentError, "recovery schedule references an unknown operation"
+          end
           return unless attempt
 
           outcome = RubyRouting::NormalizedOutcome.new(
@@ -708,18 +728,27 @@ module RubyRouting
           attempt.outcome = outcome
           attempt.last_observation_sequence = payload[:sequence] unless payload[:sequence].nil?
           @last_outcome = outcome
-          case outcome.status
-          when :success
-            @status = :success
-          when :pending
-            @status = :pending
-          when :unknown
-            @status = :unknown
-          when :safe_route_failure, :temporary_provider_failure
-            @status = outcome.safe_to_release? ? outcome.status : :unknown
-          when :terminal_payout_failure
-            @status = :terminal_payout_failure
-          end
+          validate_recovery_schedule!(schedule, attempt, outcome) if schedule
+          @recovery_schedule = schedule
+          @status = RubyRouting::State::LifecycleLedger.reduce_status(
+            outcome.status,
+            safe_to_release: outcome.safe_to_release?
+          )
+        end
+
+        def validate_recovery_schedule!(schedule, attempt, outcome)
+          valid = @ownership &&
+            @ownership.operation_id == schedule.operation_id &&
+            @ownership.provider_id == schedule.provider_id &&
+            @ownership.attempt_id == schedule.attempt_id &&
+            attempt.operation_id == schedule.operation_id &&
+            attempt.provider_id == schedule.provider_id &&
+            attempt.attempt_id == schedule.attempt_id &&
+            (outcome.unresolved? || (outcome.provider_failure? && !outcome.safe_to_release?)) &&
+            (schedule.action == :resolve ? attempt.contract&.status_lookup : attempt.contract&.idempotent_retry)
+          return if valid
+
+          raise ArgumentError, "recovery schedule is not linked to a supported unresolved operation"
         end
       end
 

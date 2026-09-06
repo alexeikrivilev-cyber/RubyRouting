@@ -46,6 +46,32 @@ class NormalizerTest < Minitest::Test
     end
   end
 
+  def test_observation_interaction_duration_is_exact_and_immutable
+    observation = RubyRouting::ProviderObservation.new(
+      observation_id: "observation-duration",
+      payout_id: "payout-duration",
+      provider_id: "A",
+      operation_id: "operation-duration",
+      attempt_id: "attempt-duration",
+      outcome: RubyRouting::NormalizedOutcome.pending,
+      interaction_duration_seconds: Rational(1, 2)
+    )
+
+    measured = observation.with_interaction_duration(Rational(3, 4))
+    assert_equal Rational(1, 2), observation.interaction_duration_seconds
+    assert_equal Rational(3, 4), measured.interaction_duration_seconds
+    refute_same observation, measured
+    assert observation.frozen?
+    assert measured.frozen?
+
+    assert_raises(ArgumentError) do
+      observation.with_interaction_duration(0.5)
+    end
+    assert_raises(ArgumentError) do
+      observation.with_interaction_duration(-1)
+    end
+  end
+
   def test_normalized_outcome_rejects_truthy_non_boolean_release_flag
     assert_raises(ArgumentError) do
       RubyRouting::NormalizedOutcome.new(

@@ -170,8 +170,15 @@ module RubyRouting
               successful_samples: quality_payload.fetch(:successful_samples),
               failed_samples: quality_payload.fetch(:failed_samples),
               minimum_samples: quality_payload.fetch(:minimum_samples),
+              prior_successes: quality_payload.fetch(:prior_successes, 1),
+              prior_failures: quality_payload.fetch(:prior_failures, 1),
+              evidence_window: quality_payload.fetch(:evidence_window, 100),
               context_key: quality_payload.fetch(:context_key),
-              evidence_scope: quality_payload.fetch(:evidence_scope)
+              evidence_scope: quality_payload.fetch(:evidence_scope),
+              routing_context: quality_payload[:routing_context],
+              last_observed_at: quality_payload[:last_observed_at],
+              as_of: evaluation.fetch(:evaluated_at),
+              max_evidence_age_seconds: quality_payload.fetch(:max_evidence_age_seconds, nil)
             )
           ]
         end
@@ -397,13 +404,24 @@ module RubyRouting
           measures: snapshot_payload.fetch(:measures),
           revision: snapshot_payload.fetch(:revision)
         )
-        allocation = RubyRouting::Routing::Allocation.choose(
-          policy: policy,
-          candidates: evaluation.fetch(:feasible_provider_ids) - state.attempts.map(&:provider_id),
-          snapshot: allocation_snapshot,
-          incoming_measure: policy.measure_for(state.intent.money),
-          accounting_provider_ids: evaluation.fetch(:functional_provider_ids)
-        )
+        allocation = if state.attempts.any?
+          RubyRouting::Routing::RecoverySelection.choose(
+            policy: policy,
+            candidates: evaluation.fetch(:feasible_provider_ids),
+            attempted_provider_ids: state.attempts.map(&:provider_id),
+            snapshot: allocation_snapshot,
+            incoming_measure: policy.measure_for(state.intent.money),
+            accounting_provider_ids: evaluation.fetch(:functional_provider_ids)
+          )
+        else
+          RubyRouting::Routing::Allocation.choose(
+            policy: policy,
+            candidates: evaluation.fetch(:feasible_provider_ids),
+            snapshot: allocation_snapshot,
+            incoming_measure: policy.measure_for(state.intent.money),
+            accounting_provider_ids: evaluation.fetch(:functional_provider_ids)
+          )
+        end
         [evaluation, allocation]
       end
 

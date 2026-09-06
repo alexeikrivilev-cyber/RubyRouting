@@ -284,6 +284,74 @@ class HttpAppTest < Minitest::Test
     end
   end
 
+  def test_http_public_audit_omits_recipient_and_raw_provider_fields
+    policy = one_provider_policy("public-audit-policy")
+    provider = Class.new do
+      include RubyRouting::Ports::Provider
+
+      def initiate(request)
+        RubyRouting::ProviderObservation.new(
+          observation_id: "public-audit-observation",
+          payout_id: request.payout_id,
+          provider_id: request.provider_id,
+          operation_id: request.operation_id,
+          attempt_id: request.attempt_id,
+          provider_reference: "provider-secret-reference",
+          outcome: RubyRouting::NormalizedOutcome.success(
+            attribution: :provider,
+            provider_reference: "outcome-secret-reference",
+            message: "provider-secret-message"
+          )
+        )
+      end
+
+      def resolve(_request)
+        raise "resolve should not be called"
+      end
+    end.new
+    service = RubyRouting::Application::Service.new(
+      coordinator: RubyRouting::State::Coordinator.new(
+        opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+      ),
+      providers: { "A" => provider }
+    )
+    service.commands.register_policy(policy)
+    app = RubyRouting::Application::HttpApp.new(service: service)
+
+    response = call(
+      app,
+      method: "POST",
+      path: "/v1/payouts",
+      body: {
+        "id" => "public-audit-payout",
+        "amount_minor" => 100,
+        "currency" => "RUB",
+        "recipient" => { "account_number" => "recipient-secret" },
+        "context" => { "private_label" => "context-secret" }
+      }
+    )
+    audit = call(app, method: "GET", path: "/v1/audit/facts", query: "payout_id=public-audit-payout")
+    body = parse(audit)
+    facts = body.fetch("facts")
+    intent_fact = facts.find { |fact| fact.fetch("type") == "intent_registered" }
+    evaluation_fact = facts.find { |fact| fact.fetch("type") == "opportunity_evaluated" }
+    observation_fact = facts.find { |fact| fact.fetch("type") == "provider_observed" }
+
+    assert_equal 201, response.fetch(0)
+    assert_equal 200, audit.fetch(0)
+    assert_equal "RUB", intent_fact.fetch("payload").fetch("money").fetch("currency")
+    assert_includes intent_fact.fetch("redacted_fields"), "context"
+    assert_includes intent_fact.fetch("redacted_fields"), "recipient"
+    assert_equal "A", evaluation_fact.fetch("payload").fetch("feasible_provider_ids").first
+    assert_equal false, observation_fact.fetch("payload").fetch("conflict")
+    assert_equal ["message", "outcome_provider_reference", "provider_reference"],
+      observation_fact.fetch("redacted_fields").sort
+    refute_includes JSON.generate(body), "recipient-secret"
+    refute_includes JSON.generate(body), "context-secret"
+    refute_includes JSON.generate(body), "provider-secret"
+    refute_includes JSON.generate(body), "outcome-secret"
+  end
+
   private
 
   def one_provider_policy(id)

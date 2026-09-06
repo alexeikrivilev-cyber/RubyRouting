@@ -41,6 +41,19 @@ module RubyRouting
       status_lookup || idempotent_retry
     end
 
+    def to_h
+      {
+        provider_id: provider_id,
+        idempotent_retry: idempotent_retry,
+        status_lookup: status_lookup,
+        idempotency_key: idempotency_key,
+        ttl_seconds: ttl_seconds,
+        deadline_seconds: deadline_seconds,
+        version: version,
+        authoritative_sequence: authoritative_sequence
+      }.freeze
+    end
+
     private
 
     def normalize_id(value, label)
@@ -119,6 +132,92 @@ module RubyRouting
     end
   end
 
+  # Generic, immutable payout destination. The core deliberately does not
+  # impose a PSP-specific recipient schema; adapters map this data to their
+  # provider contract at the I/O boundary.
+  class PayoutDestination
+    attr_reader :data
+    alias value data
+
+    def initialize(data)
+      @data = RubyRouting::ImmutableData.deep_freeze(data)
+      freeze
+    end
+
+    def to_h
+      { data: data }.freeze
+    end
+  end
+
+  class ProviderOperationPayload
+    attr_reader :destination, :context, :routing_context, :payment_method, :rail, :contract
+
+    def initialize(destination:, context:, routing_context: nil, payment_method: nil, rail: nil, contract: nil)
+      unless destination.is_a?(RubyRouting::PayoutDestination)
+        destination = RubyRouting::PayoutDestination.new(destination)
+      end
+      unless contract.nil? || contract.is_a?(RubyRouting::ProviderOperationContract)
+        raise ArgumentError, "contract must be ProviderOperationContract or nil"
+      end
+
+      @destination = destination
+      @context = RubyRouting::ImmutableData.deep_freeze(context)
+      derived_routing_context = RubyRouting::RoutingContext.from(@context)
+      @routing_context = RubyRouting::RoutingContext.from(routing_context || derived_routing_context)
+      unless derived_routing_context.empty? || @routing_context == derived_routing_context
+        raise ArgumentError, "routing_context does not match provider operation context"
+      end
+      explicit_payment_method = RubyRouting::RoutingContext.normalize_token(payment_method, "payment_method")
+      explicit_rail = RubyRouting::RoutingContext.normalize_token(rail, "rail")
+      ensure_dimension_matches!(explicit_payment_method, @routing_context.payment_method, "payment_method")
+      ensure_dimension_matches!(explicit_rail, @routing_context.rail, "rail")
+      @payment_method = @routing_context.payment_method || explicit_payment_method
+      @rail = @routing_context.rail || explicit_rail
+      @routing_context = RubyRouting::RoutingContext.new(
+        payment_method: @payment_method,
+        rail: @rail,
+        destination_kind: @routing_context.destination_kind,
+        labels: @routing_context.labels
+      )
+      @contract = contract
+      freeze
+    end
+
+    def self.from_intent(intent, contract: nil)
+      unless intent.is_a?(RubyRouting::PayoutIntent)
+        raise ArgumentError, "intent must be RubyRouting::PayoutIntent"
+      end
+
+      new(
+        destination: intent.recipient,
+        context: intent.context,
+        routing_context: intent.routing_context,
+        payment_method: intent.routing_context.payment_method,
+        rail: intent.routing_context.rail,
+        contract: contract
+      )
+    end
+
+    def to_h
+      {
+        destination: destination.data,
+        context: context,
+        routing_context: routing_context.to_h,
+        payment_method: payment_method,
+        rail: rail,
+        contract: contract&.to_h
+      }.freeze
+    end
+
+    private
+
+    def ensure_dimension_matches!(explicit_value, canonical_value, label)
+      return if explicit_value.nil? || canonical_value.nil? || explicit_value == canonical_value
+
+      raise ArgumentError, "#{label} does not match routing context"
+    end
+  end
+
   class SettlementReversal
     attr_reader :reversal_id, :payout_id, :provider_id, :operation_id, :amount, :reason
 
@@ -147,9 +246,13 @@ module RubyRouting
   end
 
   class ProviderOperationRequest
-    attr_reader :payout_id, :provider_id, :operation_id, :attempt_id, :money, :idempotency_key
+    attr_reader :payout_id, :provider_id, :operation_id, :attempt_id, :money, :idempotency_key,
+                :payload
 
-    def initialize(payout_id:, provider_id:, operation_id:, attempt_id:, money:)
+    def initialize(payout_id:, provider_id:, operation_id:, attempt_id:, money:,
+                   destination: {}, context: {}, routing_context: nil,
+                   payment_method: nil, rail: nil, contract: nil,
+                   payload: nil)
       @payout_id = normalize_id(payout_id, "payout id")
       @provider_id = normalize_id(provider_id, "provider id")
       @operation_id = normalize_id(operation_id, "operation id")
@@ -160,7 +263,74 @@ module RubyRouting
 
       @money = money
       @idempotency_key = "#{@payout_id}:#{@operation_id}".freeze
+      @payload = payload || RubyRouting::ProviderOperationPayload.new(
+        destination: destination,
+        context: context,
+        routing_context: routing_context,
+        payment_method: payment_method,
+        rail: rail,
+        contract: contract
+      )
+      unless @payload.is_a?(RubyRouting::ProviderOperationPayload)
+        raise ArgumentError, "payload must be ProviderOperationPayload"
+      end
+      if @payload.contract &&
+         (@payload.contract.provider_id != @provider_id ||
+          @payload.contract.idempotency_key != @idempotency_key)
+        raise ArgumentError, "operation contract does not match request identity"
+      end
       freeze
+    end
+
+    def self.from_intent(intent:, provider_id:, operation_id:, attempt_id:, contract: nil)
+      unless intent.is_a?(RubyRouting::PayoutIntent)
+        raise ArgumentError, "intent must be RubyRouting::PayoutIntent"
+      end
+
+      new(
+        payout_id: intent.id,
+        provider_id: provider_id,
+        operation_id: operation_id,
+        attempt_id: attempt_id,
+        money: intent.money,
+        payload: RubyRouting::ProviderOperationPayload.from_intent(intent, contract: contract)
+      )
+    end
+
+    def contract
+      payload.contract
+    end
+
+    def destination
+      payload.destination
+    end
+
+    def context
+      payload.context
+    end
+
+    def routing_context
+      payload.routing_context
+    end
+
+    def payment_method
+      payload.payment_method
+    end
+
+    def rail
+      payload.rail
+    end
+
+    def to_h
+      {
+        payout_id: payout_id,
+        provider_id: provider_id,
+        operation_id: operation_id,
+        attempt_id: attempt_id,
+        money: { amount_minor: money.amount_minor, currency: money.currency }.freeze,
+        idempotency_key: idempotency_key,
+        payload: payload.to_h
+      }.freeze
     end
 
     private

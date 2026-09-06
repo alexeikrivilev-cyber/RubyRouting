@@ -81,6 +81,350 @@ class HealthRankingTest < Minitest::Test
     assert_equal 0, controller.snapshot("A").operational_failure_count
   end
 
+  def test_generic_provider_operational_signals_share_hysteresis_but_non_provider_evidence_is_neutral
+    signals = %i[
+      transport_failure
+      timeout_pressure
+      overload_rejection
+      provider_service_error
+      latency_pressure
+      deadline_pressure
+    ]
+
+    signals.each do |signal|
+      controller = RubyRouting::Routing::HealthController.new(
+        policy: RubyRouting::Routing::HealthPolicy.new(degrade_after: 1, quarantine_after: 1)
+      )
+
+      controller.observe(provider_id: "A", signal: signal, attribution: :provider)
+      assert_equal :quarantined, controller.snapshot("A").state, signal
+      assert_equal 1, controller.snapshot("A").operational_failure_count, signal
+      controller.observe(provider_id: "A", signal: :operational_success, attribution: :provider)
+      assert_equal :probing, controller.snapshot("A").state, signal
+      controller.observe(provider_id: "A", signal: :operational_success, attribution: :provider)
+      assert_equal :healthy, controller.snapshot("A").state, signal
+
+      controller.observe(provider_id: "B", signal: signal, attribution: :recipient)
+      assert_equal :healthy, controller.snapshot("B").state, signal
+      assert_equal 0, controller.snapshot("B").operational_failure_count, signal
+    end
+  end
+
+  def test_ambiguous_transport_marks_provider_timeout_pressure_without_releasing_unknown_owner
+    health_policy = RubyRouting::Routing::HealthPolicy.new(
+      degrade_after: 1,
+      quarantine_after: 1,
+      recover_after: 1
+    )
+    providers = [
+      RubyRouting::ProviderOpportunity.new(provider_id: "A"),
+      RubyRouting::ProviderOpportunity.new(provider_id: "B")
+    ]
+    coordinator = RubyRouting::State::Coordinator.new(
+      health_policy: health_policy,
+      opportunities: providers
+    )
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "ambiguous-health",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1, "B" => 1 },
+      tolerance: 0
+    )
+    payout = intent("ambiguous-health-payout")
+    commit = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
+    assert_equal "A", commit.proposal.provider_id
+    coordinator.mark_attempt_started(commit)
+
+    coordinator.apply_observation(
+      RubyRouting::ProviderObservation.new(
+        observation_id: "ambiguous-health-observation",
+        payout_id: payout.id,
+        provider_id: "A",
+        operation_id: commit.proposal.operation_id,
+        attempt_id: commit.proposal.attempt_id,
+        outcome: RubyRouting::NormalizedOutcome.unknown(attribution: :unknown),
+        transport_kind: :ambiguous_after_possible_send
+      )
+    )
+
+    snapshot = coordinator.payout_snapshot(payout.id)
+    health_fact = coordinator.facts.find do |fact|
+      fact.type == :health_signal && fact.payload[:source] == "ambiguous-health-observation"
+    end
+    next_commit = coordinator.prepare_and_commit_decision(
+      intent: intent("ambiguous-health-next"),
+      policy: policy
+    )
+
+    assert_equal :unknown, snapshot.status
+    assert_equal "A", snapshot.ownership.provider_id
+    assert_equal :unknown, snapshot.attempts.first.outcome.status
+    assert_equal :quarantined, coordinator.health_snapshot("A").state
+    assert_equal :timeout_pressure, health_fact.payload[:signal]
+    assert_equal :provider, health_fact.payload[:attribution]
+    assert_equal "B", next_commit.proposal.provider_id
+    assert_equal coordinator.health_snapshot("A").to_h,
+      coordinator.health_projection.snapshot("A").to_h
+  end
+
+  def test_normalized_provider_service_failure_emits_typed_service_health_signal
+    health_policy = RubyRouting::Routing::HealthPolicy.new(
+      degrade_after: 1,
+      quarantine_after: 1,
+      recover_after: 1
+    )
+    provider = RubyRouting::ProviderOpportunity.new(provider_id: "A")
+    coordinator = RubyRouting::State::Coordinator.new(
+      health_policy: health_policy,
+      opportunities: [provider]
+    )
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "service-health",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1 }
+    )
+    payout = intent("service-health-payout")
+    commit = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
+    coordinator.mark_attempt_started(commit)
+    coordinator.apply_observation(
+      RubyRouting::ProviderObservation.new(
+        observation_id: "service-health-observation",
+        payout_id: payout.id,
+        provider_id: "A",
+        operation_id: commit.proposal.operation_id,
+        attempt_id: commit.proposal.attempt_id,
+        outcome: RubyRouting::NormalizedOutcome.temporary_provider_failure(attribution: :provider)
+      )
+    )
+
+    health_fact = coordinator.facts.find do |fact|
+      fact.type == :health_signal && fact.payload[:source] == "service-health-observation"
+    end
+
+    assert_equal :provider_service_error, health_fact.payload[:signal]
+    assert_equal :provider, health_fact.payload[:attribution]
+    assert_equal :quarantined, coordinator.health_snapshot("A").state
+    snapshot = coordinator.payout_snapshot(payout.id)
+    assert_equal :unknown, snapshot.status
+    assert_equal :temporary_provider_failure, snapshot.attempts.first.outcome.status
+    assert_equal "A", snapshot.ownership.provider_id
+  end
+
+  def test_definitely_not_sent_transport_emits_typed_transport_health_signal
+    health_policy = RubyRouting::Routing::HealthPolicy.new(
+      degrade_after: 1,
+      quarantine_after: 1,
+      recover_after: 1
+    )
+    provider = RubyRouting::ProviderOpportunity.new(provider_id: "A")
+    coordinator = RubyRouting::State::Coordinator.new(
+      health_policy: health_policy,
+      opportunities: [provider]
+    )
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "transport-health",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1 }
+    )
+    payout = intent("transport-health-payout")
+    commit = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
+    coordinator.mark_attempt_started(commit)
+    coordinator.apply_observation(
+      RubyRouting::ProviderObservation.new(
+        observation_id: "transport-health-observation",
+        payout_id: payout.id,
+        provider_id: "A",
+        operation_id: commit.proposal.operation_id,
+        attempt_id: commit.proposal.attempt_id,
+        outcome: RubyRouting::NormalizedOutcome.safe_route_failure(attribution: :provider),
+        transport_kind: :definitely_not_sent
+      )
+    )
+
+    health_fact = coordinator.facts.find do |fact|
+      fact.type == :health_signal && fact.payload[:source] == "transport-health-observation"
+    end
+
+    assert_equal :transport_failure, health_fact.payload[:signal]
+    assert_equal :quarantined, coordinator.health_snapshot("A").state
+    assert_nil coordinator.payout_snapshot(payout.id).ownership
+  end
+
+  def test_canonical_provider_path_records_exact_latency_and_replays_provider_health
+    clock = TestSupport::ControlledClock.new
+    health_policy = RubyRouting::Routing::HealthPolicy.new(
+      degrade_after: 1,
+      quarantine_after: 1,
+      recover_after: 1,
+      latency_threshold_ms: 100
+    )
+    coordinator = RubyRouting::State::Coordinator.new(
+      clock: clock,
+      health_policy: health_policy,
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "canonical-latency",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1 }
+    )
+    provider = TimedProvider.new(
+      clock: clock,
+      duration_seconds: Rational(101, 1000),
+      response: :provider_success
+    )
+
+    result = RubyRouting::Application::Orchestrator.new(
+      coordinator: coordinator,
+      providers: { "A" => provider }
+    ).submit(intent: intent("canonical-latency-payout"), policy: policy)
+
+    assert_equal :success, result.status
+    observation = coordinator.facts.find { |fact| fact.type == :provider_observed }
+    health = coordinator.facts.find do |fact|
+      fact.type == :health_signal && fact.payload[:source] == observation.payload[:observation_id]
+    end
+    assert_equal Rational(101, 1000), observation.payload[:interaction_duration_seconds]
+    assert_equal :latency_pressure, health.payload[:signal]
+    assert_equal :provider, health.payload[:attribution]
+    assert_equal :quarantined, coordinator.health_snapshot("A").state
+
+    restored = RubyRouting::State::Coordinator.from_facts(
+      facts: coordinator.facts,
+      clock: clock
+    )
+    assert_equal coordinator.health_snapshot("A").to_h, restored.health_snapshot("A").to_h
+    payout = coordinator.payout_snapshot("canonical-latency-payout")
+    restored_payout = restored.payout_snapshot("canonical-latency-payout")
+    assert_equal payout.status, restored_payout.status
+    assert_equal payout.ownership.to_h, restored_payout.ownership.to_h
+  end
+
+  def test_canonical_latency_boundary_is_not_pressure
+    clock = TestSupport::ControlledClock.new
+    health_policy = RubyRouting::Routing::HealthPolicy.new(
+      degrade_after: 1,
+      quarantine_after: 1,
+      recover_after: 1,
+      latency_threshold_ms: 100
+    )
+    coordinator = RubyRouting::State::Coordinator.new(
+      clock: clock,
+      health_policy: health_policy,
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "latency-boundary",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1 }
+    )
+
+    RubyRouting::Application::Orchestrator.new(
+      coordinator: coordinator,
+      providers: {
+        "A" => TimedProvider.new(
+          clock: clock,
+          duration_seconds: Rational(1, 10),
+          response: :provider_success
+        )
+      }
+    ).submit(intent: intent("latency-boundary-payout"), policy: policy)
+
+    observation = coordinator.facts.find { |fact| fact.type == :provider_observed }
+    health = coordinator.facts.find do |fact|
+      fact.type == :health_signal && fact.payload[:source] == observation.payload[:observation_id]
+    end
+    assert_equal Rational(1, 10), observation.payload[:interaction_duration_seconds]
+    assert_equal :operational_success, health.payload[:signal]
+    assert_equal :healthy, coordinator.health_snapshot("A").state
+  end
+
+  def test_recipient_latency_does_not_create_provider_pressure
+    clock = TestSupport::ControlledClock.new
+    health_policy = RubyRouting::Routing::HealthPolicy.new(
+      degrade_after: 1,
+      quarantine_after: 1,
+      recover_after: 1,
+      latency_threshold_ms: 100
+    )
+    coordinator = RubyRouting::State::Coordinator.new(
+      clock: clock,
+      health_policy: health_policy,
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "latency-boundary",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1 }
+    )
+
+    result = RubyRouting::Application::Orchestrator.new(
+      coordinator: coordinator,
+      providers: {
+        "A" => TimedProvider.new(
+          clock: clock,
+          duration_seconds: Rational(101, 1000),
+          response: :recipient_failure
+        )
+      }
+    ).submit(intent: intent("latency-boundary-payout"), policy: policy)
+
+    assert_equal :terminal_payout_failure, result.status
+    observation = coordinator.facts.find { |fact| fact.type == :provider_observed }
+    assert_equal Rational(101, 1000), observation.payload[:interaction_duration_seconds]
+    refute coordinator.facts.any? { |fact|
+      fact.type == :health_signal && fact.payload[:source] == observation.payload[:observation_id]
+    }
+    assert_equal :healthy, coordinator.health_snapshot("A").state
+  end
+
+  def test_ambiguous_transport_latency_keeps_unknown_owner_and_transport_health_precedence
+    clock = TestSupport::ControlledClock.new
+    health_policy = RubyRouting::Routing::HealthPolicy.new(
+      degrade_after: 1,
+      quarantine_after: 1,
+      recover_after: 1,
+      latency_threshold_ms: 100
+    )
+    coordinator = RubyRouting::State::Coordinator.new(
+      clock: clock,
+      health_policy: health_policy,
+      opportunities: [RubyRouting::ProviderOpportunity.new(provider_id: "A")]
+    )
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "ambiguous-latency",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1 }
+    )
+    result = RubyRouting::Application::Orchestrator.new(
+      coordinator: coordinator,
+      providers: {
+        "A" => TimedProvider.new(
+          clock: clock,
+          duration_seconds: Rational(101, 1000),
+          response: :ambiguous
+        )
+      }
+    ).submit(intent: intent("ambiguous-latency-payout"), policy: policy)
+
+    observation = coordinator.facts.find { |fact| fact.type == :provider_observed }
+    health = coordinator.facts.find do |fact|
+      fact.type == :health_signal && fact.payload[:source] == observation.payload[:observation_id]
+    end
+    assert_equal :unknown, result.status
+    assert_equal "A", result.payout.ownership.provider_id
+    assert_equal Rational(101, 1000), observation.payload[:interaction_duration_seconds]
+    assert_equal :timeout_pressure, health.payload[:signal]
+    assert_equal :quarantined, coordinator.health_snapshot("A").state
+  end
+
   def test_provider_health_ids_use_the_same_canonical_form_as_opportunities
     controller = RubyRouting::Routing::HealthController.new(
       policy: RubyRouting::Routing::HealthPolicy.new(degrade_after: 1, quarantine_after: 1)
@@ -418,5 +762,37 @@ class HealthRankingTest < Minitest::Test
       attempt_id: commit.proposal.attempt_id,
       outcome: RubyRouting::NormalizedOutcome.new(status: status, attribution: attribution)
     )
+  end
+
+  class TimedProvider
+    def initialize(clock:, duration_seconds:, response:)
+      @clock = clock
+      @duration_seconds = duration_seconds
+      @response = response
+    end
+
+    def initiate(request)
+      @clock.advance(@duration_seconds)
+      return RubyRouting::ProviderTransportResult.new(kind: :ambiguous_after_possible_send) if @response == :ambiguous
+
+      status, attribution = if @response == :recipient_failure
+        [:terminal_payout_failure, :recipient]
+      else
+        [:success, :provider]
+      end
+      RubyRouting::ProviderObservation.new(
+        observation_id: "timed:#{request.operation_id}",
+        payout_id: request.payout_id,
+        provider_id: request.provider_id,
+        operation_id: request.operation_id,
+        attempt_id: request.attempt_id,
+        outcome: RubyRouting::NormalizedOutcome.new(status: status, attribution: attribution),
+        observed_at: @clock.now
+      )
+    end
+
+    def resolve(request)
+      initiate(request)
+    end
   end
 end

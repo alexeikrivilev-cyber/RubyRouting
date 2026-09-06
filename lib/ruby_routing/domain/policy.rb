@@ -42,7 +42,7 @@ module RubyRouting
       if intent.is_a?(RubyRouting::PayoutIntent)
         violations << :amount_below_policy_minimum if minimum_amount_minor && intent.money.amount_minor < minimum_amount_minor
         violations << :amount_above_policy_maximum if maximum_amount_minor && intent.money.amount_minor > maximum_amount_minor
-        labels = context_labels(intent.context)
+        labels = context_labels(intent)
         violations << :required_context_missing unless required_context_labels.all? { |label| labels.include?(label) }
       end
       violations.freeze
@@ -72,12 +72,7 @@ module RubyRouting
     end
 
     def normalize_labels(value)
-      RubyRouting::Collection.to_array(value, "required_context_labels").map do |label|
-        normalized = label.to_s.strip
-        raise ArgumentError, "context labels must be non-empty" if normalized.empty?
-
-        normalized.freeze
-      end.uniq.freeze
+      RubyRouting::RoutingContext.normalize_labels(value)
     end
 
     def normalize_limit(value, label)
@@ -90,20 +85,49 @@ module RubyRouting
     end
 
     def context_labels(context)
-      return [] unless context.is_a?(Hash)
+      return [] unless context.is_a?(RubyRouting::PayoutIntent)
 
-      raw = context[:labels] || context["labels"] || []
-      raw = [raw] if raw.is_a?(String) || raw.is_a?(Symbol)
-      RubyRouting::Collection.to_array(raw, "context labels").map { |label| label.to_s.strip }
+      context.routing_context.labels
+    end
+  end
+
+  class RecoveryObjective
+    MODES = %i[allocation_constrained].freeze
+    DEFAULT_MODE = :allocation_constrained
+
+    attr_reader :mode
+
+    def initialize(mode: DEFAULT_MODE)
+      @mode = RubyRouting::Enum.normalize(mode, MODES, "recovery objective")
+      freeze
+    end
+
+    def default?
+      mode == DEFAULT_MODE
+    end
+
+    def to_h
+      { mode: mode }.freeze
+    end
+
+    def ==(other)
+      other.is_a?(self.class) && mode == other.mode
+    end
+    alias eql? ==
+
+    def hash
+      mode.hash
     end
   end
 
   class RecoveryPolicy
     attr_reader :max_operations, :max_switches, :max_resolution_interactions,
-                :ttl_seconds, :deadline_seconds
+                :ttl_seconds, :deadline_seconds, :initial_delay_seconds,
+                :backoff_seconds, :max_delay_seconds
 
     def initialize(max_operations: 3, max_switches: 2, max_resolution_interactions: nil,
-                   ttl_seconds: nil, deadline_seconds: nil)
+                   ttl_seconds: nil, deadline_seconds: nil, initial_delay_seconds: 0,
+                   backoff_seconds: 0, max_delay_seconds: nil)
       @max_operations = normalize_positive(max_operations, "max_operations")
       @max_switches = normalize_non_negative(max_switches, "max_switches")
       max_resolution_interactions ||= [@max_operations - 1, 0].max
@@ -113,17 +137,44 @@ module RubyRouting
       )
       @ttl_seconds = normalize_positive_or_nil(ttl_seconds, "ttl_seconds")
       @deadline_seconds = normalize_positive_or_nil(deadline_seconds, "deadline_seconds")
+      @initial_delay_seconds = normalize_non_negative(initial_delay_seconds, "initial_delay_seconds")
+      @backoff_seconds = normalize_non_negative(backoff_seconds, "backoff_seconds")
+      @max_delay_seconds = normalize_positive_or_nil(max_delay_seconds, "max_delay_seconds")
+      if @max_delay_seconds && @max_delay_seconds < @initial_delay_seconds
+        raise ArgumentError, "max_delay_seconds cannot be below initial_delay_seconds"
+      end
       freeze
     end
 
     def to_h
-      {
+      values = {
         max_operations: max_operations,
         max_switches: max_switches,
         max_resolution_interactions: max_resolution_interactions,
         ttl_seconds: ttl_seconds,
         deadline_seconds: deadline_seconds
-      }.freeze
+      }
+      if schedule_configured?
+        values.merge!(
+          initial_delay_seconds: initial_delay_seconds,
+          backoff_seconds: backoff_seconds,
+          max_delay_seconds: max_delay_seconds
+        )
+      end
+      values.freeze
+    end
+
+    def delay_for(interaction_index:)
+      unless interaction_index.is_a?(Integer) && interaction_index >= 0
+        raise ArgumentError, "interaction_index must be a non-negative Integer"
+      end
+
+      delay = initial_delay_seconds + (backoff_seconds * interaction_index)
+      max_delay_seconds ? [delay, max_delay_seconds].min : delay
+    end
+
+    def schedule_configured?
+      initial_delay_seconds.positive? || backoff_seconds.positive? || !max_delay_seconds.nil?
     end
 
     private
@@ -209,22 +260,33 @@ module RubyRouting
 
     attr_reader :id, :epoch, :measure, :targets, :currency, :scope, :accounting_point,
                 :window, :tolerance, :minimum_measures, :maximum_measures,
-                :minimum_shares, :maximum_shares, :recovery, :ranking,
-                :hard_constraints, :soft_constraints, :fingerprint
+                :minimum_shares, :maximum_shares, :recovery, :recovery_objective, :ranking,
+                :hard_constraints, :soft_constraints, :selector, :fingerprint
 
     def initialize(id:, epoch:, measure:, targets:, currency: nil, scope: :default,
                    accounting_point: :primary_assignment, window: :opportunity_cohort,
                    max_attempts: 3, tolerance: nil, minimum_measures: nil,
                    maximum_measures: nil, minimum_shares: {}, maximum_shares: {},
-                   recovery: nil, ranking: nil, hard_constraints: nil, soft_constraints: nil)
+                   recovery: nil, recovery_objective: nil, ranking: nil,
+                   hard_constraints: nil, soft_constraints: nil,
+                   selector: nil)
       @id = normalize_id(id, "policy id")
       @epoch = normalize_id(epoch, "policy epoch")
       @measure = normalize_measure(measure)
       @targets = normalize_targets(targets)
       @currency = normalize_currency(currency)
       @scope = normalize_id(scope, "policy scope")
+      @selector = RubyRouting::PolicySelector.from(selector)
+      if @currency && @selector.currency && @currency != @selector.currency
+        raise ArgumentError, "policy currency does not match selector currency"
+      end
       @accounting_point = normalize_symbol(accounting_point, ACCOUNTING_POINTS, "accounting point")
       @window = normalize_symbol(window, WINDOWS, "window")
+      # Tolerance is an absolute post-decision L1 discrepancy in this
+      # policy's allocation measure units. Count policies therefore measure
+      # tolerance in payout-count units; volume policies measure it in exact
+      # minor units of `currency`. It is never a normalized share error or a
+      # per-provider corridor.
       @tolerance = normalize_tolerance(tolerance)
       @minimum_measures = normalize_measure_limits(minimum_measures || {}, "minimum_measures")
       @maximum_measures = normalize_measure_limits(maximum_measures || {}, "maximum_measures")
@@ -233,6 +295,10 @@ module RubyRouting
       @recovery = recovery || RecoveryPolicy.new(max_operations: max_attempts)
       unless @recovery.is_a?(RecoveryPolicy)
         raise ArgumentError, "recovery must be RecoveryPolicy"
+      end
+      @recovery_objective = recovery_objective || RecoveryObjective.new
+      unless @recovery_objective.is_a?(RecoveryObjective)
+        raise ArgumentError, "recovery_objective must be RecoveryObjective"
       end
       @ranking = ranking || RankingPolicy.new
       unless @ranking.is_a?(RankingPolicy)
@@ -283,7 +349,7 @@ module RubyRouting
     end
 
     def to_h
-      {
+      values = {
         id: id,
         epoch: epoch,
         measure: measure,
@@ -297,11 +363,17 @@ module RubyRouting
         maximum_measures: maximum_measures,
         minimum_shares: minimum_shares,
         maximum_shares: maximum_shares,
+        selector: selector.to_h,
         recovery: recovery.to_h,
         ranking: ranking.to_h,
         hard_constraints: hard_constraints.to_h,
         soft_constraints: soft_constraints.to_h
-      }.freeze
+      }
+      # The default objective is the historical behavior. Omitting it keeps
+      # old durable policy definitions and fingerprints compatible while the
+      # typed runtime value makes the current recovery rule explicit.
+      values[:recovery_objective] = recovery_objective.to_h unless recovery_objective.default?
+      values.freeze
     end
 
     def static_feasibility
@@ -372,6 +444,13 @@ module RubyRouting
         end
         money.amount_minor
       end
+    end
+
+    def applies_to?(intent)
+      return false unless intent.is_a?(RubyRouting::PayoutIntent)
+      return false if currency && intent.money.currency != currency
+
+      selector.matches?(intent)
     end
 
     def minimum_measure_for(provider_id)
@@ -550,7 +629,7 @@ module RubyRouting
     end
 
     def fingerprint_material
-      [
+      material = [
         id,
         epoch,
         measure,
@@ -569,6 +648,9 @@ module RubyRouting
         constraints_material(hard_constraints),
         constraints_material(soft_constraints)
       ]
+      material << recovery_objective.to_h unless recovery_objective.default?
+      material << selector.to_h unless selector.empty?
+      material
     end
 
     def ranking_material

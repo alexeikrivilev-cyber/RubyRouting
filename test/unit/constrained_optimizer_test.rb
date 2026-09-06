@@ -90,9 +90,9 @@ class ConstrainedOptimizerTest < Minitest::Test
     )
 
     assert_equal "A", decision.chosen_provider
-    assert_equal Rational(4, 5), decision.optimization_trace.fetch("A").fetch(:quality).fetch(:score)
+    assert_equal Rational(5, 7), decision.optimization_trace.fetch("A").fetch(:quality).fetch(:score)
     assert_equal decision.optimization_trace.fetch("A").fetch(:ranking_key).first,
-      -Rational(4, 5)
+      -Rational(5, 7)
     assert_equal false, decision.optimization_trace.fetch("B").fetch(:selected)
   end
 

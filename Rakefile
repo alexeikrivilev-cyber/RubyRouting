@@ -44,4 +44,8 @@ task :degradation_metrics do
   ruby "-Ilib", "benchmark/degradation_metrics.rb"
 end
 
+task :history_profile do
+  ruby "-Ilib", "benchmark/history_profile.rb"
+end
+
 task default: :test

@@ -24,6 +24,51 @@ class FactStoreTest < Minitest::Test
     assert_equal [fact], store.facts
   end
 
+  def test_indexed_audit_queries_and_pages_preserve_fact_order
+    store = RubyRouting::State::FactStore.new
+    first = store.append(type: :intent_registered, payout_id: "payout-1")
+    second = store.append(type: :provider_observed, payout_id: "payout-2")
+    third = store.append(type: :provider_observed, payout_id: "payout-1")
+    fourth = store.append(type: :settlement_recorded, payout_id: "payout-1")
+
+    assert_equal [first, third, fourth], store.query(payout_id: "payout-1")
+    assert_equal [second, third], store.query(type: :provider_observed)
+    assert_equal [third], store.query(payout_id: "payout-1", type: :provider_observed)
+
+    page = store.page(payout_id: "payout-1", offset: 1, limit: 1)
+    assert_equal [third], page.facts
+    assert_equal 1, page.offset
+    assert_equal 1, page.limit
+    assert_equal 3, page.total
+    assert_equal 2, page.next_offset
+    assert_predicate page.facts, :frozen?
+  end
+
+  def test_indexed_query_includes_staged_transaction_facts
+    store = RubyRouting::State::FactStore.new
+    committed = store.append(type: :intent_registered, payout_id: "payout-1")
+
+    store.transaction do
+      staged = store.append(type: :settlement_recorded, payout_id: "payout-1")
+
+      assert_equal [committed, staged], store.query(payout_id: "payout-1")
+      assert_equal [staged], store.page(
+        payout_id: "payout-1",
+        type: :settlement_recorded,
+        offset: 0,
+        limit: 1
+      ).facts
+    end
+  end
+
+  def test_fact_page_rejects_non_integer_or_invalid_bounds
+    store = RubyRouting::State::FactStore.new
+
+    assert_raises(ArgumentError) { store.page(offset: -1, limit: 1) }
+    assert_raises(ArgumentError) { store.page(offset: 0, limit: 0) }
+    assert_raises(ArgumentError) { store.page(offset: 0, limit: 1.0) }
+  end
+
   Journal = Struct.new(:facts) do
     def initialize
       super([])

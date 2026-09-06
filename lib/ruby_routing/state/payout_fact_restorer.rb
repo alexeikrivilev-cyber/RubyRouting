@@ -42,7 +42,8 @@ module RubyRouting
           id: fact.payout_id,
           money: payload.fetch(:money),
           recipient: payload.fetch(:recipient, {}),
-          context: payload.fetch(:context, {})
+          context: payload.fetch(:context, {}),
+          routing_context: payload[:routing_context]
         )
         if existing
           if @same_intent.call(existing.intent, intent)
@@ -62,7 +63,7 @@ module RubyRouting
           @monotonic_reference.call(state.created_at)
         end
         @payouts.call[fact.payout_id] = state
-      rescue KeyError, TypeError, NoMethodError => error
+      rescue ArgumentError, KeyError, TypeError, NoMethodError => error
         raise RubyRouting::State::DurableCorruptionError,
           "malformed intent registration: #{error.message}"
       end

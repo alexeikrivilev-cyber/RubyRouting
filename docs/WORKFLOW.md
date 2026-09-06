@@ -1,6 +1,6 @@
 # Goal Mode + SpecOps Workflow
 
-Current Version Goal: **v0.3 — Product Convergence & Full Routing Product**.
+Current Version Goal: **v0.3.2 — Semantic Control Plane & Recovery Readiness — VERSION_COMPLETE (pre-TZ)**.
 
 ## Operating loop
 
@@ -23,7 +23,7 @@ Do not preserve experimental code merely because deleting it feels destructive.
 
 ### Specify
 
-Behavior changes must map to SPEC-004 or inherited requirements.
+Behavior changes must map to SPEC-006 or compatible inherited requirements.
 
 When an official value is unknown, prefer a reversible typed/configurable model. Do not invent provider-specific facts or case-irrelevant heuristics.
 
@@ -31,7 +31,7 @@ Safety ambiguity is resolved conservatively.
 
 ### Plan
 
-Use `docs/exec-plans/active/product-convergence.md` for substantial work.
+Use `docs/exec-plans/active/pre-tz-semantic-control-plane.md` for substantial work.
 
 Plans are outcome-based and may reopen phases. They do not define completion by exhausting a checklist.
 

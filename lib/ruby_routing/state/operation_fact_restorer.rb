@@ -185,6 +185,7 @@ module RubyRouting
             "reconciliation block evidence does not match current operation #{operation_id}"
         end
         state.status = :reconciliation_blocked
+        state.recovery_schedule = nil
         state.dispatch_pending.delete(operation_id)
       end
 

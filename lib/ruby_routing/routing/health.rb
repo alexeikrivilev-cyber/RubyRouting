@@ -3,24 +3,33 @@
 module RubyRouting
   module Routing
     class HealthPolicy
-      attr_reader :degrade_after, :quarantine_after, :recover_after, :probe_limit
+      attr_reader :degrade_after, :quarantine_after, :recover_after, :probe_limit,
+                  :latency_threshold_ms
 
-      def initialize(degrade_after: 2, quarantine_after: 3, recover_after: 2, probe_limit: 1)
+      def initialize(degrade_after: 2, quarantine_after: 3, recover_after: 2, probe_limit: 1,
+                     latency_threshold_ms: nil)
         @degrade_after = normalize_positive(degrade_after, "degrade_after")
         @quarantine_after = normalize_positive(quarantine_after, "quarantine_after")
         @recover_after = normalize_positive(recover_after, "recover_after")
         @probe_limit = normalize_positive(probe_limit, "probe_limit")
+        unless latency_threshold_ms.nil? ||
+               (latency_threshold_ms.is_a?(Integer) && latency_threshold_ms.positive?)
+          raise ArgumentError, "latency_threshold_ms must be a positive Integer or nil"
+        end
+        @latency_threshold_ms = latency_threshold_ms
         raise ArgumentError, "quarantine_after must not be below degrade_after" if quarantine_after < degrade_after
         freeze
       end
 
       def to_h
-        {
+        values = {
           degrade_after: degrade_after,
           quarantine_after: quarantine_after,
           recover_after: recover_after,
           probe_limit: probe_limit
-        }.freeze
+        }
+        values[:latency_threshold_ms] = latency_threshold_ms unless latency_threshold_ms.nil?
+        values.freeze
       end
 
       private
@@ -113,7 +122,30 @@ module RubyRouting
     end
 
     class HealthController
-      SIGNALS = %i[operational_failure operational_success timeout provider_failure recipient_failure].freeze
+      SIGNALS = %i[
+        operational_failure
+        operational_success
+        timeout
+        provider_failure
+        recipient_failure
+        transport_failure
+        timeout_pressure
+        overload_rejection
+        provider_service_error
+        latency_pressure
+        deadline_pressure
+      ].freeze
+      FAILURE_SIGNALS = %i[
+        operational_failure
+        timeout
+        provider_failure
+        transport_failure
+        timeout_pressure
+        overload_rejection
+        provider_service_error
+        latency_pressure
+        deadline_pressure
+      ].freeze
       ATTRIBUTIONS = %i[provider recipient downstream policy unknown].freeze
 
       attr_reader :policy
@@ -188,7 +220,7 @@ module RubyRouting
           return [before, before]
         end
 
-        if %i[operational_failure timeout provider_failure].include?(normalized_signal)
+        if FAILURE_SIGNALS.include?(normalized_signal)
           state.release_direct_probe if normalized_release_exposure
           state.record_failure
           if state.consecutive_failure_count >= @policy.quarantine_after

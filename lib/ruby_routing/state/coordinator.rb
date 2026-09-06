@@ -92,6 +92,7 @@ module RubyRouting
             money: intent.money,
             recipient: intent.recipient,
             context: intent.context,
+            routing_context: intent.routing_context.to_h,
             created_at: state.created_at,
             created_monotonic_at: state.created_monotonic_at
           )
@@ -180,6 +181,9 @@ module RubyRouting
         # Validate command-local policy/input values before pinning any policy
         # identity or registering the intent. A malformed volume currency or
         # adapter-id list must not leave a half-pinned payout behind.
+        unless policy.applies_to?(intent)
+          raise ArgumentError, "policy selector or currency does not match payout route"
+        end
         incoming_measure = policy.measure_for(intent.money)
         normalized_available_provider_ids = if available_provider_ids.nil?
           nil
@@ -209,6 +213,7 @@ module RubyRouting
               money: intent.money,
               recipient: intent.recipient,
               context: intent.context,
+              routing_context: intent.routing_context.to_h,
               created_at: state.created_at,
               created_monotonic_at: state.created_monotonic_at
             )
@@ -217,6 +222,25 @@ module RubyRouting
           state.created_monotonic_at ||= current_monotonic
           register_policy!(state, intent, policy)
           expire_unresolved_operation!(state)
+          schedule_due = if state.recovery_schedule
+            state.recovery_schedule.due?(
+              as_of: current_time,
+              as_of_monotonic: current_monotonic
+            )
+          end
+          if state.recovery_schedule && !schedule_due
+            proposal = DecisionProposal.new(
+              action: :defer,
+              role: :resolution,
+              policy_epoch: policy.epoch,
+              reasons: [
+                "#{state.recovery_schedule.action} is not due until " \
+                  "#{state.recovery_schedule.next_action_at.iso8601}"
+              ],
+              reason_codes: [:recovery_not_due]
+            )
+            return DecisionCommit.new(proposal: proposal, request: nil, payout: snapshot_for(state))
+          end
 
           # Adapter availability is an operational admission fact, not a
           # functional-opportunity fact. Keep every catalog opportunity in the
@@ -242,6 +266,8 @@ module RubyRouting
             policy_epoch: policy.epoch,
             policy_scope: policy.scope,
             policy_fingerprint: policy.fingerprint,
+            measure_kind: policy.measure,
+            currency: policy.currency,
             opportunities: eligibility.opportunity_provider_ids,
             functional_provider_ids: eligibility.functional_provider_ids,
             feasible_provider_ids: eligibility.feasible_provider_ids,
@@ -292,6 +318,11 @@ module RubyRouting
               action: proposal.action,
               role: proposal.role,
               policy_epoch: policy.epoch,
+              policy_id: policy.id,
+              policy_scope: policy.scope,
+              measure_kind: policy.measure,
+              currency: policy.currency,
+              allocation_key: allocation_key,
               provider_id: proposal.provider_id,
                reasons: proposal.reasons,
                reason_codes: proposal.reason_codes,
@@ -370,6 +401,10 @@ module RubyRouting
           expire_unresolved_operation!(state)
           ownership = state.ownership
           return nil unless ownership
+          return nil if state.recovery_schedule && !state.recovery_schedule.due?(
+            as_of: current_time,
+            as_of_monotonic: current_monotonic
+          )
 
           attempt = state.operations.fetch(ownership.operation_id)
           pending = state.dispatch_pending[attempt.operation_id]
@@ -483,6 +518,10 @@ module RubyRouting
 
           applies = observation_decision.applies?
           conflict = observation_decision.conflict?
+          observed_at = observation.observed_at || current_time
+          recovery_schedule = if applies
+            recovery_schedule_for(state, attempt, observation.outcome)
+          end
           append_fact(
             :provider_observed,
             state.intent.id,
@@ -499,8 +538,10 @@ module RubyRouting
             sequence: observation.sequence,
             observed_at: observation.observed_at,
             transport_kind: observation.transport_kind,
+            interaction_duration_seconds: observation.interaction_duration_seconds,
             applied: applies,
-            conflict: conflict
+            conflict: conflict,
+            recovery_schedule: recovery_schedule&.to_h
           )
           if observation.transport_kind
             append_fact(
@@ -518,7 +559,11 @@ module RubyRouting
             record_conflict(state, attempt, observation)
           end
           record_health_from_observation(observation)
-          record_quality_from_observation(observation, context: state.intent.context) if applies
+          record_quality_from_observation(
+            observation,
+            context: state.intent.routing_context,
+            observed_at: observed_at
+          ) if applies
           return ObservationApplication.new(
             payout: snapshot_for(state),
             next_action: next_action_for(state),
@@ -529,6 +574,8 @@ module RubyRouting
           attempt.outcome = observation.outcome
           attempt.last_observation_sequence = observation.sequence unless observation.sequence.nil?
           apply_current_outcome(state, attempt, observation.outcome)
+          state.recovery_schedule = recovery_schedule if state.ownership && recovery_schedule
+          state.recovery_schedule = nil unless state.ownership && recovery_schedule
           ObservationApplication.new(
             payout: snapshot_for(state),
             next_action: next_action_for(state),
@@ -542,6 +589,59 @@ module RubyRouting
         canonical_payout_id = normalized_payout_id(payout_id)
         synchronize { snapshot_for(@payouts.fetch(canonical_payout_id)) }
       end
+
+      # Returns only work that is safe to expose as currently actionable. The
+      # caller supplies wall time so an external runner can poll
+      # deterministically; no queue or background thread is part of the core.
+      def due_recovery_work(as_of: current_time)
+        unless as_of.is_a?(Time)
+          raise ArgumentError, "as_of must be a Time"
+        end
+
+        normalized_as_of = as_of.utc.freeze
+        synchronize do
+          @payouts.values.sort_by { |state| state.intent.id }.each_with_object([]) do |state, work|
+            if state.ownership && operation_contract_expired_at?(state, normalized_as_of)
+              ownership = state.ownership
+              work << RubyRouting::RecoveryWorkItem.new(
+                payout_id: state.intent.id,
+                action: :reconcile,
+                provider_id: ownership.provider_id,
+                operation_id: ownership.operation_id,
+                attempt_id: ownership.attempt_id,
+                due_at: nil,
+                reason_code: :operation_contract_expired,
+                status: :reconciliation_blocked
+              )
+            elsif state.recovery_schedule&.due?(as_of: normalized_as_of)
+              schedule = state.recovery_schedule
+              work << RubyRouting::RecoveryWorkItem.new(
+                payout_id: state.intent.id,
+                action: schedule.action,
+                provider_id: schedule.provider_id,
+                operation_id: schedule.operation_id,
+                attempt_id: schedule.attempt_id,
+                due_at: schedule.next_action_at,
+                reason_code: schedule.reason_code,
+                status: state.status
+              )
+            elsif state.status == :reconciliation_blocked && state.ownership
+              work << RubyRouting::RecoveryWorkItem.new(
+                payout_id: state.intent.id,
+                action: :reconcile,
+                provider_id: state.ownership.provider_id,
+                operation_id: state.ownership.operation_id,
+                attempt_id: state.ownership.attempt_id,
+                due_at: nil,
+                reason_code: :reconciliation_blocked,
+                status: state.status
+              )
+            end
+          end.freeze
+        end
+      end
+
+      alias due_work due_recovery_work
 
       def record_reversal(payout_id:, reversal_id:, provider_id:, operation_id:, amount:, reason: :returned)
         canonical_payout_id = normalized_payout_id(payout_id)
@@ -668,8 +768,16 @@ module RubyRouting
         RubyRouting::Projections::Replay.health(facts)
       end
 
-      def quality_snapshot(provider_id, context: nil, context_key: nil)
-        synchronize { @quality_controller.snapshot(provider_id, context: context, context_key: context_key) }
+      def quality_snapshot(provider_id, context: nil, context_key: nil, routing_context: nil, as_of: current_time)
+        synchronize do
+          @quality_controller.snapshot(
+            provider_id,
+            context: context,
+            context_key: context_key,
+            routing_context: routing_context,
+            as_of: as_of
+          )
+        end
       end
 
       def quality_projection
@@ -736,6 +844,23 @@ module RubyRouting
         synchronize { @fact_store.facts }
       end
 
+      def audit_facts(payout_id: nil, type: nil)
+        synchronize do
+          @fact_store.query(payout_id: payout_id, type: type)
+        end
+      end
+
+      def audit_fact_page(payout_id: nil, type: nil, offset:, limit:)
+        synchronize do
+          @fact_store.page(
+            payout_id: payout_id,
+            type: type,
+            offset: offset,
+            limit: limit
+          )
+        end
+      end
+
       def lifecycle_projection
         RubyRouting::Projections::Replay.lifecycle(facts)
       end
@@ -785,14 +910,15 @@ module RubyRouting
       end
 
       def decision_commit_for_attempt(state, proposal)
+        attempt = state.operations.fetch(proposal.operation_id)
         DecisionCommit.new(
           proposal: proposal,
-          request: RubyRouting::ProviderOperationRequest.new(
-            payout_id: state.intent.id,
+          request: RubyRouting::ProviderOperationRequest.from_intent(
+            intent: state.intent,
             provider_id: proposal.provider_id,
             operation_id: proposal.operation_id,
             attempt_id: proposal.attempt_id,
-            money: state.intent.money
+            contract: attempt.contract
           ),
           payout: snapshot_for(state)
         )
@@ -878,6 +1004,7 @@ module RubyRouting
           provider_id functional_eligible available capacity_available capabilities
           exclusion_reason supported_currencies minimum_amount_minor maximum_amount_minor
           required_context_labels enabled capacity health_available throughput throughput_available
+          route_capabilities
         ]
         values = RubyRouting::HashKeys.symbolize(
           definition || payload,
@@ -887,11 +1014,16 @@ module RubyRouting
         )
         values[:provider_id] ||= payload.fetch(:provider_id)
         values[:capabilities] = provider_capabilities_from(values[:capabilities])
+        values[:route_capabilities] = provider_route_capabilities_from(values[:route_capabilities])
         values[:capacity] = capacity_budget_from(values[:capacity])
         values[:throughput] = throughput_budget_from(values[:throughput])
         RubyRouting::ProviderOpportunity.new(**values.select { |key, _value| allowed.include?(key) })
       rescue KeyError, ArgumentError, TypeError => error
         raise RubyRouting::State::DurableCorruptionError, "invalid provider opportunity history: #{error.message}"
+      end
+
+      def provider_route_capabilities_from(value)
+        RubyRouting::ProviderRouteCapabilities.from(value)
       end
 
       def provider_capabilities_from(value)
@@ -989,16 +1121,26 @@ module RubyRouting
           definition,
           %i[
             id epoch measure targets currency scope accounting_point window max_attempts tolerance
-            minimum_measures maximum_measures minimum_shares maximum_shares recovery ranking
-            hard_constraints soft_constraints
+            minimum_measures maximum_measures minimum_shares maximum_shares recovery recovery_objective ranking
+            hard_constraints soft_constraints selector
           ],
           "policy definition"
         )
         if values[:recovery].is_a?(Hash)
           values[:recovery] = RecoveryPolicy.new(**RubyRouting::HashKeys.symbolize(
             values[:recovery],
-            %i[max_operations max_switches max_resolution_interactions ttl_seconds deadline_seconds],
+            %i[
+              max_operations max_switches max_resolution_interactions ttl_seconds deadline_seconds
+              initial_delay_seconds backoff_seconds max_delay_seconds
+            ],
             "recovery policy"
+          ))
+        end
+        if values[:recovery_objective].is_a?(Hash)
+          values[:recovery_objective] = RecoveryObjective.new(**RubyRouting::HashKeys.symbolize(
+            values[:recovery_objective],
+            %i[mode],
+            "recovery objective"
           ))
         end
         if values[:ranking].is_a?(Hash)
@@ -1030,7 +1172,7 @@ module RubyRouting
 
         values = RubyRouting::HashKeys.symbolize(
           payload,
-          %i[degrade_after quarantine_after recover_after probe_limit],
+          %i[degrade_after quarantine_after recover_after probe_limit latency_threshold_ms],
           "health policy"
         )
         RubyRouting::Routing::HealthPolicy.new(**values)
@@ -1041,7 +1183,11 @@ module RubyRouting
       def quality_policy_from_payload(payload)
         return RubyRouting::Routing::QualityPolicy.new if payload.nil?
 
-        values = RubyRouting::HashKeys.symbolize(payload, %i[minimum_samples], "quality policy")
+        values = RubyRouting::HashKeys.symbolize(
+          payload,
+          %i[minimum_samples prior_successes prior_failures evidence_window max_evidence_age_seconds],
+          "quality policy"
+        )
         RubyRouting::Routing::QualityPolicy.new(**values)
       rescue ArgumentError, KeyError, TypeError => error
         raise RubyRouting::State::DurableCorruptionError, "invalid quality policy history: #{error.message}"
@@ -1198,7 +1344,13 @@ module RubyRouting
           restored_observations: -> { @restored_observations },
           pending_economic_conflicts: -> { @pending_economic_conflicts },
           operation_identity: ->(payload, key) { durable_operation_identity_value!(payload, key) },
-          provider_identity: ->(payload, key) { durable_provider_identity_value!(payload, key) }
+          provider_identity: ->(payload, key) { durable_provider_identity_value!(payload, key) },
+          policy_for_state: lambda do |state|
+            @policies.fetch(state.policy_scope_key) do
+              raise RubyRouting::State::DurableCorruptionError,
+                "recovery schedule references missing policy"
+            end
+          end
         )
       end
 
@@ -1511,12 +1663,15 @@ module RubyRouting
         end
 
         request = decision_commit.request
+        expected_request = RubyRouting::ProviderOperationRequest.from_intent(
+          intent: state.intent,
+          provider_id: attempt.provider_id,
+          operation_id: attempt.operation_id,
+          attempt_id: attempt.attempt_id,
+          contract: attempt.contract
+        )
         unless request.is_a?(RubyRouting::ProviderOperationRequest) &&
-               request.payout_id == state.intent.id &&
-               request.provider_id == attempt.provider_id &&
-               request.operation_id == attempt.operation_id &&
-               request.attempt_id == attempt.attempt_id &&
-               request.money == state.intent.money
+               request.to_h == expected_request.to_h
           raise ArgumentError, "decision commit request does not match operation state"
         end
       end
@@ -1594,6 +1749,62 @@ module RubyRouting
         }
       end
 
+      def recovery_schedule_for(state, attempt, outcome)
+        return nil unless state.ownership&.operation_id == attempt.operation_id
+        return nil unless outcome.unresolved? || (outcome.provider_failure? && !outcome.safe_to_release?)
+
+        policy = @policies.fetch(state.policy_scope_key) do
+          raise RubyRouting::State::DurableCorruptionError,
+            "missing policy definition for recovery schedule"
+        end
+        classification = RubyRouting::Routing::Recovery.classify(
+          status: outcome.status,
+          ownership: state.ownership,
+          capabilities: attempt.contract,
+          operation_phase: :pending,
+          attempts: state.attempts.length,
+          policy: policy.recovery,
+          resolution_interactions: state.resolution_interaction_count
+        )
+        return nil unless %i[resolve retry_same].include?(classification.action)
+
+        scheduled_at = current_time
+        scheduled_monotonic_at = current_monotonic
+        delay_seconds = policy.recovery.delay_for(
+          interaction_index: state.resolution_interaction_count
+        )
+        RubyRouting::RecoverySchedule.new(
+          action: classification.action,
+          provider_id: attempt.provider_id,
+          operation_id: attempt.operation_id,
+          attempt_id: attempt.attempt_id,
+          scheduled_at: scheduled_at,
+          scheduled_monotonic_at: scheduled_monotonic_at,
+          next_action_at: scheduled_at + delay_seconds,
+          next_action_monotonic_at: scheduled_monotonic_at + delay_seconds,
+          delay_seconds: delay_seconds,
+          interaction_index: state.resolution_interaction_count,
+          reason_code: classification.reason_code
+        )
+      end
+
+      def operation_contract_expired_at?(state, as_of)
+        return true if state.status == :reconciliation_blocked
+
+        attempt = state.operations.fetch(state.ownership.operation_id)
+        return false unless attempt.committed_monotonic_at
+
+        as_of_monotonic = monotonic_reference_for(as_of)
+        return false if as_of_monotonic < attempt.committed_monotonic_at
+
+        elapsed = elapsed_seconds(as_of_monotonic, attempt.committed_monotonic_at)
+        operation_ttl = attempt.contract&.ttl_seconds
+        deadline = attempt.contract&.deadline_seconds
+        (operation_ttl && elapsed >= operation_ttl) ||
+          (deadline && state.created_monotonic_at &&
+           elapsed_seconds(as_of_monotonic, state.created_monotonic_at) >= deadline)
+      end
+
       def expire_unresolved_operation!(state)
         return unless state.ownership
         return if state.status == :reconciliation_blocked
@@ -1612,6 +1823,7 @@ module RubyRouting
         return unless expired
 
         state.status = :reconciliation_blocked
+        state.recovery_schedule = nil
         state.dispatch_pending.delete(attempt.operation_id)
         set_operation_phase(state, attempt.operation_id, :reconciliation_blocked)
         append_fact(
@@ -1629,31 +1841,58 @@ module RubyRouting
 
       def record_health_from_observation(observation)
         outcome = observation.outcome
-        signal = if outcome.provider_failure?
-          :provider_failure
+        # A transport classification is provider operational evidence even
+        # when the normalized payout attribution remains unknown. Health may
+        # protect future traffic; it must not grant release authority.
+        signal, attribution = if observation.transport_kind == :definitely_not_sent
+          [:transport_failure, :provider]
+        elsif observation.transport_kind == :ambiguous_after_possible_send
+          [:timeout_pressure, :provider]
+        elsif outcome.status == :temporary_provider_failure && outcome.attribution == :provider
+          [:provider_service_error, outcome.attribution]
+        elsif outcome.provider_failure?
+          [:provider_failure, outcome.attribution]
         elsif outcome.success? && outcome.attribution == :provider
-          :operational_success
+          [:operational_success, outcome.attribution]
         elsif outcome.status == :unknown && outcome.attribution == :provider
-          :timeout
+          [:timeout, outcome.attribution]
+        end
+        if latency_pressure?(observation) && (signal.nil? || signal == :operational_success)
+          signal = :latency_pressure
+          attribution = :provider
         end
         return unless signal
 
         record_health_signal_locked(
           provider_id: observation.provider_id,
           signal: signal,
-          attribution: outcome.attribution,
+          attribution: attribution,
           source: observation.observation_id,
           source_payout_id: observation.payout_id
         )
       end
 
-      def record_quality_from_observation(observation, context: nil)
-        before, after = @quality_controller.observe(
+      def latency_pressure?(observation)
+        threshold_ms = @health_controller.policy.latency_threshold_ms
+        duration = observation.interaction_duration_seconds
+        duration && threshold_ms && duration * 1000 > threshold_ms &&
+          observation.outcome.attribution == :provider
+      end
+
+      def record_quality_from_observation(observation, context: nil, observed_at: nil)
+        @quality_controller.observe(
           provider_id: observation.provider_id,
           outcome: observation.outcome,
-          context: context
+          context: context,
+          routing_context: context,
+          observed_at: observed_at
         )
-        return if before.sample_count == after.sample_count
+        return unless quality_evidence_outcome?(observation.outcome)
+        after = @quality_controller.evidence_snapshot(
+          observation.provider_id,
+          context: context,
+          routing_context: context
+        )
 
         append_fact(
           :quality_signal,
@@ -1664,11 +1903,26 @@ module RubyRouting
           status: observation.outcome.status,
           attribution: observation.outcome.attribution,
           safe_to_release: observation.outcome.safe_to_release?,
+          successful_samples: after.successful_samples,
+          failed_samples: after.failed_samples,
           sample_count: after.sample_count,
           score: after.score,
+          minimum_samples: after.minimum_samples,
+          prior_successes: after.prior_successes,
+          prior_failures: after.prior_failures,
+          evidence_window: after.evidence_window,
           context_key: after.context_key,
-          evidence_scope: after.evidence_scope
+          evidence_scope: after.evidence_scope,
+          routing_context: after.routing_context&.to_h,
+          observed_at: observed_at,
+          last_observed_at: after.last_observed_at,
+          max_evidence_age_seconds: after.max_evidence_age_seconds
         )
+      end
+
+      def quality_evidence_outcome?(outcome)
+        outcome.is_a?(RubyRouting::NormalizedOutcome) &&
+          outcome.attribution == :provider && (outcome.success? || outcome.provider_failure?)
       end
 
       def record_health_signal_locked(provider_id:, signal:, attribution:, source: nil, source_payout_id: nil)
@@ -1797,12 +2051,14 @@ module RubyRouting
           conflicts: state.conflicts,
           reversals: state.reversals,
           revision: @fact_store.revision,
-          created_at: state.created_at
+          created_at: state.created_at,
+          recovery_schedule: state.recovery_schedule
         )
       end
 
       def same_intent?(left, right)
-        left.id == right.id && left.money == right.money && left.recipient == right.recipient && left.context == right.context
+        left.id == right.id && left.money == right.money && left.recipient == right.recipient &&
+          left.context == right.context && left.routing_context == right.routing_context
       end
 
       def contract_payload(contract)
@@ -1852,7 +2108,8 @@ module RubyRouting
                       :settlement_provider_id, :settlement_operation_id, :policy_epoch,
                       :provider_interaction_count, :policy_scope_key, :policy_fingerprint,
                       :created_at, :resolution_interaction_count,
-                      :created_monotonic_at, :latest_opportunity_evaluation
+                      :created_monotonic_at, :latest_opportunity_evaluation,
+                      :recovery_schedule
         attr_reader :intent, :attempts, :operations, :seen_observations,
                     :conflicts, :conflict_observation_ids, :reversals,
                     :capacity_reservations, :health_exposure_reservations,
@@ -1889,6 +2146,7 @@ module RubyRouting
           @policy_fingerprint = nil
           @created_at = nil
           @created_monotonic_at = nil
+          @recovery_schedule = nil
         end
       end
 

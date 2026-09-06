@@ -239,25 +239,30 @@ module RubyRouting
       end
 
       class CapacityUsage
-        attr_reader :slots, :count, :amount_minor
+        attr_reader :amount_minor
 
         def initialize
-          @slots = 0
-          @count = 0
+          @in_flight = 0
           @amount_minor = 0
         end
 
+        def slots
+          @in_flight
+        end
+
+        def count
+          @in_flight
+        end
+
         def reserve(money)
-          @slots += 1
-          @count += 1
+          @in_flight += 1
           @amount_minor += money.amount_minor
         end
 
         def release(money)
-          @slots -= 1
-          @count -= 1
+          @in_flight -= 1
           @amount_minor -= money.amount_minor
-          if @slots.negative? || @count.negative? || @amount_minor.negative?
+          if @in_flight.negative? || @amount_minor.negative?
             raise ArgumentError, "capacity usage underflow"
           end
         end

@@ -29,6 +29,20 @@ class AdmissionLedgerTest < Minitest::Test
     assert_equal 0, ledger.capacity_snapshot("A", budget: capacity).used_slots
   end
 
+  def test_capacity_budget_uses_one_concurrent_limit_and_keeps_count_as_legacy_cap
+    budget = RubyRouting::CapacityBudget.new(max_slots: 2, max_count: 3)
+    money = RubyRouting::Money.new(100, "RUB")
+
+    assert_equal 2, budget.concurrent_limit
+    assert budget.allows?(money, used_slots: 1, used_count: 1, used_amount_minor: 100)
+    refute budget.allows?(money, used_slots: 2, used_count: 2, used_amount_minor: 100)
+    refute budget.allows?(money, used_slots: 1, used_count: 2, used_amount_minor: 100)
+    assert_equal({ max_slots: 2, max_count: 3, max_amount_minor: nil, currency: nil }, budget.to_h)
+
+    count_only = RubyRouting::CapacityBudget.new(max_count: 2)
+    assert_equal 2, count_only.concurrent_limit
+  end
+
   def test_admission_snapshots_reject_malformed_values_and_accept_each_only_times
     budget = RubyRouting::CapacityBudget.new(max_slots: 1)
 
@@ -40,6 +54,11 @@ class AdmissionLedgerTest < Minitest::Test
     assert_raises(ArgumentError) do
       RubyRouting::State::CapacitySnapshot.new(
         provider_id: "A", budget: budget, used_slots: -1, used_count: 0, used_amount_minor: 0
+      )
+    end
+    assert_raises(ArgumentError) do
+      RubyRouting::State::CapacitySnapshot.new(
+        provider_id: "A", budget: budget, used_slots: 1, used_count: 2, used_amount_minor: 0
       )
     end
     assert_raises(ArgumentError) do

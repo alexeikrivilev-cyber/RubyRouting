@@ -95,6 +95,11 @@ module RubyRouting
         unless observed_at.nil? || observed_at.is_a?(Time)
           raise ArgumentError, "durable observation timestamp must be Time or nil"
         end
+        duration = payload[:interaction_duration_seconds]
+        unless duration.nil? ||
+               ((duration.is_a?(Integer) || duration.is_a?(Rational)) && duration >= 0)
+          raise ArgumentError, "durable observation interaction duration must be exact and non-negative"
+        end
         unless symbol_value?(payload.fetch(:status), RubyRouting::NormalizedOutcome::STATUSES)
           raise ArgumentError, "durable observation status is unsupported"
         end
@@ -156,7 +161,8 @@ module RubyRouting
           observation.outcome.safe_to_release?,
           observation.sequence,
           observation.observed_at,
-          observation.transport_kind&.to_s
+          observation.transport_kind&.to_s,
+          observation.interaction_duration_seconds
         ].freeze
       end
 
@@ -174,7 +180,8 @@ module RubyRouting
           payload[:safe_to_release],
           payload[:sequence],
           payload[:observed_at],
-          payload[:transport_kind]&.to_s
+          payload[:transport_kind]&.to_s,
+          payload[:interaction_duration_seconds]
         ].freeze
       end
 
@@ -195,7 +202,8 @@ module RubyRouting
           provider_reference: payload[:provider_reference],
           sequence: payload[:sequence],
           observed_at: payload[:observed_at],
-          transport_kind: payload[:transport_kind]
+          transport_kind: payload[:transport_kind],
+          interaction_duration_seconds: payload[:interaction_duration_seconds]
         )
       end
     end

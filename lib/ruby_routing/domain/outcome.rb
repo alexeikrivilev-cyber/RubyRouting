@@ -95,11 +95,11 @@ module RubyRouting
 
     attr_reader :observation_id, :payout_id, :provider_id, :operation_id, :attempt_id,
                 :outcome, :provider_reference, :sequence, :observed_at,
-                :transport_kind
+                :transport_kind, :interaction_duration_seconds
 
     def initialize(observation_id:, payout_id:, provider_id:, operation_id:, attempt_id:,
                    outcome:, provider_reference: nil, sequence: nil, observed_at: nil,
-                   transport_kind: nil)
+                   transport_kind: nil, interaction_duration_seconds: nil)
       @observation_id = normalize_id(observation_id, "observation id")
       @payout_id = normalize_id(payout_id, "payout id")
       @provider_id = normalize_id(provider_id, "provider id")
@@ -120,8 +120,28 @@ module RubyRouting
       @sequence = sequence
       @observed_at = observed_at&.utc&.freeze
       @transport_kind = normalize_transport_kind(transport_kind)
+      @interaction_duration_seconds = normalize_exact_duration(interaction_duration_seconds)
       validate_transport_outcome!
       freeze
+    end
+
+    def with_interaction_duration(duration_seconds)
+      normalized_duration = normalize_exact_duration(duration_seconds)
+      return self if normalized_duration == interaction_duration_seconds
+
+      self.class.new(
+        observation_id: observation_id,
+        payout_id: payout_id,
+        provider_id: provider_id,
+        operation_id: operation_id,
+        attempt_id: attempt_id,
+        outcome: outcome,
+        provider_reference: provider_reference,
+        sequence: sequence,
+        observed_at: observed_at,
+        transport_kind: transport_kind,
+        interaction_duration_seconds: normalized_duration
+      )
     end
 
     private
@@ -157,6 +177,16 @@ module RubyRouting
       return nil if value.nil?
 
       RubyRouting::Enum.normalize(value, RubyRouting::ProviderTransportResult::KINDS, "transport kind")
+    end
+
+    def normalize_exact_duration(value)
+      return nil if value.nil?
+      unless value.is_a?(Integer) || value.is_a?(Rational)
+        raise ArgumentError, "interaction duration must be an exact non-negative Integer or Rational"
+      end
+      raise ArgumentError, "interaction duration must be non-negative" if value.negative?
+
+      value
     end
   end
 

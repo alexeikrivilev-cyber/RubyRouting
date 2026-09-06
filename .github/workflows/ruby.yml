@@ -45,4 +45,5 @@ jobs:
           bundle exec rake benchmark
           bundle exec rake load_10k
           bundle exec rake degradation_metrics
+          bundle exec rake history_profile
           ruby -Ilib bin/ruby_routing_demo

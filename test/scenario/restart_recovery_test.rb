@@ -2379,6 +2379,49 @@ class RestartRecoveryTest < Minitest::Test
     assert_equal :safe_route_failure, restored.payout_snapshot(payout.id).status
   end
 
+  def test_restart_replays_ambiguous_transport_health_without_changing_unknown_ownership
+    health_policy = RubyRouting::Routing::HealthPolicy.new(
+      degrade_after: 1,
+      quarantine_after: 1,
+      recover_after: 1
+    )
+    providers = [
+      RubyRouting::ProviderOpportunity.new(provider_id: "A"),
+      RubyRouting::ProviderOpportunity.new(provider_id: "B")
+    ]
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "restart-ambiguous-health",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1, "B" => 1 }
+    )
+    payout = intent("restart-ambiguous-health-payout")
+    coordinator = RubyRouting::State::Coordinator.new(
+      health_policy: health_policy,
+      opportunities: providers
+    )
+    commit = coordinator.prepare_and_commit_decision(intent: payout, policy: policy)
+    coordinator.mark_attempt_started(commit)
+    coordinator.apply_observation(
+      RubyRouting::ProviderObservation.new(
+        observation_id: "restart-ambiguous-health-observation",
+        payout_id: payout.id,
+        provider_id: "A",
+        operation_id: commit.proposal.operation_id,
+        attempt_id: commit.proposal.attempt_id,
+        outcome: RubyRouting::NormalizedOutcome.unknown(attribution: :unknown),
+        transport_kind: :ambiguous_after_possible_send
+      )
+    )
+
+    restored = RubyRouting::State::Coordinator.from_facts(facts: coordinator.facts)
+
+    assert_equal coordinator.health_snapshot("A").to_h, restored.health_snapshot("A").to_h
+    assert_equal coordinator.health_projection.to_h, restored.health_projection.to_h
+    assert_equal "A", restored.payout_snapshot(payout.id).ownership.provider_id
+    assert_equal :unknown, restored.payout_snapshot(payout.id).status
+  end
+
   def test_restore_rejects_health_signal_before_provider_registration
     provider = RubyRouting::ProviderOpportunity.new(provider_id: "B")
     coordinator = RubyRouting::State::Coordinator.new(opportunities: [provider])

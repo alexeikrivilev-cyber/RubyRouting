@@ -114,6 +114,29 @@ class PolicyTest < Minitest::Test
     assert_equal 3, base.recovery.max_operations
   end
 
+  def test_recovery_objective_is_typed_explicit_and_default_compatible
+    legacy = RubyRouting::RoutingPolicy.new(
+      id: "recovery-objective",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1, "B" => 1 }
+    )
+    explicit = RubyRouting::RoutingPolicy.new(
+      id: "recovery-objective",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1, "B" => 1 },
+      recovery_objective: RubyRouting::RecoveryObjective.new(mode: :allocation_constrained)
+    )
+
+    assert_instance_of RubyRouting::RecoveryObjective, legacy.recovery_objective
+    assert_equal :allocation_constrained, legacy.recovery_objective.mode
+    assert_predicate legacy.recovery_objective, :frozen?
+    assert_equal legacy.to_h, explicit.to_h
+    assert_equal legacy.fingerprint, explicit.fingerprint
+    assert_raises(ArgumentError) { RubyRouting::RecoveryObjective.new(mode: :reliability_first) }
+  end
+
   def test_policy_fingerprint_is_stable_for_unordered_definition_input
     first = RubyRouting::RoutingPolicy.new(
       id: "canonical",
@@ -450,7 +473,7 @@ class PolicyTest < Minitest::Test
     assert_raises(ArgumentError) { registry.register(conflicting) }
   end
 
-  def test_policy_registry_uses_explicit_registration_order_for_active_epoch
+  def test_policy_registry_does_not_use_registration_order_for_competing_defaults
     older = RubyRouting::RoutingPolicy.new(
       id: "active-policy",
       epoch: "9",
@@ -469,10 +492,17 @@ class PolicyTest < Minitest::Test
       money: RubyRouting::Money.new(1, "RUB")
     )
 
-    assert_equal newer, registry.find_for_intent(intent)
+    resolution = registry.resolve_for_intent(intent)
+    assert resolution.ambiguous?
+    assert_nil resolution.policy
+    assert_equal [newer, older], resolution.candidates
+    error = assert_raises(RubyRouting::AmbiguousPolicyError) do
+      registry.find_for_intent(intent)
+    end
+    assert_equal resolution.to_h, error.resolution.to_h
 
     registry.register(older)
-    assert_equal older, registry.find_for_intent(intent)
+    assert_equal resolution.to_h, registry.resolve_for_intent(intent).to_h
   end
 
   def test_public_policy_provider_boundaries_canonicalize_ids_and_support_each_only

@@ -165,17 +165,12 @@ module RubyRouting
         if source_kind == :observation
           source_key, observation = restored_observation_source!(payload, observation_id_key: :source)
           expected_signal = health_signal_for_observation_payload(observation)
+          expected_attribution = health_attribution_for_observation_payload(observation)
           signal = @enum_value.call(
             payload,
             :signal,
             RubyRouting::Routing::HealthController::SIGNALS,
             "health signal"
-          )
-          observation_attribution = @enum_value.call(
-            observation,
-            :attribution,
-            RubyRouting::Routing::HealthController::ATTRIBUTIONS,
-            "health attribution"
           )
           attribution = @enum_value.call(
             payload,
@@ -185,7 +180,7 @@ module RubyRouting
           )
           unless observation[:provider_id] == provider_id &&
                  expected_signal == signal &&
-                 observation_attribution == attribution &&
+                 expected_attribution == attribution &&
                  release_exposure == false
             raise RubyRouting::State::DurableCorruptionError,
               "health signal does not match source observation #{source_key.inspect}"
@@ -247,26 +242,48 @@ module RubyRouting
                  RubyRouting::NormalizedOutcome::ATTRIBUTIONS,
                  "outcome attribution"
                ) == attribution &&
-               observation[:safe_to_release] == payload.fetch(:safe_to_release)
+                 observation[:safe_to_release] == payload.fetch(:safe_to_release)
+           raise RubyRouting::State::DurableCorruptionError,
+             "quality signal does not match source observation #{source_key.inspect}"
+        end
+        if payload.key?(:observed_at) && observation[:observed_at] && observation[:observed_at] != payload[:observed_at]
           raise RubyRouting::State::DurableCorruptionError,
-            "quality signal does not match source observation #{source_key.inspect}"
+            "quality signal timestamp does not match source observation #{source_key.inspect}"
         end
         if @restored_quality_signal_sources.call.key?(source_key)
           raise RubyRouting::State::DurableCorruptionError,
             "duplicate quality signal for observation #{source_key.inspect}"
         end
-        _before, after = quality_controller.observe(
+        quality_controller.observe(
           provider_id: provider_id,
           context_key: payload.fetch(:context_key, []),
+          routing_context: payload[:routing_context],
+          observed_at: payload[:observed_at],
           outcome: RubyRouting::NormalizedOutcome.new(
             status: payload.fetch(:status),
             attribution: payload.fetch(:attribution),
             safe_to_release: payload[:safe_to_release]
           )
         )
-        unless after.sample_count == payload.fetch(:sample_count) &&
+        after = quality_controller.evidence_snapshot(
+          provider_id,
+          context_key: payload.fetch(:context_key, []),
+          routing_context: payload[:routing_context]
+        )
+        unless after.successful_samples == payload.fetch(:successful_samples, after.successful_samples) &&
+               after.failed_samples == payload.fetch(:failed_samples, after.failed_samples) &&
+               after.sample_count == payload.fetch(:sample_count) &&
                after.score == payload.fetch(:score) &&
+               after.minimum_samples == payload.fetch(:minimum_samples, after.minimum_samples) &&
+               after.prior_successes == payload.fetch(:prior_successes, after.prior_successes) &&
+               after.prior_failures == payload.fetch(:prior_failures, after.prior_failures) &&
+               after.evidence_window == payload.fetch(:evidence_window, after.evidence_window) &&
                after.context_key == payload.fetch(:context_key, []) &&
+               (!payload.key?(:routing_context) || after.routing_context&.to_h == payload[:routing_context]) &&
+               (!payload.key?(:observed_at) || after.last_observed_at == payload[:observed_at]) &&
+               (!payload.key?(:last_observed_at) || after.last_observed_at == payload[:last_observed_at]) &&
+               (!payload.key?(:max_evidence_age_seconds) ||
+                after.max_evidence_age_seconds == payload[:max_evidence_age_seconds]) &&
                after.evidence_scope == @enum_value.call(
                  payload,
                  :evidence_scope,
@@ -299,19 +316,67 @@ module RubyRouting
       end
 
       def health_signal_for_observation_payload(payload)
+        transport_kind = payload[:transport_kind]
+        if transport_kind
+          normalized_transport_kind = @enum_value.call(
+            payload,
+            :transport_kind,
+            RubyRouting::ProviderTransportResult::KINDS,
+            "transport kind"
+          )
+          return :transport_failure if normalized_transport_kind == :definitely_not_sent
+          return :timeout_pressure if normalized_transport_kind == :ambiguous_after_possible_send
+        end
+
         outcome = RubyRouting::NormalizedOutcome.new(
           status: payload.fetch(:status),
           attribution: payload.fetch(:attribution),
           safe_to_release: payload.fetch(:safe_to_release)
         )
-        return :provider_failure if outcome.provider_failure?
-        return :operational_success if outcome.success? && outcome.attribution == :provider
-        return :timeout if outcome.status == :unknown && outcome.attribution == :provider
-
-        nil
+        signal = if outcome.status == :temporary_provider_failure && outcome.attribution == :provider
+          :provider_service_error
+        elsif outcome.provider_failure?
+          :provider_failure
+        elsif outcome.success? && outcome.attribution == :provider
+          :operational_success
+        elsif outcome.status == :unknown && outcome.attribution == :provider
+          :timeout
+        end
+        if latency_pressure_for_observation_payload?(payload) && (signal.nil? || signal == :operational_success)
+          signal = :latency_pressure
+        end
+        signal
       rescue KeyError, ArgumentError, TypeError => error
         raise RubyRouting::State::DurableCorruptionError,
           "malformed source observation outcome: #{error.message}"
+      end
+
+      def health_attribution_for_observation_payload(payload)
+        # Transport-derived health attribution is intentionally independent
+        # from the observation's economic attribution. Ambiguous send state is
+        # still UNKNOWN for payout ownership, but is provider evidence for
+        # future admission protection.
+        return :provider if payload[:transport_kind]
+
+        @enum_value.call(
+          payload,
+          :attribution,
+          RubyRouting::Routing::HealthController::ATTRIBUTIONS,
+          "health attribution"
+        )
+      rescue KeyError, ArgumentError, TypeError => error
+        raise RubyRouting::State::DurableCorruptionError,
+          "malformed source observation attribution: #{error.message}"
+      end
+
+      def latency_pressure_for_observation_payload?(payload)
+        threshold_ms = health_controller.policy.latency_threshold_ms
+        duration = payload[:interaction_duration_seconds]
+        duration && threshold_ms && duration * 1000 > threshold_ms &&
+          payload.fetch(:attribution) == :provider
+      rescue KeyError, ArgumentError, TypeError => error
+        raise RubyRouting::State::DurableCorruptionError,
+          "malformed source observation interaction duration: #{error.message}"
       end
     end
   end

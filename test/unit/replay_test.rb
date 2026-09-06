@@ -191,6 +191,42 @@ class ReplayTest < Minitest::Test
     assert_raises(ArgumentError) { RubyRouting::Projections::Replay.lifecycle(release_facts) }
   end
 
+  def test_lifecycle_replay_rejects_a_schedule_on_an_unapplied_observation
+    facts = [
+      fact(1, :provider_observed, payload: {
+        observation_id: "obs", provider_id: "A", operation_id: "op", attempt_id: "att",
+        applied: false, recovery_schedule: recovery_schedule_payload
+      })
+    ]
+
+    assert_raises(ArgumentError) { RubyRouting::Projections::Replay.lifecycle(facts) }
+  end
+
+  def test_lifecycle_replay_rejects_a_schedule_that_is_not_linked_to_current_ownership
+    facts = [
+      fact(1, :intent_registered, payload: {
+        money: RubyRouting::Money.new(1, "RUB"), recipient: {}, context: {}, created_at: Time.at(1)
+      }),
+      fact(2, :decision_committed, payload: {
+        action: :assign, provider_id: "A", operation_id: "op", attempt_id: "att", role: :primary,
+        contract: {
+          provider_id: "A", idempotent_retry: false, status_lookup: true,
+          idempotency_key: "p:op", version: "1"
+        }
+      }),
+      fact(3, :ownership_acquired, payload: {
+        provider_id: "A", operation_id: "op", attempt_id: "att"
+      }),
+      fact(4, :provider_observed, payload: {
+        observation_id: "obs", provider_id: "A", operation_id: "op", attempt_id: "att",
+        applied: true, status: :unknown, attribution: :provider, safe_to_release: false,
+        recovery_schedule: recovery_schedule_payload(provider_id: "B")
+      })
+    ]
+
+    assert_raises(ArgumentError) { RubyRouting::Projections::Replay.lifecycle(facts) }
+  end
+
   def test_analytics_rejects_non_symbol_like_provider_identity_payloads
     facts = [
       fact(1, :opportunity_evaluated, payload: {
@@ -252,6 +288,7 @@ class ReplayTest < Minitest::Test
       }),
       fact(3, :allocation_committed, payload: {
         provider_id: " A ", operation_id: "op", role: :primary, measure: 1,
+        measure_kind: :count, currency: nil,
         allocation_key: ["policy", "1", "default", ["A"]]
       }),
       fact(4, :attempt_started, payload: {
@@ -262,7 +299,9 @@ class ReplayTest < Minitest::Test
         status: :success, attribution: :provider, safe_to_release: true
       }),
       fact(6, :settlement_recorded, payload: {
-        provider_id: " A ", operation_id: " op ", measure: 1
+        provider_id: " A ", operation_id: " op ", measure: 1,
+        measure_kind: :count, currency: nil,
+        allocation_key: ["policy", "1", "default", ["A"]]
       })
     ]
 
@@ -323,5 +362,21 @@ class ReplayTest < Minitest::Test
       payout_id: payout_id,
       payload: payload
     )
+  end
+
+  def recovery_schedule_payload(provider_id: "A")
+    {
+      action: :resolve,
+      provider_id: provider_id,
+      operation_id: "op",
+      attempt_id: "att",
+      scheduled_at: Time.at(10),
+      scheduled_monotonic_at: 10,
+      next_action_at: Time.at(10),
+      next_action_monotonic_at: 10,
+      delay_seconds: 0,
+      interaction_index: 0,
+      reason_code: :unresolved_provider_outcome
+    }
   end
 end

@@ -1,6 +1,8 @@
 # Execution Plan Protocol
 
-Current substantial work lives in `docs/exec-plans/active/product-convergence.md`.
+The current v0.3.2 implementation and closure record lives in
+`docs/exec-plans/active/pre-tz-semantic-control-plane.md`; it is
+`VERSION_COMPLETE` pending the official-TZ authority switch.
 
 `docs/ROADMAP.md` defines the Version Goal. `docs/COMPLETION_POLICY.md` defines completion. An ExecPlan cannot redefine either.
 
@@ -8,7 +10,8 @@ Current substantial work lives in `docs/exec-plans/active/product-convergence.md
 
 `Project Goal -> Version Goal -> Phase Goal -> Slice Goal`
 
-The current Version Goal is v0.3 Product Convergence & Full Routing Product.
+The current Version Goal is v0.3.2 Semantic Control Plane & Recovery Readiness,
+now `VERSION_COMPLETE` as a pre-TZ checkpoint.
 
 ## Purpose of an ExecPlan
 

@@ -58,8 +58,7 @@ class AdmissionOracleTest < Minitest::Test
         id: "admission-oracle-#{step}",
         money: RubyRouting::Money.new(amount, "RUB")
       )
-      expected = active.length < capacity.max_slots &&
-        active.length < capacity.max_count &&
+      expected = active.length < [capacity.max_slots, capacity.max_count].compact.min &&
         used_amount_minor + amount <= capacity.max_amount_minor &&
         consumed_at.length < throughput.max_operations
 

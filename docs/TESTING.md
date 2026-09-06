@@ -1,6 +1,6 @@
 # Testing Strategy
 
-Current target: **v0.3 — Product Convergence & Full Routing Product**.
+Current target: **v0.3.2 — Semantic Control Plane & Recovery Readiness**.
 
 Testing exists to falsify financial, routing, restart and integration assumptions. Green tests are necessary but never sufficient for version completion.
 
@@ -215,6 +215,13 @@ Hard-inadmissible provider cannot be selected by allocation pressure or optimiza
 
 Concurrent exposure counters conserve reserve/release; time-based rate budget is consumed over time and is not released on payout completion.
 
+### ADMISSION-3
+
+Capacity uses one in-flight exposure metric. The historical `max_count` input
+is a compatibility cap on the canonical `max_slots` limit, not an independent
+counter; divergent snapshot aliases fail closed. Throughput remains a separate
+time-window model.
+
 ### HEALTH-1
 
 Recipient/business failure does not degrade provider operational health.
@@ -235,6 +242,13 @@ Chronology is explicit, not semantic status ranking.
 
 Supported live projections equal replay from ordered facts.
 
+### REPLAY-2
+
+Live outcome application, observation restoration, replay and Analytics use
+one pure phase/status/release reduction. A regression must cover both resolved
+and ownership-retaining outcomes; the reducer itself must not mutate economic
+state or perform provider I/O.
+
 ### DURABLE-1
 
 A fresh process can continue unresolved payouts without creating new permissions absent from pre-crash state.
@@ -242,6 +256,12 @@ A fresh process can continue unresolved payouts without creating new permissions
 ### ANALYTICS-1
 
 Opportunity, primary assignment, attempts and settlement conserve their own definitions without silent double counting.
+
+### ANALYTICS-2
+
+Analytics queries normalize only known dimensions and reject a grouping that
+would add rows with varying policy identity, window/cohort, measure or volume
+currency unless that dimension is explicitly grouped or filtered.
 
 ## 5. Closure testing rule
 

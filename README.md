@@ -4,19 +4,9 @@ Smart payout-routing system for Hack.Genesis case **«Умный роутинг 
 
 ## Current direction
 
-Current Version Goal: **v0.3 — Product Convergence & Full Routing Product**.
+Current Version Goal: **v0.3.2 — Semantic Control Plane & Recovery Readiness — VERSION_COMPLETE (pre-TZ)**.
 
-We are not waiting for the official TZ. We are building the product now: a coherent, deeply tested payout-routing platform whose core behavior should survive most plausible TZ variants. When the official TZ arrives, it becomes a reconciliation/integration task, not the beginning of implementation.
-
-The project must stay centered on the case:
-
-- configurable distribution of new payouts between providers;
-- count/volume and related allocation strategies;
-- provider eligibility, availability, capacity and health;
-- safe retry/status-resolution/fallback when a provider fails or does not answer;
-- complete attempt/decision history;
-- analytics for distribution and success;
-- explainable, deterministic financial behavior.
+v0.3.1 / SPEC-005 is a completed historical checkpoint at baseline revision `01c00f2f258a82fcf6e3b2ee843947a68ba62ed1`. v0.3.2 has now closed the semantic control plane around it before the official TZ arrives. The next normative change is the bounded reconciliation protocol, not speculative TZ-specific implementation.
 
 Ruby is mandatory. Current development baseline: **CRuby 4.0.6**.
 
@@ -25,116 +15,144 @@ Ruby is mandatory. Current development baseline: **CRuby 4.0.6**.
 One canonical flow owns the system:
 
 `Payout Intent`
+→ `Canonical RoutingContext`
 → `Policy Resolution`
-→ `Functional Opportunity`
+→ `Provider Route Compatibility / Functional Opportunity`
 → `Operational Admission`
 → `Allocation Authority`
+→ `Recovery Legality / Due Schedule / Role`
 → `Constrained Optimization`
 → `Atomic Decision + Ownership + Reservations`
 → `Provider Operation`
-→ `Normalized Observation`
+→ `Operational Telemetry + Normalized Observation`
 → `Lifecycle / Recovery / Reconciliation`
 → `Durable State + Facts`
-→ `Analytics / Audit / API / Demo`
+→ `Dimensioned Analytics / Explainability / Configuration / Queries`.
 
-Every new module must strengthen this flow. A feature that cannot be integrated into it with a clear responsibility is not core product work.
+API, persistence, simulator, configuration endpoints and dashboard layers may not implement alternate provider-selection semantics.
 
-## What already exists
+## Protected baseline
 
-The repository has a strong deterministic routing checkpoint:
+The repository already has a strong deterministic payout-routing platform:
 
 - exact `Money` and `Rational` allocation math;
-- economic intent and single unresolved ownership;
-- explicit dispatch state and provider-operation contract;
-- `UNKNOWN != failure` and transport ambiguity;
-- primary/recovery accounting separation;
-- count/volume allocation with committed work;
-- opportunity/eligibility, capacity and provider health;
-- fallback/retry/status-resolution/reconciliation basics;
-- duplicate/delayed/out-of-order event handling;
-- typed deviation attribution with explicit recoverable/unavoidable classification;
-- settlement/reversal/economic-conflict handling;
-- typed facts, replay and analytics;
-- restart-safe `FileJournal` continuation for unresolved provider operations;
-- application commands/queries, a minimal sanitized Rack-compatible API adapter,
-  and an explicitly simulated fallback demo;
-- property/model/concurrency/fault tests;
+- one economic intent and one unresolved economic owner maximum;
+- conservative `UNKNOWN` handling after ambiguous transmission;
+- explicit operation/idempotency contract;
+- immutable executable provider operation payload with destination/context/method/rail;
+- primary/recovery/settlement separation;
+- count and volume allocation with committed work;
+- opportunity/eligibility and operational admission separation;
+- capacity, throughput and provider health;
+- deterministic constrained optimization;
+- safe retry/status-resolution/fresh fallback;
+- confidence-aware bounded deterministic provider quality;
+- duplicate/delayed/out-of-order provider event handling;
+- settlement, reversal and economic-conflict handling;
+- typed facts, replay and restart-safe unresolved continuation;
+- dimensionally correct analytics across policy/measure/currency;
+- typed decision explanation and public audit privacy boundary;
+- application commands/queries and a small Rack-compatible HTTP adapter;
+- unit/property/model/concurrency/fault/restart evidence;
+- bounded performance/history evidence in CI;
 - GitHub Actions on CRuby 4.0.6.
 
-This is a checkpoint, not a finished product.
+Do not casually rewrite these mechanisms. Extend them only when SPEC-006 or new evidence identifies a real semantic gap.
 
-## Current correction
+## What v0.3.2 closed
 
-A later feature burst incorrectly described the repository as a delivered industrial v1.0 and added several disconnected/demo components. That claim is revoked.
+A fresh audit of the completed v0.3.1 main found the next-order gaps that mattered directly to the case; all required gaps are now closed:
 
-The current product-convergence phase deliberately removes or redesigns modules that are misleading, unsafe, hardcoded, unintegrated or contrary to the project architecture. Useful concepts may be reintroduced through the canonical routing pipeline with proper contracts and tests.
+1. **Routing context is now canonical across the product.** `PayoutIntent#routing_context` feeds provider compatibility, policy resolution, quality cohorts and executable provider payloads.
+2. **Policy auto-resolution is deterministic.** Typed selectors use explicit priority/specificity and expose no-match and ambiguity.
+3. **Recovery timing is explicit.** Injected-clock delay/backoff, TTL/deadline precedence and due-work queries are durable semantics.
+4. **Quality evidence is route-aware and time-bounded.** Mature route/context/global evidence is selected deterministically with independent staleness.
+5. **Canonical provider interaction timing is first-class exact telemetry.** Only provider-attributable slow interactions feed fast health; economic UNKNOWN remains unchanged.
+6. **Configuration is represented by one typed application/control-plane model.** The deterministic demo applies that model before routing and accepts custom typed configuration/providers for operator-facing proof.
+7. **Semantic convergence is materially reduced.** The standalone evaluation seam and live/restore/replay outcome reduction are shared; analytics querying now stays on the canonical dimensioned projection.
+8. **Admission semantics are now explicit.** One in-flight exposure metric governs both legacy `max_slots`/`max_count` caps; time-window counts remain owned by throughput.
+9. **Analytics is mathematically safe and queryable.** The application query surface filters/groups only compatible dimensioned measures and rejects ungrouped policy/unit variation.
+10. **Audit retrieval is bounded at the application seam.** Append-only fact indexes preserve sequence order for payout/type filters, and the HTTP page path reads only the requested page without adding a database or changing durable facts.
 
-See `docs/PRODUCT_CONVERGENCE_REVIEW_2026-08-28.md` and `specifications/004-product-convergence.md`.
+## Active sources
 
-## Architecture stance
+Read these first for substantial work:
 
-Keep the good foundation, but converge it into one product:
+1. `README.md`
+2. `specifications/006-pre-tz-semantic-control-plane.md`
+3. `docs/exec-plans/active/pre-tz-semantic-control-plane.md`
+4. `docs/PRE_TZ_BACKLOG.md`
+5. `docs/ROADMAP.md`
+6. `docs/PRE_TZ_ARCHITECTURE.md` for the protected v0.3.1 architecture baseline
+7. `docs/CURRENT_ARCHITECTURE.md` for the inherited v0.3 baseline
+8. `docs/COMPLETION_POLICY.md`
+9. `docs/TZ_RECONCILIATION.md`
+10. `specifications/005-pre-tz-maximum-hardening.md` for inherited detail.
 
-- plain-Ruby modular monolith;
-- deterministic financial kernel;
-- one explicit atomic state transaction boundary;
-- provider I/O outside the transaction lock;
-- focused internal ledgers/reducers instead of a growing god object;
-- provider-specific semantics normalized at adapters;
-- durable state must be safe to resume after restart before it may be called recovery;
-- optimization may only act inside a safety/policy-admissible envelope;
-- APIs and dashboards are application/demo layers, never alternate sources of business truth.
+Historical large backlogs/decision logs are not required reading for every new session.
 
-Current architecture: `docs/CURRENT_ARCHITECTURE.md`.
+## Governing specifications before TZ
 
-## Governing specifications
-
-Before the official TZ, precedence is:
+Precedence:
 
 1. direct current user instruction;
-2. `specifications/004-product-convergence.md`;
-3. `specifications/003-pre-tz-full-logic-and-completion.md`;
-4. `specifications/002-pre-tz-comprehensive-core.md`;
-5. `specifications/001-smart-payout-routing.md`;
-6. durable current decisions;
+2. `specifications/006-pre-tz-semantic-control-plane.md`;
+3. active v0.3.2 ExecPlan and active backlog;
+4. `specifications/005-pre-tz-maximum-hardening.md`;
+5. `docs/PRE_TZ_ARCHITECTURE.md` / `docs/CURRENT_ARCHITECTURE.md` for compatible baseline architecture;
+6. older specifications and durable decisions;
 7. implementation/tests.
 
-The official TZ will supersede provisional semantics through explicit reconciliation, never silent edits.
+When the official TZ arrives, use `docs/TZ_RECONCILIATION.md`. The authoritative TZ then overrides provisional semantics through explicit reconciliation.
 
-## Read order for a coding agent
+## Closed implementation vector
 
-1. `AGENTS.md`
-2. `docs/ROADMAP.md`
-3. `docs/COMPLETION_POLICY.md`
-4. `docs/exec-plans/active/product-convergence.md`
-5. SPEC-004 → SPEC-003 → SPEC-002 → SPEC-001
-6. `docs/PRODUCT_CONVERGENCE_REVIEW_2026-08-28.md`
-7. `docs/CURRENT_ARCHITECTURE.md`
-8. `docs/ARCHITECTURE.md`
-9. `docs/RUBY.md`
-10. `docs/TESTING.md`
-11. `docs/WORKFLOW.md`
-12. `docs/PLANS.md`
-13. `docs/SESSION_POLICY.md`
-14. `docs/BACKLOG.md`
-15. `docs/DECISIONS_CURRENT.md`
-16. `docs/DECISIONS.md` for historical rationale
-17. `docs/RESEARCH.md` when external evidence is required.
+The v0.3.2 implementation vector is complete:
+
+1. canonical immutable `RoutingContext`;
+2. explicit provider method/rail/destination capability matching;
+3. deterministic registration-order-independent `PolicyResolver`;
+4. recovery scheduling, backoff and due-work query semantics;
+5. typed active policy/provider configuration model;
+6. route-aware and age-stale deterministic quality evidence;
+7. explicit recovery-objective seam;
+8. prepared-evaluation and live/restore convergence plus admission semantic cleanup;
+9. filtered dimension-safe analytics/configuration/due-recovery product queries;
+10. bounded/indexable audit retrieval over the append-only fact history;
+11. SPEC-006 executable traceability and fresh exact-revision closure.
+
+Only optional P2 ideas remain in `docs/PRE_TZ_BACKLOG.md`; the next required
+change is official-TZ reconciliation through `docs/TZ_RECONCILIATION.md`.
 
 ## Non-negotiable financial invariants
 
 - One payout submission is one economic intent.
 - At most one unresolved money-moving economic owner exists per intent.
-- A timeout after possible transmission is `UNKNOWN` unless provider semantics prove otherwise.
+- Ambiguous-after-possible-send is `UNKNOWN` unless provider semantics prove otherwise.
 - `UNKNOWN` retains ownership and blocks cross-provider fallback.
 - Same-provider retry/status lookup is distinct from fresh fallback.
 - Fresh fallback re-evaluates current feasibility and excludes already money-moving providers by default.
 - Provider-local idempotency does not protect cross-provider duplication.
-- Hard safety, eligibility and operational admission precede allocation/optimization.
-- Primary allocation, recovery attempts and settlement are distinct accounting views.
+- Hard safety, functional eligibility and operational admission precede allocation/optimization.
+- Primary allocation, recovery attempts and settlement are separate accounting views.
 - Provider outcome attribution is distinct from payout business outcome.
 - Late evidence of a second monetary effect is an economic conflict requiring reconciliation.
 - No-safe-route/defer/reconciliation-blocked are valid outcomes.
+- Additive analytics never mixes incompatible measures/currencies.
+
+## Architecture stance
+
+Keep a plain-Ruby modular monolith with one atomic correctness boundary.
+
+Prefer:
+
+`typed command/context -> prepared evaluation -> shared pure transition/reducer -> atomic state mutation + durable facts`
+
+and restore:
+
+`fact -> validation/linkage -> same/shared transition/invariant semantics -> reconstructed state`.
+
+Do not introduce microservices, Rails/ORM, queues, PSP-specific core schemas or ML/bandits before an authoritative requirement or measured need exists.
 
 ## Development commands
 
@@ -148,11 +166,17 @@ bundle exec rake fault
 bundle exec rake benchmark
 bundle exec rake load_10k
 bundle exec rake degradation_metrics
+bundle exec rake history_profile
 ruby -Ilib bin/ruby_routing_demo
 ```
 
 Old green runs are historical evidence only. Changed code requires current verification.
 
-## Completion
+## Current stage
 
-Do not call the project complete because a checklist or test suite is green. Product completion requires the closure protocol in `docs/COMPLETION_POLICY.md`, including architecture-cohesion review, source/spec reconciliation, restart-safety evidence, deterministic fault/concurrency evidence, repository cleanup and a fresh red-team pass.
+RubyRouting is a mature, deeply verified pre-TZ payout-routing product with a strong financial kernel. v0.3.2 is a `VERSION_COMPLETE` checkpoint focused on route semantics, policy/control-plane determinism, timed recovery and product operability rather than feature-count expansion.
+
+The v0.3.2 stop condition has been met by a fresh SPEC-006 closure on exact
+HEAD. Do not add speculative pre-TZ scope merely because optional P2 ideas
+remain. When the authoritative TZ arrives, switch immediately to
+`docs/TZ_RECONCILIATION.md`.

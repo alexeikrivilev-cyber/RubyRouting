@@ -163,7 +163,9 @@ module RubyRouting
 
         expected_quality = @quality_controller.call.snapshots(
           opportunity_ids,
-          context: state.intent.context
+          context: state.intent.routing_context,
+          routing_context: state.intent.routing_context,
+          as_of: evaluated_at
         ).transform_values(&:to_h)
         unless payload.fetch(:quality) == expected_quality
           raise RubyRouting::State::DurableCorruptionError,
@@ -198,11 +200,11 @@ module RubyRouting
           throughput_available = opportunity.throughput_available &&
             (opportunity.throughput.nil? ||
              capacity_trace.fetch(:throughput_consumed_count) < opportunity.throughput.max_operations)
-          opportunity.with_runtime(
-            available: opportunity.available &&
-              (available_provider_ids.nil? || available_provider_ids.include?(provider_id)),
+          RubyRouting::Routing::OpportunityRuntime.materialize(
+            opportunity: opportunity,
+            available_provider_ids: available_provider_ids,
             capacity_available: @admission_ledger.call.capacity_available?(opportunity, state.intent),
-            health_available: opportunity.health_available && @health_controller.call.snapshot(provider_id).exposed?,
+            health_available: @health_controller.call.snapshot(provider_id).exposed?,
             throughput_available: throughput_available
           )
         end

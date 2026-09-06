@@ -84,6 +84,9 @@ module RubyRouting
           if method == "GET" && segments.length == 3 && segments[0, 2] == ["v1", "payouts"]
             return { body: { payout: snapshot_payload(@service.queries.payout(segments[2])) } }
           end
+          if method == "GET" && segments.length == 4 && segments[0, 2] == ["v1", "payouts"] && segments[3] == "explanation"
+            return { body: { explanation: @service.queries.explanation(segments[2]).to_h } }
+          end
           if method == "POST" && segments.length == 4 && segments[0, 2] == ["v1", "payouts"] && segments[3] == "resume"
             result = @service.resume(payout_id: segments[2])
             return { body: route_result_payload(result) }
@@ -159,27 +162,29 @@ module RubyRouting
           maximum: MAX_AUDIT_PAGE_SIZE
         )
         offset = bounded_query_integer(query["offset"], default: 0, minimum: 0, maximum: nil)
-        facts = @service.queries.audit_facts(
+        page = @service.queries.audit_facts_page(
           payout_id: query["payout_id"],
-          type: query["type"]
+          type: query["type"],
+          offset: offset,
+          limit: limit
         )
-        page = facts.slice(offset, limit) || []
-        next_offset = offset + limit if offset + page.length < facts.length
         {
           body: {
-            facts: page.map do |fact|
+            facts: page.facts.map do |fact|
+              public_fact = RubyRouting::Projections::PublicAuditFact.from_fact(fact)
               {
                 sequence: fact.sequence,
                 type: fact.type,
                 fact_id: fact.fact_id,
                 payout_id: fact.payout_id,
-                payload: fact.payload
+                payload: public_fact.payload,
+                redacted_fields: public_fact.redacted_fields
               }
             end,
-            offset: offset,
-            limit: limit,
-            next_offset: next_offset,
-            total: facts.length
+            offset: page.offset,
+            limit: page.limit,
+            next_offset: page.next_offset,
+            total: page.total
           }
         }
       end
@@ -258,6 +263,8 @@ module RubyRouting
           policy_fingerprint: snapshot.policy_fingerprint,
           provider_interaction_count: snapshot.provider_interaction_count,
           resolution_interaction_count: snapshot.resolution_interaction_count,
+          next_action: snapshot.next_action,
+          next_action_at: snapshot.next_action_at,
           conflicts: snapshot.conflicts.map { |conflict| conflict_payload(conflict) },
           reversals: snapshot.reversals.map { |reversal| reversal_payload(reversal) },
           created_at: snapshot.created_at

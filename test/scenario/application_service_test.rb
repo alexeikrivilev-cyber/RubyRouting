@@ -95,6 +95,121 @@ class ApplicationServiceTest < Minitest::Test
     assert_equal 1, service.queries.audit_facts(type: :provider_opportunity_registered).length
   end
 
+  def test_typed_configuration_is_applied_and_queryable_as_one_active_snapshot
+    policy = RubyRouting::RoutingPolicy.new(
+      id: "active-config-policy",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1 },
+      selector: { payment_method: "card", priority: 3 }
+    )
+    opportunity = RubyRouting::ProviderOpportunity.new(
+      provider_id: "A",
+      capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true),
+      route_capabilities: RubyRouting::ProviderRouteCapabilities.new(
+        supported_payment_methods: ["card"]
+      ),
+      capacity: RubyRouting::CapacityBudget.new(max_slots: 2)
+    )
+    service = RubyRouting::Application::Service.new(
+      coordinator: RubyRouting::State::Coordinator.new,
+      providers: { "A" => TestSupport::Simulator::ScriptedProvider.new(provider_id: "A", steps: []) }
+    )
+    configuration = RubyRouting::Application::RoutingConfiguration.new(
+      policies: [policy],
+      provider_opportunities: [opportunity]
+    )
+
+    applied = service.apply_configuration(configuration)
+
+    assert_same configuration, applied
+    assert_same configuration, service.queries.configuration
+    assert configuration.frozen?
+    assert_equal configuration.to_h, service.queries.configuration.to_h
+    assert_equal ["active-config-policy"], service.queries.policies.map(&:id)
+    assert_equal ["A"], service.queries.providers.map(&:provider_id)
+    assert_equal 2, service.queries.providers.first.capacity.max_slots
+    assert_empty service.queries.audit_facts(type: :policy_registered)
+  end
+
+  def test_active_configuration_change_does_not_rewrite_an_unresolved_pinned_route
+    clock = TestSupport::ControlledClock.new
+    provider_a = TestSupport::Simulator::ScriptedProvider.new(
+      provider_id: "A",
+      clock: clock,
+      capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true),
+      steps: [TestSupport::Simulator::Step.unknown, TestSupport::Simulator::Step.success]
+    )
+    provider_b = TestSupport::Simulator::ScriptedProvider.new(
+      provider_id: "B",
+      clock: clock,
+      steps: [TestSupport::Simulator::Step.success]
+    )
+    coordinator = RubyRouting::State::Coordinator.new(clock: clock)
+    service = RubyRouting::Application::Service.new(
+      coordinator: coordinator,
+      providers: { "A" => provider_a, "B" => provider_b }
+    )
+    policy_a = RubyRouting::RoutingPolicy.new(
+      id: "historical-policy",
+      epoch: "1",
+      measure: :count,
+      targets: { "A" => 1 }
+    )
+    policy_b = RubyRouting::RoutingPolicy.new(
+      id: "current-policy",
+      epoch: "1",
+      measure: :count,
+      targets: { "B" => 1 }
+    )
+    opportunity_a = RubyRouting::ProviderOpportunity.new(
+      provider_id: "A",
+      capabilities: RubyRouting::ProviderCapabilities.new(status_lookup: true)
+    )
+    opportunity_b = RubyRouting::ProviderOpportunity.new(provider_id: "B")
+
+    service.apply_configuration(
+      RubyRouting::Application::RoutingConfiguration.new(
+        policies: [policy_a], provider_opportunities: [opportunity_a]
+      )
+    )
+    payout = RubyRouting::PayoutIntent.new(
+      id: "config-pinned-payout",
+      money: RubyRouting::Money.new(100, "RUB")
+    )
+    first = service.submit(intent: payout)
+
+    service.apply_configuration(
+      RubyRouting::Application::RoutingConfiguration.new(
+        policies: [policy_b], provider_opportunities: [opportunity_b]
+      )
+    )
+    resumed = service.resume(payout_id: payout.id)
+
+    assert_equal :unknown, first.status
+    assert_equal :success, resumed.status
+    assert_equal policy_a, coordinator.policy_for(payout.id)
+    assert_equal ["current-policy"], service.queries.policies.map(&:id)
+    assert_equal ["B"], service.queries.providers.map(&:provider_id)
+    assert_equal [
+      [:initiate, "config-pinned-payout:config-pinned-payout:operation:1"],
+      [:resolve, "config-pinned-payout:config-pinned-payout:operation:1"]
+    ], provider_a.calls
+    assert_empty provider_b.calls
+  end
+
+  def test_invalid_configuration_is_rejected_before_provider_catalog_mutation
+    service = RubyRouting::Application::Service.new(
+      coordinator: RubyRouting::State::Coordinator.new,
+      providers: {}
+    )
+    invalid = RubyRouting::Application::RoutingConfiguration.allocate
+
+    assert_raises(ArgumentError) { service.apply_configuration(invalid) }
+    assert_empty service.queries.providers
+    assert_empty service.queries.policies
+  end
+
   def test_provider_event_boundary_canonicalizes_provider_id_before_normalization
     adapter = Class.new do
       include RubyRouting::Ports::Provider

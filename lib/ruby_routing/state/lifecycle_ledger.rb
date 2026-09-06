@@ -58,6 +58,61 @@ module RubyRouting
         end
       end
 
+      # Pure outcome semantics shared by live commit, durable restoration and
+      # projections. It deliberately does not mutate payout state or release
+      # any external resource.
+      OutcomeReduction = Data.define(:phase, :status, :release_ownership) do
+        def release_ownership?
+          release_ownership
+        end
+
+        def settled?
+          status == :success
+        end
+      end
+
+      def self.reduce_outcome(outcome)
+        normalized_status = RubyRouting::Enum.normalize(
+          outcome.status,
+          RubyRouting::NormalizedOutcome::STATUSES,
+          "outcome status"
+        )
+        reduced_status = reduce_status(
+          normalized_status,
+          safe_to_release: outcome.safe_to_release?
+        )
+        phase = case reduced_status
+        when :success then :settled
+        when :pending then :pending
+        when :unknown then :unknown
+        when :safe_route_failure, :temporary_provider_failure then :released
+        when :terminal_payout_failure then :terminated
+        else
+          raise ArgumentError, "unsupported reduced outcome status #{reduced_status.inspect}"
+        end
+
+        OutcomeReduction.new(
+          phase: phase,
+          status: reduced_status,
+          release_ownership: %i[settled released terminated].include?(phase)
+        )
+      end
+
+      def self.reduce_status(status, safe_to_release:)
+        normalized_status = RubyRouting::Enum.normalize(
+          status,
+          RubyRouting::NormalizedOutcome::STATUSES,
+          "outcome status"
+        )
+        if %i[safe_route_failure temporary_provider_failure].include?(normalized_status)
+          return normalized_status if safe_to_release == true
+
+          return :unknown
+        end
+
+        normalized_status
+      end
+
       def apply_phase_change(state, operation_id, from:, to:)
         attempt = state.operations.fetch(normalize_identity(operation_id, "operation id"))
         phase_change = change_phase(attempt, from: from, to: to)
@@ -69,22 +124,23 @@ module RubyRouting
 
         state.dispatch_pending.delete(attempt.operation_id)
         state.last_outcome = outcome
-        phase, status, release_ownership = outcome_reduction(outcome)
+        reduction = self.class.reduce_outcome(outcome)
+        phase = reduction.phase
         phase_change = if attempt.phase == phase
           nil
         else
           change_phase(attempt, from: attempt.phase, to: phase)
         end
-        state.status = status
+        state.status = reduction.status
         OutcomeTransition.new(
           phase_change: phase_change,
-          status: status,
-          release_ownership: release_ownership
+          status: reduction.status,
+          release_ownership: reduction.release_ownership?
         )
       end
 
       def status_for(outcome)
-        outcome_reduction(outcome).fetch(1)
+        self.class.reduce_outcome(outcome).status
       end
 
       private
@@ -120,26 +176,6 @@ module RubyRouting
         normalized
       end
 
-      def outcome_reduction(outcome)
-        case outcome.status
-        when :success
-          [:settled, :success, true]
-        when :pending
-          [:pending, :pending, false]
-        when :unknown
-          [:unknown, :unknown, false]
-        when :safe_route_failure, :temporary_provider_failure
-          if outcome.safe_to_release?
-            [:released, outcome.status, true]
-          else
-            [:unknown, :unknown, false]
-          end
-        when :terminal_payout_failure
-          [:terminated, :terminal_payout_failure, true]
-        else
-          raise ArgumentError, "unsupported outcome status #{outcome.status.inspect}"
-        end
-      end
     end
   end
 end
