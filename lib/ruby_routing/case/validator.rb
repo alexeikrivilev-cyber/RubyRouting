@@ -16,6 +16,149 @@ module RubyRouting
       end
     end
 
+    # Validates the serialized organizer-facing report contract directly from
+    # the JSON boundary. This deliberately has no Run or ReportBuilder input:
+    # compatibility shape must remain independently checkable.
+    class OrganizerReportContractValidator
+      REQUIRED_KEYS = %w[
+        period total_operations distribution skip_reasons
+        projected_daily_utilization recommendations
+      ].freeze
+      DISTRIBUTION_KEYS = %w[count share_pct target_pct].freeze
+      UTILIZATION_KEYS = %w[used limit utilization_pct].freeze
+
+      def initialize(path)
+        @path = path
+        @errors = []
+      end
+
+      def call
+        value = parse
+        validate_root(value) if value
+        ValidationResult.new(errors: @errors)
+      end
+
+      def validate!
+        result = call
+        return result if result.valid?
+
+        raise OutputError, "organizer report contract validation failed: #{result.errors.join('; ')}"
+      end
+
+      private
+
+      def parse
+        JSON.parse(File.read(@path), create_additions: false)
+      rescue Errno::ENOENT => error
+        add("report artifact not found: #{error.message}")
+        nil
+      rescue JSON::ParserError => error
+        add("report artifact is invalid JSON: #{error.message}")
+        nil
+      rescue SystemCallError => error
+        add("report artifact cannot be read: #{error.message}")
+        nil
+      end
+
+      def validate_root(value)
+        unless value.is_a?(Hash)
+          add("report artifact must be an Object")
+          return
+        end
+        REQUIRED_KEYS.each do |key|
+          add("report artifact missing #{key}") unless value.key?(key)
+        end
+        add("period must be a non-empty String") unless value["period"].is_a?(String) && !value["period"].empty?
+        add("total_operations must be a non-negative Integer") unless non_negative_integer?(value["total_operations"])
+        validate_distribution(value["distribution"])
+        validate_skip_reasons(value["skip_reasons"])
+        validate_utilization(value["projected_daily_utilization"])
+        validate_recommendations(value["recommendations"])
+      end
+
+      def validate_distribution(value)
+        unless value.is_a?(Hash)
+          add("distribution must be an Object")
+          return
+        end
+        add("distribution must include at least one provider") if value.empty?
+        value.each do |provider, entry|
+          add("distribution provider ids must be non-empty Strings") unless provider.is_a?(String) && !provider.empty?
+          unless entry.is_a?(Hash)
+            add("distribution.#{provider} must be an Object")
+            next
+          end
+          DISTRIBUTION_KEYS.each do |key|
+            add("distribution.#{provider} missing #{key}") unless entry.key?(key)
+          end
+          add("distribution.#{provider}.count must be a non-negative Integer") unless non_negative_integer?(entry["count"])
+          %w[share_pct target_pct].each do |key|
+            add("distribution.#{provider}.#{key} must be a number from 0 to 100") unless percentage?(entry[key])
+          end
+        end
+      end
+
+      def validate_skip_reasons(value)
+        unless value.is_a?(Hash)
+          add("skip_reasons must be an Object")
+          return
+        end
+        value.each do |reason, count|
+          add("skip_reasons keys must be Strings") unless reason.is_a?(String)
+          add("skip_reasons.#{reason} must be a non-negative Integer") unless non_negative_integer?(count)
+        end
+      end
+
+      def validate_utilization(value)
+        unless value.is_a?(Hash)
+          add("projected_daily_utilization must be an Object")
+          return
+        end
+        add("projected_daily_utilization must include at least one provider") if value.empty?
+        value.each do |provider, entry|
+          add("projected_daily_utilization provider ids must be non-empty Strings") unless provider.is_a?(String) && !provider.empty?
+          unless entry.is_a?(Hash)
+            add("projected_daily_utilization.#{provider} must be an Object")
+            next
+          end
+          UTILIZATION_KEYS.each do |key|
+            add("projected_daily_utilization.#{provider} missing #{key}") unless entry.key?(key)
+          end
+          add("projected_daily_utilization.#{provider}.used must be a non-negative Integer") unless non_negative_integer?(entry["used"])
+          limit = entry["limit"]
+          add("projected_daily_utilization.#{provider}.limit must be nil or a non-negative Integer") unless limit.nil? || non_negative_integer?(limit)
+          utilization = entry["utilization_pct"]
+          add("projected_daily_utilization.#{provider}.utilization_pct must be nil or a number from 0 to 100") unless utilization.nil? || (number?(utilization) && utilization >= 0 && utilization <= 100)
+        end
+      end
+
+      def validate_recommendations(value)
+        unless value.is_a?(Array)
+          add("recommendations must be an Array of Strings")
+          return
+        end
+        value.each_with_index do |recommendation, index|
+          add("recommendations[#{index}] must be a non-empty String") unless recommendation.is_a?(String) && !recommendation.empty?
+        end
+      end
+
+      def non_negative_integer?(value)
+        value.is_a?(Integer) && value >= 0
+      end
+
+      def percentage?(value)
+        number?(value) && value >= 0 && value <= 100
+      end
+
+      def number?(value)
+        (value.is_a?(Integer) || value.is_a?(Float)) && value.finite?
+      end
+
+      def add(message)
+        @errors << message
+      end
+    end
+
     # Internal validation is intentionally stricter than the organizer's
     # public compatibility script. It validates the actual in-memory run so
     # serialized projections cannot hide state or accounting inconsistencies.
@@ -60,7 +203,7 @@ module RubyRouting
 
       def validate_decisions
         known = @dataset.providers.map(&:payment_system)
-        terminal = @run.configuration.terminal_provider_id || @dataset.providers.find(&:self_provider?)&.payment_system
+        terminal = @run.configuration.terminal_provider_id
         @run.decisions.each do |decision|
           operation = @operations_by_id[decision.operation_id]
           unless operation
@@ -150,7 +293,7 @@ module RubyRouting
         replay_traffic = TrafficLedger.new(
           @dataset.providers.map(&:payment_system), targets: @run.configuration.targets
         )
-        terminal_id = @run.configuration.terminal_provider_id || @dataset.providers.find(&:self_provider?)&.payment_system
+        terminal_id = @run.configuration.terminal_provider_id
         ordered_external = @dataset.providers
           .reject { |provider| provider.payment_system == terminal_id }
           .sort_by { |provider| [provider.priority, provider.payment_system] }
@@ -178,9 +321,10 @@ module RubyRouting
             end
             break if eligible.empty?
 
+            fallback_resolution = assignment_recorded
             resolution = @run.resolver.resolve(
               candidates: eligible, operation: operation, traffic: replay_traffic,
-              as_of: operation.created_at
+              as_of: operation.created_at, phase: fallback_resolution ? :fallback : :primary
             )
             actual = decision.attempts[cursor]
             add("#{operation.operation_id}: resolver replay selected #{resolution.selected_provider}, output selected #{actual&.provider}") unless actual&.provider == resolution.selected_provider
@@ -195,7 +339,13 @@ module RubyRouting
               assignment_recorded = true
             end
             add("#{operation.operation_id}: simulator replay differs for #{resolution.selected_provider}") unless actual&.status == simulation.status && actual.latency_sec == simulation.latency_sec
-            expected_reason = simulation.approved? ? "selected" : (simulation.status == :expired ? "provider_expired" : "provider_rejected")
+            expected_reason = if simulation.approved?
+              resolution.selection_reason(candidate_count: eligible.length)
+            elsif simulation.status == :expired
+              "provider_expired"
+            else
+              "provider_rejected"
+            end
             add("#{operation.operation_id}: outcome reason differs for #{resolution.selected_provider}") unless actual&.reason == expected_reason
             replay_provider = replay_state.fetch(resolution.selected_provider)
             replay_provider.reserve!(operation, as_of: operation.created_at)
@@ -323,7 +473,15 @@ module RubyRouting
 
       def validate_recommendations
         recommendations = @run.report.to_h[:recommendations]
-        add("report recommendations must be an Array") unless recommendations.is_a?(Array)
+        add("report recommendations must be an Array of Strings") unless recommendations.is_a?(Array)
+        if recommendations.is_a?(Array)
+          recommendations.each do |recommendation|
+            add("report recommendation must be a non-empty String") unless recommendation.is_a?(String) && !recommendation.empty?
+          end
+        end
+
+        recommendations = @run.report.to_h[:recommendation_details]
+        add("report recommendation_details must be an Array") unless recommendations.is_a?(Array)
         return unless recommendations.is_a?(Array)
 
         known = @dataset.providers.map(&:payment_system)

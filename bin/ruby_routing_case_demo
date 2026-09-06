@@ -15,8 +15,8 @@ submission_profile = RubyRouting::Case::SubmissionProfile.load(
   path: File.join(root, "data/submission_profile.json"), dataset: dataset
 )
 provider_ids = dataset.providers.map(&:payment_system)
-external_provider_ids = dataset.providers.reject(&:self_provider?).map(&:payment_system)
-terminal_provider_id = dataset.providers.find(&:self_provider?).payment_system
+terminal_provider_id = submission_profile.configuration.terminal_provider_id
+external_provider_ids = provider_ids.reject { |provider_id| provider_id == terminal_provider_id }
 target_values = [Rational(1, 5), Rational(1, 5), Rational(3, 5)]
 target_map = external_provider_ids.each_with_index.to_h { |provider_id, index| [provider_id, target_values.fetch(index, Rational(0, 1))] }
 targets = RubyRouting::Case::TrafficTargets.new(
@@ -47,7 +47,7 @@ end
 # only an observable case outcome, so the demo proves fallback without creating
 # a second policy or chooser.
 simulation_configuration = submission_profile.configuration
-expired_external = dataset.providers.reject(&:self_provider?).to_h do |provider|
+expired_external = dataset.providers.reject { |provider| provider.payment_system == terminal_provider_id }.to_h do |provider|
   [["op_101", provider.payment_system], :expired]
 end
 simulation = RubyRouting::Case::DeterministicSimulator.new(
@@ -59,7 +59,7 @@ simulation_router = RubyRouting::Case::Router.new(dataset, profile: submission_p
 simulation_decisions = simulation_router.run
 
 output = {
-  version: "0.4.1",
+  version: "0.4.2",
   dataset: {
     queue_operations: dataset.operations.length,
     queue_volume: dataset.operations.sum(&:amount),

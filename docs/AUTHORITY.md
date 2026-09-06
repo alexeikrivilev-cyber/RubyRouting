@@ -1,19 +1,19 @@
 # Documentation Authority
 
-Current Version Goal: **v0.4.1 — Submission Policy Activation & Contract Closure — VERSION_COMPLETE**.
+Current Version Goal: **v0.4.2 — Submission Contract Fidelity & Scoring Semantics Closure — VERSION_COMPLETE**.
 
-Opening baseline: `0187bf2558d58a52dfdb27e76694d6323addbcd6`.
+Opening baseline: `e9a24923aebfdb1b01223a360b3f3f2b4e84ee45`.
 
-v0.4.0 / SPEC-016 is a completed implementation baseline, not the current completion claim. A fresh audit found material release-path gaps, so current work is governed by SPEC-017.
+v0.4.1 / SPEC-017 is the completed submission-policy baseline. A fresh code-first audit found material artifact-contract and fallback-scoring gaps, so v0.4.2 is governed by SPEC-018.
 
 ## Normative order
 
 1. direct current user/instructor requirement;
-2. authoritative Hack.Genesis TZ and organizer scoring/rules;
+2. authoritative Hack.Genesis TZ and scoring rubric;
 3. organizer data/sample/reference/validator for contracts they actually define;
-4. `specifications/017-submission-policy-activation-contract-closure.md`;
-5. compatible completed baseline `specifications/016-authoritative-tz-submission-engine.md`;
-6. active v0.4.1 ExecPlan;
+4. `specifications/018-submission-contract-fidelity-scoring-semantics.md`;
+5. compatible completed baselines SPEC-017 and SPEC-016;
+6. `docs/exec-plans/completed/submission-contract-fidelity-scoring-semantics.md` (closure plan);
 7. `docs/POST_TZ_BACKLOG.md`;
 8. `docs/TZ_REQUIREMENT_MATRIX.md`;
 9. current architecture/decisions/completion/session/planning/workflow/testing;
@@ -23,19 +23,26 @@ v0.4.0 / SPEC-016 is a completed implementation baseline, not the current comple
 
 A lower source cannot silently override a higher source.
 
-## Important interpretation rule
+## Artifact-contract rule
 
-Feature existence is not submission readiness. If a factor/resolver/simulator exists in the library but the supported hidden-queue finalization path does not activate it, the requirement is `PARTIAL` for release purposes.
+The public decisions validator is a lower bound. The TZ base structure for `routing_report*.json` is independently authoritative even when no organizer report validator is supplied. Rich report fields may extend the TZ base structure but must not replace its required base fields/types.
 
-Likewise, a green in-memory validator does not prove the serialized JSON artifact contract. External artifacts must be parsed and checked after serialization.
+A validator that compares a serialized artifact only with the output of the same builder is not an independent contract oracle. v0.4.2 requires an independently encoded organizer/TZ report contract check.
+
+## Scoring semantics rule
+
+Feature existence is not rubric closure. A factor must be active on the supported submission path and must be capable of discriminating candidates in evidence. A neutral factor must not be described as causally decisive.
+
+Primary distribution and fallback execution are separate semantics. If count/volume target authority is primary assignment, fallback must not counterfactually assign the same operation a second time.
 
 ## Organizer ambiguity
 
-Where the TZ/sample/public validator do not resolve a detail, preserve richer internal semantics, use a conservative external projection, document the assumption, and keep it reversible. Current high-impact assumptions include target accounting point and fallback `selected_provider`/attempt projection.
+Where TZ/sample/public validator do not define a detail, preserve richer internal semantics, use a conservative external projection, document the assumption and keep it reversible. Do not invent missing organizer facts.
+
+Current accepted interpretation: top-level `selected_provider` is the final provider selected by the cascade, while primary assignment remains separately available in rich report/internal evidence.
 
 ## Completion
 
-v0.4.1 is `VERSION_COMPLETE`: the known SPEC-017 release-path gates, blind
-audit and fresh exact-HEAD verification passed on the pushed completion HEAD.
-v0.4.0 evidence remains valid for unchanged baseline capabilities, while any
-new authoritative clarification or material counterexample reopens ACTIVE.
+v0.4.2 is `VERSION_COMPLETE`: SPEC-018 gates, independent artifact/code skeptical pass,
+fresh full verification and exact pushed-head Actions all pass. v0.4.1 evidence remains
+valid for unchanged capabilities.

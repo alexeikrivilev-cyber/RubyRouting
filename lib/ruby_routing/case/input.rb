@@ -64,7 +64,7 @@ module RubyRouting
       end
 
       def active?
-        %w[active enabled].include?(status)
+        status == "active"
       end
 
       def self_provider?

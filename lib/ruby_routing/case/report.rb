@@ -62,6 +62,9 @@ module RubyRouting
     end
 
     class ReportBuilder
+      REPORT_VERSION = "0.4.2".freeze
+      PERCENTAGE_DECIMAL_PLACES = 2
+
       def initialize(dataset, state, traffic, configuration, decisions, profile: nil,
                      attempt_ledger: nil, settlement_ledger: nil)
         @dataset = dataset
@@ -87,10 +90,14 @@ module RubyRouting
             skip_reasons[attempt.reason] += 1 if attempt.decision == :skipped
           end
         end
+        details = recommendation_details
+        report_distribution = organizer_distribution(@traffic.distribution)
+        snapshots = provider_state
         Report.new(
-          version: "0.4.1",
+          version: REPORT_VERSION,
           ratio_representation: "integer or numerator/denominator string; exact Rational values are never serialized as Float",
           period: period,
+          period_window: period_window,
           total_operations: @dataset.operations.length,
           dataset: {
             snapshot_at: @dataset.snapshot_at.iso8601,
@@ -113,23 +120,29 @@ module RubyRouting
           attempt_totals: { count: @attempt_ledger.total_count, volume: @attempt_ledger.total_volume },
           settlement_distribution: @settlement_ledger.distribution,
           settlement_totals: { count: @settlement_ledger.total_count, volume: @settlement_ledger.total_volume },
-          distribution: @traffic.distribution,
+          distribution: report_distribution,
           traffic_totals: { count: @traffic.total_count, volume: @traffic.total_volume },
           fallbacks: { count: fallback_count },
           skip_reasons: skip_reasons,
-          provider_state: provider_state,
-          utilization: utilization(provider_state),
+          provider_state: snapshots,
+          projected_daily_utilization: projected_daily_utilization(snapshots),
+          utilization: utilization(snapshots),
           deviation_causes: deviation_causes,
           infeasibility: infeasibility,
           explanations: explanations,
           history: HistoryAnalytics.new(@dataset.history, source: @dataset.history_source).call,
-          recommendations: recommendations
+          recommendations: details.map { |detail| recommendation_text(detail) },
+          recommendation_details: details
         )
       end
 
       private
 
       def period
+        (@dataset.operations.map(&:created_at).min || @dataset.snapshot_at).utc.strftime("%Y-%m-%d")
+      end
+
+      def period_window
         timestamps = @dataset.operations.map(&:created_at)
         {
           from: timestamps.min&.iso8601,
@@ -175,8 +188,42 @@ module RubyRouting
         Rational(numerator, denominator)
       end
 
+      def percentage(value)
+        return nil if value.nil?
+
+        (value * 100).round(PERCENTAGE_DECIMAL_PLACES)
+      end
+
+      def percentage_text(value)
+        formatted = percentage(value)
+        return "n/a" if formatted.nil?
+
+        format("%.2f", formatted.to_f)
+      end
+
+      def organizer_distribution(distribution)
+        distribution.transform_values do |values|
+          values.merge(
+            share_pct: percentage(values.fetch(:count_share)),
+            target_pct: percentage(values.fetch(:target_count_share))
+          ).freeze
+        end.freeze
+      end
+
+      def projected_daily_utilization(snapshots)
+        @dataset.providers.each_with_object({}) do |provider, result|
+          snapshot = snapshots.fetch(provider.payment_system)
+          limit = snapshot.fetch(:daily_amount_limit)
+          result[provider.payment_system] = {
+            used: snapshot.fetch(:daily_approved_amount),
+            limit: limit,
+            utilization_pct: percentage(ratio(snapshot.fetch(:daily_approved_amount), limit))
+          }.freeze
+        end.freeze
+      end
+
       def terminal_provider_id
-        @configuration.terminal_provider_id || @dataset.providers.find(&:self_provider?)&.payment_system
+        @configuration.terminal_provider_id
       end
 
       def deviation_causes
@@ -274,8 +321,8 @@ module RubyRouting
         end
       end
 
-      def recommendations
-        @traffic.distribution.each_with_object([]) do |(provider_id, values), result|
+      def recommendation_details
+        details = @traffic.distribution.each_with_object([]) do |(provider_id, values), result|
           if values[:count_deviation].negative?
             result << {
               kind: "count_target_unmet",
@@ -314,6 +361,94 @@ module RubyRouting
               action: "raise the configured target or improve alternatives' hard eligibility/capacity"
             }
           end
+
+          causes = deviation_causes.fetch(provider_id)
+          if (values[:count_deviation].negative? || values[:volume_deviation].negative?) &&
+             causes[:hard_exclusions].values.sum.positive?
+            result << {
+              kind: "structurally_constrained_under_target",
+              provider: provider_id,
+              evidence: {
+                target_count: values[:target_count_share], actual_count: values[:count_share],
+                target_volume: values[:target_volume_share], actual_volume: values[:volume_share],
+                count_gap: values[:count_deviation].negative? ? -values[:count_deviation] : Rational(0, 1),
+                volume_gap: values[:volume_deviation].negative? ? -values[:volume_deviation] : Rational(0, 1),
+                hard_excluded_operations: causes[:hard_exclusions].values.sum,
+                hard_exclusion_reasons: causes[:hard_exclusions]
+              },
+              action: "review target and alternative bank/amount/capacity coverage before changing weights"
+            }
+          end
+
+          granularity = workload_granularity(provider_id, values, causes: causes)
+          result << granularity if granularity
+        end
+        details.concat(daily_limit_recommendations)
+        details.freeze
+      end
+
+      def workload_granularity(provider_id, values, causes:)
+        total = @traffic.total_count
+        target_count = values[:target_count_share] * total
+        return if total.zero? || target_count.denominator == 1
+        return if causes.fetch(:hard_exclusions).values.sum.positive?
+        return if causes.fetch(:hard_forced_assignments).positive?
+        return unless [target_count.floor, target_count.ceil].include?(values[:count])
+
+        {
+          kind: "workload_granularity",
+          provider: provider_id,
+          evidence: {
+            operation_count: total,
+            target_count: target_count,
+            actual_count: values[:count],
+            attainable_counts: [target_count.floor, target_count.ceil]
+          },
+          action: "use a larger workload before changing policy; whole-operation granularity bounds this target gap"
+        }
+      end
+
+      def daily_limit_recommendations
+        provider_state.filter_map do |provider_id, snapshot|
+          limit = snapshot[:daily_amount_limit]
+          next if limit.nil? || limit.zero?
+
+          used = snapshot.fetch(:daily_approved_amount)
+          utilization = Rational(used, limit)
+          next unless utilization >= Rational(9, 10)
+
+          {
+            kind: "daily_utilization_near_limit",
+            provider: provider_id,
+            evidence: {
+              used: used,
+              limit: limit,
+              remaining: limit - used,
+              utilization: utilization
+            },
+            action: "preserve #{limit - used} units of daily headroom or raise the daily limit before increasing this target"
+          }
+        end
+      end
+
+      def recommendation_text(detail)
+        provider = detail.fetch(:provider)
+        evidence = detail.fetch(:evidence)
+        case detail.fetch(:kind)
+        when "count_target_unmet"
+          "#{provider} is below its count target by #{percentage_text(evidence.fetch(:gap))} percentage points; review count target or hard eligibility/capacity."
+        when "volume_target_unmet"
+          "#{provider} is below its volume target by #{percentage_text(evidence.fetch(:gap))} percentage points; review volume target or hard eligibility/capacity."
+        when "target_infeasible_hard_forced"
+          "#{provider} is above target because #{evidence.fetch(:hard_forced_assignments)} assignments were hard-forced; raise the target or improve alternatives."
+        when "structurally_constrained_under_target"
+          "#{provider} is below target by observed hard-rule exclusions on #{evidence.fetch(:hard_excluded_operations)} operations; review coverage before changing weights."
+        when "workload_granularity"
+          "#{provider} target is bounded by whole-operation granularity; use a larger workload before changing policy."
+        when "daily_utilization_near_limit"
+          "#{provider} is near its daily limit at #{percentage_text(evidence.fetch(:utilization))}%; preserve #{evidence.fetch(:remaining)} units of headroom or raise the daily limit."
+        else
+          "Review #{provider} routing evidence for #{detail.fetch(:kind)}."
         end
       end
 
@@ -361,20 +496,28 @@ module RubyRouting
         raise OutputError, "cannot write #{path}: #{error.message}"
       end
 
-      def json_value(value)
+      def json_value(value, key: nil)
         case value
         when Rational
+          return percentage_number(value) if key.to_s.end_with?("_pct")
+
           # Exact ratios stay exact at the JSON boundary: integral values use
           # JSON integers; fractional values use a stable, judge-readable
           # numerator/denominator string rather than an inexact Float.
           value.denominator == 1 ? value.numerator : "#{value.numerator}/#{value.denominator}"
         when Hash
-          value.each_with_object({}) { |(key, nested), result| result[key.to_s] = json_value(nested) }
+          value.each_with_object({}) do |(nested_key, nested), result|
+            result[nested_key.to_s] = json_value(nested, key: nested_key)
+          end
         when Array
-          value.map { |nested| json_value(nested) }
+          value.map { |nested| json_value(nested, key: key) }
         else
           value
         end
+      end
+
+      def percentage_number(value)
+        value.round(ReportBuilder::PERCENTAGE_DECIMAL_PLACES).to_f
       end
     end
   end

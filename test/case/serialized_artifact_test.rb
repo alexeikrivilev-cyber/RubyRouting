@@ -20,7 +20,7 @@ class AuthoritativeSerializedArtifactTest < Minitest::Test
         refute parsed_decisions.first.key?("selection")
         refute parsed_decisions.first.fetch("attempts").first.key?("selection")
         parsed_report = JSON.parse(File.read(report.path))
-        assert_equal "official-smart-v0.4.1", parsed_report.fetch("submission_profile").fetch("profile_id")
+        assert_equal "official-smart-v0.4.2", parsed_report.fetch("submission_profile").fetch("profile_id")
         assert_equal "integer or numerator/denominator string; exact Rational values are never serialized as Float",
                      parsed_report.fetch("ratio_representation")
       end

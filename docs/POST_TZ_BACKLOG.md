@@ -1,78 +1,96 @@
-# Post-TZ Backlog — v0.4.1 Submission Policy Activation & Contract Closure
+# Post-TZ Backlog — v0.4.2 Submission Contract Fidelity & Scoring Semantics Closure
 
 Status: **VERSION_COMPLETE**
 
-Spec: `specifications/017-submission-policy-activation-contract-closure.md`
+Spec: `specifications/018-submission-contract-fidelity-scoring-semantics.md`
 
-Opening baseline: `0187bf2558d58a52dfdb27e76694d6323addbcd6`.
+Opening baseline: `e9a24923aebfdb1b01223a360b3f3f2b4e84ee45`.
 
-v0.4.0 capabilities are baseline; this backlog contains only current release gaps.
+v0.4.1 capabilities remain baseline. This backlog contains only current material gaps and evidence-gated improvements.
 
-## P0/P1 — release path
+## P0 — release artifact contract
 
-### TZ17-001 — canonical smart SubmissionProfile — VERIFIED
-`SubmissionProfile` is loaded from `data/submission_profile.json` by the finalization and supported case CLI paths. It derives count/volume targets from active external `traffic_percentage`, carries exact factor weights, independent preferred bands, deterministic conversion seed, terminal identity and report provenance. Same-input profile sensitivity, simultaneous factor traces and controlled fallback are covered on the canonical runner/CLI path.
+### TZ18-001 — TZ-compatible report base projection — CLOSED (2026-09-04)
+Current rich report replaces several base fields shown by the TZ. Preserve base `period`, provider `distribution.count/share_pct/target_pct`, `skip_reasons`, `projected_daily_utilization.used/limit/utilization_pct`, and string `recommendations`; keep rich exact fields as additive extensions.
 
-### TZ17-002 — assignment vs settlement accounting — VERIFIED
-Separate primary assignment distribution, attempt outcomes and approved settlement distribution. Routing target authority defaults to primary assignment unless stronger organizer evidence says otherwise.
+Evidence: `ReportBuilder` emits scalar `period` plus `period_window`, additive base distribution/utilization/recommendation projections and rich exact fields; `test/case/report_contract_test.rb` covers valid and malformed serialized shapes; fresh `bin/finalize_submission` output passed both `SerializedArtifactValidator` and `OrganizerReportContractValidator`. The independent validator also rejects empty provider projections, empty provider identities and utilization percentages above 100.
 
-`TrafficLedger`, `AttemptLedger` and `SettlementLedger` now preserve these
-three meanings and strict replay/conservation verifies them. Report exposes
-all three projections; strict post-serialization validation and temporal edge
-campaigns verify no double accounting on fallback.
+### TZ18-002 — independent organizer report validator — CLOSED (2026-09-04)
+Encode required report keys/types from the authoritative TZ independently of `ReportBuilder`. Finalization must validate the serialized report through this contract after write/read. A self-equality check remains useful but is insufficient.
 
-### TZ17-003 — fallback attempt semantics / output projection — VERIFIED WITH DOCUMENTED ASSUMPTION
-Internal `Attempt#classification` distinguishes hard skip and actual invocation; rejected/expired invocations project as `selected`, hard exclusions as `skipped`, and decisions are compatibility-minimal. A real multi-attempt official-queue artifact passes the public validator. Top-level selected-provider semantics remain an explicit conservative organizer assumption; primary and final identities stay distinct internally.
+Evidence: `RubyRouting::Case::OrganizerReportContractValidator` parses and validates the report JSON directly without `Run`/`ReportBuilder`; both case CLIs invoke it after serialization; malformed-field regressions are in `test/case/report_contract_test.rb`.
 
-### TZ17-004 — independent amount preference — VERIFIED
-Typed `preferred_amount_ranges` are independent of hard min/max and are loaded by the canonical profile. Factor campaign proves hard-eligible providers can rank differently by preferred band; malformed/reversed bands fail closed.
+## P1 — correctness/scoring semantics
 
-### TZ17-005 — serialized artifact validation — VERIFIED
-Both supported CLIs now reparse and strictly validate written decisions/report artifacts; decisions omit rich selection traces. Report recomputation uses canonical ledgers, declares exact Rational JSON representation, and tampered post-write totals/extra fields, malformed operation-id types or null roots are rejected without validator crashes by focused tests.
+### TZ18-101 — exact Case active status — CLOSED (2026-09-04)
+Bounded Case eligibility must treat only literal `status == "active"` as active, matching TZ/public validator semantics. Add hidden-like `enabled`/`disabled` regressions without changing production status semantics.
 
-### TZ17-006 — finalization intelligence regression — VERIFIED
-Finalization/CLI now use the canonical multi-factor profile; controlled runs prove simultaneous count/volume/business-factor traces, profile-only weight sensitivity, deterministic conversion fallback, and public-queue compatibility. The runnable case demo's conversion path now uses the same profile and canonical Router, with only an explicit deterministic expiry fixture to demonstrate fallback.
+Evidence: `Provider#active?` is literal-only; `test/case/state_test.rb` covers
+`enabled` as a hard exclusion; public queue finalization remains green.
 
-## P1 — analytics / robustness
+### TZ18-102 — phase-correct fallback scoring — CLOSED (2026-09-04)
+Primary assignment is recorded once. On rejected/expired fallback, count/volume factors must not add the current operation again through `TrafficLedger#counterfactual`. Add explicit primary/fallback resolution context and an independent fallback ranking regression that fails on the opening baseline.
 
-### TZ17-101 — assignment/settlement report split — VERIFIED
-Expose targets/deviations on assignment distribution and success/settlement separately. Strict validation recomputes assignment, attempt and settlement projections from the run's canonical ledgers.
+Evidence: `ConflictResolver` has one explicit `primary`/`fallback` phase; allocation factors are omitted from fallback pressure; Router and strict replay agree; `test/case/fallback_phase_test.rb` proves legacy B vs independent expected C and preserves separate assignment/attempt/settlement ledgers.
 
-### TZ17-102 — recommendation causality — VERIFIED
-Report recommendations expose hard-exclusion causes and direct hard-forced over-target traffic toward target adjustment or improving alternatives. Fallback metrics now distinguish a real transition from terminal-only non-approval; broader under-target evidence remains.
+### TZ18-103 — concrete selection reason codes — CLOSED (2026-09-04)
+Replace generic successful `reason: selected` with stable rubric-readable reason codes while preserving public validator compatibility and rich factor traces in report/internal evidence.
 
-### TZ17-103 — hidden-like scale — VERIFIED
-Index strict-validator lookups and run 1,000 operations across five providers with strict replay, accounting and byte-stable output. Equal-timestamp, RPM-boundary, daily-exhaustion and terminal non-approval edge campaigns also pass.
+Evidence: Router emits `only_eligible_provider`, `highest_composite_score`,
+`fallback_highest_composite_score` and explicit deterministic tie-break reasons when
+composite scores are equal; terminal/hard/outcome reasons remain stable. The
+tie-break regression proves neutral factor evidence does not masquerade as a
+highest-score decision; public validator and case suite pass.
 
-### TZ17-104 — config/profile traceability — VERIFIED
-Generated report carries profile id/source/revision, target sources, exact targets and active weights/simulation mode; focused finalization tests verify these fields and the profile sensitivity campaign changes the decision without code changes.
+### TZ18-104 — canonical amount strategy is materially active — CLOSED (2026-09-04)
+The current committed preferred ranges are identical. Configure meaningful independent preferred bands based on TZ business semantics and prove the amount factor changes a finalization-equivalent conflict without changing hard eligibility or overfitting the public queue.
 
-### TZ17-105 — ambiguity closure evidence — VERIFIED WITH DOCUMENTED ASSUMPTION
-Keep the remaining top-level selected-provider meaning explicit. Compatibility
-tests and conservative defaults prove the projection without claiming that the
-public validator settles the organizer ambiguity.
+Evidence: the canonical profile has transparent low/mid/high bands; `test/case/submission_profile_test.rb` loads the profile and proves amount-only selection differs from priority-only selection among the same hard-eligible loaded providers. Public golden operation IDs are not used as the fixture.
 
-### TZ17-106 — policy authority collision — VERIFIED
-The runner/router reject simultaneous profile/configuration authorities and
-policy overrides, the configuration constructor rejects canonical `targets`
-combined with non-empty legacy share maps, and the resolver rejects duplicate
-canonical preferred-band identities/fields instead of silently overwriting one
-policy entry. Profile ingress also rejects a supplied `volume_share` when the
-declared volume target source is derived from provider traffic percentages.
-Malformed non-Hash `rpm_limits` overrides are also rejected as typed policy
-override errors instead of leaking a raw method error. Focused boundary
-regressions also reject explicit `false` authorities/overrides and invalid
-`targets` instead of silently selecting default or empty-share policy. The
-case simulator also rejects malformed seed/outcome maps and structured keys
-at construction.
+### TZ18-105 — neutral factor contribution honesty — CLOSED (2026-09-04)
+Equal raw values across candidates must be treated as non-discriminating rather than receiving full normalized contribution. Preserve deterministic tie-break outside causal factor evidence. Fix any amount/factor test that passes only through provider-id tie-break.
+
+Evidence: `ConflictResolver` marks equal raw factors non-discriminating, assigns zero normalized/contribution values and labels the trace; tie-break remains priority/provider identity; focused factor tests pass.
+
+### TZ18-106 — quantitative causal recommendations — CLOSED (2026-09-04)
+Add concrete evidence-based actions for near-limit utilization, structural hard exclusions, target deviations and hard-forced alternatives. Base `recommendations` must be judge-readable strings; rich structured evidence moves to additive `recommendation_details`.
+
+Evidence: `ReportBuilder` derives near-limit, target-gap, hard-exclusion and hard-forced details from canonical ledgers/state; `test/case/recommendation_test.rb` checks exact used/limit/headroom, exclusion causes and string projection.
+
+### TZ18-107 — symmetric target feasibility evidence — CLOSED (2026-09-04)
+Support constrained-under-target analysis in addition to hard-forced over-target analysis. Distinguish structural hard-rule constraints from small/integer workload granularity; do not overclaim infeasibility.
+
+Evidence: observed exclusions are reported as `structurally_constrained_under_target`; a fresh one-operation `1/2` target is reported as `workload_granularity` and produces no infeasibility entry when no structural cause is present. The same granularity advice is suppressed when the provider is hard-excluded or hard-forced, so workload size is not presented as a remedy for a current hard rule; regression coverage is in `test/case/recommendation_test.rb`.
+
+## P2 — evidence gated
+
+### TZ18-201 — independent volume target provenance — EVIDENCE CLOSED (2026-09-04; no production change)
+Count and volume are distinct TZ concepts. Evaluate a configured or clearly history-derived volume target source with explicit provenance after P0/P1 closure. History remains calibration/trends, not current eligibility truth.
+
+Evidence: the canonical profile explicitly records `volume_target_source: provider.traffic_percentage`; the loader rejects a `volume_share` override in that mode and a focused regression proves a `configured` source can supply an independent exact volume map. No authoritative independent volume target is supplied, so silently promoting history would be less honest than the current explicit source.
+
+### TZ18-202 — normalization robustness audit — EVIDENCE CLOSED (2026-09-04; no production change)
+Construct candidate-set counterexamples for current min/max normalization. Change to domain normalization only if material ranking instability, weight non-interpretability or misleading explanation is demonstrated.
+
+Evidence: the candidate-relative normalization preserves factor ordering for the supported factor traces; the hidden-like factor campaign found no material inversion or misleading contribution. Raw, normalized and weighted contribution remain independently visible.
+
+### TZ18-203 — terminal identity vs zero participation — CLOSED (2026-09-04)
+Prefer explicit `terminal_provider_id` as terminal authority rather than deriving self-provider identity from zero traffic target. Avoid broad refactor unless a concrete ambiguity is reproduced.
+
+Evidence: `test/case/terminal_identity_test.rb` reproduces ambiguous multiple zero-participation providers and requires explicit configuration. `Router`, `ReportBuilder`, strict replay and `bin/ruby_routing_case_demo` now consume that explicit profile identity; canonical profile finalization remains green.
 
 ## Completion gate
 
-All items above are green on the pushed completion tree. The independent
-code/data/output audit found and closed malformed-authority, malformed
-simulator-control and serialized-boundary gaps; fresh exact-HEAD verification
-and CI passed. Any new material P0/P1 reopens ACTIVE.
+Known P0/P1 green produced `VERSION_CANDIDATE`; the independent code/data/artifact
+audit then found and closed the hard-forced granularity and permissive report-validator
+gaps. The fresh full matrix, finalization, validators, clean-checkout run and exact
+pushed-head Actions are green. No material local P0/P1 remains.
+
+Any material local P0/P1 returns ACTIVE. v0.4.2 is now `VERSION_COMPLETE` after fresh
+full inherited verification, organizer public decisions validation, independent TZ
+report validation, strict serialized validation, hidden-like campaigns,
+clean-checkout finalization and exact pushed-head Actions success.
 
 ## Frozen
 
-No generic recovery/restart hardening, HTTP polish, DB/Redis/queues/microservices, real PSP adapters, ML, generic DSL or broad production refactor unless directly required by SPEC-017.
+No generic recovery/restart hardening, HTTP polish, DB/Redis/queues/microservices, real PSP adapters, ML/neural networks, generic DSL or broad production refactor unless directly required by SPEC-018.

@@ -34,7 +34,7 @@ class AuthoritativeCaseFinalizationTest < Minitest::Test
     assert status.success?, stderr
     report = JSON.parse(File.read(File.join(ROOT, "routing_report_test.json")))
     profile = report.fetch("submission_profile")
-    assert_equal "official-smart-v0.4.1", profile.fetch("profile_id")
+    assert_equal "official-smart-v0.4.2", profile.fetch("profile_id")
     assert_equal "provider.traffic_percentage", profile.fetch("count_target_source")
     assert_equal "provider.traffic_percentage", profile.fetch("volume_target_source")
     assert_equal "conversion", profile.fetch("configuration").fetch("simulation_mode")

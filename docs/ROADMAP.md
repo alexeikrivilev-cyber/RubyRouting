@@ -6,37 +6,42 @@ Win Hack.Genesis **«Умный роутинг выплат»** with a determini
 
 ## Current Version Goal
 
-**v0.4.1 — Submission Policy Activation & Contract Closure — VERSION_COMPLETE**.
+**v0.4.2 — Submission Contract Fidelity & Scoring Semantics Closure — VERSION_COMPLETE**.
 
-Opening baseline: `0187bf2558d58a52dfdb27e76694d6323addbcd6`.
+Opening baseline: `e9a24923aebfdb1b01223a360b3f3f2b4e84ee45`.
 
 ## Version map
 
-v0.1 foundation → v0.2 core → v0.3.x safety/product hardening → v0.4.0 authoritative case engine (**completed baseline**) → **v0.4.1 submission policy + contract closure (VERSION_COMPLETE)** → v1.0 submission candidate after organizer test queue/final validation.
+v0.1 foundation → v0.2 core → v0.3.x safety/product hardening → v0.4.0 authoritative case engine → v0.4.1 submission policy/accounting/output baseline → **v0.4.2 artifact-contract + scoring-semantic closure** → v1.0 final submission candidate after organizer test queue/final validation.
 
-## Why v0.4.1 exists
+## Why v0.4.2 exists
 
-v0.4.0 built the right components, but the opening audit found that the
-supported submission command used default priority-only / always-approved
-configuration and that distribution accounting/output semantics were partially
-ambiguous. v0.4.1 converged capability and actual release path; blind closure
-and exact pushed-head verification are complete.
+v0.4.1 activated the smart policy and closed major internal/output gaps. A fresh code-first audit found that the rich report does not preserve the TZ base report structure, fallback ranking can double-project the current operation in count/volume counterfactuals, Case active status is broader than organizer semantics, and several scoring/explanation surfaces remain weaker than the rubric.
 
 ## Execution order
 
-1. reproduce release-path gaps;
-2. canonical smart SubmissionProfile;
-3. primary-assignment vs attempts vs settlement accounting split;
-4. organizer-compatible attempt/selected-provider projection;
-5. independent soft amount preference;
-6. post-serialization validation/minimal decisions DTO;
-7. assignment/settlement analytics and recommendation correction;
-8. hidden-like scale/determinism campaigns;
-9. exact smart finalization/rubric evidence;
-10. VERSION_CANDIDATE;
-11. blind code/data/output audit;
-12. fresh full exact verification + exact-head CI;
-13. VERSION_COMPLETE only after clean closure.
+1. reproduce all v0.4.2 opening findings;
+2. P0 TZ-compatible report base projection;
+3. independent organizer/TZ report validator;
+4. exact Case active status;
+5. phase-correct fallback scoring with independent oracle;
+6. concrete selected reason codes;
+7. meaningful canonical amount preference + neutral factor honesty;
+8. quantitative recommendations + symmetric feasibility;
+9. evidence-gated volume target provenance / normalization audit / terminal identity cleanup;
+10. hidden-like rubric campaigns;
+11. VERSION_CANDIDATE;
+12. blind code/data/artifact audit;
+13. fresh full verification + clean finalization + exact-head CI;
+14. VERSION_COMPLETE after clean closure — **complete**.
+
+## Stop condition before final hidden queue
+
+The system should reach a state where the only expected last-hour action is:
+
+`provide operations_queue_test.json -> run canonical finalizer -> pass public decisions validator + independent TZ report validator -> inspect deterministic summary -> commit two root artifacts`.
+
+No architecture or policy code should need to change after the hidden queue arrives unless the organizer input violates an explicit assumption.
 
 ## Freeze
 

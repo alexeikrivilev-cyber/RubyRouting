@@ -14,9 +14,9 @@ class AuthoritativeSubmissionProfileTest < Minitest::Test
     run = RubyRouting::Case::Runner.new.call
 
     assert_instance_of RubyRouting::Case::SubmissionProfile, run.profile
-    assert_equal "official-smart-v0.4.1", run.profile.profile_id
+    assert_equal "official-smart-v0.4.2", run.profile.profile_id
     assert_equal "data/submission_profile.json", run.profile.source
-    assert_equal 1, run.profile.revision
+    assert_equal 2, run.profile.revision
     assert_equal Rational(2, 5), run.configuration.targets.count_share.fetch("vipay")
     assert_equal Rational(7, 20), run.configuration.targets.count_share.fetch("payflow")
     assert_equal Rational(1, 4), run.configuration.targets.count_share.fetch("quickpay")
@@ -38,9 +38,70 @@ class AuthoritativeSubmissionProfileTest < Minitest::Test
     )
     profile = RubyRouting::Case::SubmissionProfile.load(path: profile_path, dataset: dataset)
 
-    assert_equal({ min: 1, max: 200_000 }, profile.configuration.preferred_amount_ranges.fetch("vipay"))
+    ranges = profile.configuration.preferred_amount_ranges
+    refute_equal ranges.fetch("vipay"), ranges.fetch("payflow")
+    refute_equal ranges.fetch("payflow"), ranges.fetch("quickpay")
+    assert_equal({ min: 5_000, max: 50_000 }, ranges.fetch("vipay"))
     assert_equal Rational(87, 100), dataset.providers.find { |p| p.payment_system == "vipay" }.conversion_24h
     assert_equal profile.configuration.to_h, profile.configuration.to_h
+  end
+
+  def test_canonical_amount_factor_changes_a_hard_eligible_conflict
+    dataset = RubyRouting::Case::Input.load(
+      providers_path: File.join(ROOT, "data/providers.json"),
+      history_path: File.join(ROOT, "data/operations_history.csv"),
+      queue_path: File.join(ROOT, "data/operations_queue_10.json")
+    )
+    profile = RubyRouting::Case::SubmissionProfile.load(path: profile_path, dataset: dataset)
+    operation = RubyRouting::Case::Operation.new(
+      operation_id: "canonical-amount-case", created_at: Time.utc(2026, 7, 30, 9), amount: 1_000,
+      bank: "sberbank", card_brand: nil,
+      payout_requisite: { "sbp" => { "phone" => "79000000000" } }
+    )
+    states = dataset.providers.reject(&:self_provider?).map do |provider|
+      RubyRouting::Case::ProviderCaseState.new(provider)
+    end
+    eligible = states.select do |state|
+      RubyRouting::Case::HardConstraintEvaluator.new.call(
+        state, operation, as_of: operation.created_at
+      ).eligible?
+    end
+    assert_equal %w[payflow quickpay vipay], eligible.map { |state| state.provider.payment_system }.sort
+
+    traffic = RubyRouting::Case::TrafficLedger.new(dataset.providers.map(&:payment_system), targets: profile.configuration.targets)
+    amount_winner = RubyRouting::Case::ConflictResolver.new(
+      weights: { amount: 1 }, preferred_amount_ranges: profile.configuration.preferred_amount_ranges
+    ).resolve(candidates: eligible, operation: operation, traffic: traffic, as_of: operation.created_at)
+    priority_winner = RubyRouting::Case::ConflictResolver.new(weights: { priority: 1 }).resolve(
+      candidates: eligible, operation: operation, traffic: traffic, as_of: operation.created_at
+    )
+
+    assert_equal "payflow", amount_winner.selected_provider
+    assert_equal "vipay", priority_winner.selected_provider
+    refute_equal priority_winner.selected_provider, amount_winner.selected_provider
+    assert_operator amount_winner.traces.fetch("payflow").first.raw, :>, amount_winner.traces.fetch("vipay").first.raw
+  end
+
+  def test_volume_target_source_is_explicit_and_configured_override_remains_available
+    dataset = RubyRouting::Case::Input.load(
+      providers_path: File.join(ROOT, "data/providers.json"),
+      history_path: File.join(ROOT, "data/operations_history.csv"),
+      queue_path: File.join(ROOT, "data/operations_queue_10.json")
+    )
+    value = JSON.parse(File.read(profile_path))
+    value["volume_target_source"] = "configured"
+    value["volume_share"] = { "vipay" => 0.5, "payflow" => 0.25, "quickpay" => 0.25, "spacepayments" => 0 }
+
+    Tempfile.create(["configured-volume-profile", ".json"]) do |file|
+      file.write(JSON.generate(value))
+      file.flush
+      profile = RubyRouting::Case::SubmissionProfile.load(path: file.path, dataset: dataset)
+
+      assert_equal "configured", profile.volume_target_source
+      assert_equal Rational(1, 2), profile.configuration.targets.volume_share.fetch("vipay")
+      refute_equal profile.configuration.targets.count_share, profile.configuration.targets.volume_share
+      assert_equal "configured", profile.to_h.fetch(:volume_target_source)
+    end
   end
 
   def test_profile_loader_rejects_unknown_fields_and_non_numeric_weight_values

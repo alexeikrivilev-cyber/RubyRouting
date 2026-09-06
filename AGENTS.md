@@ -2,155 +2,147 @@
 
 ## Mission
 
-Build the strongest submission-grade Ruby solution for Hack.Genesis **«Умный роутинг выплат»** under the authoritative TZ.
+Build the strongest submission-grade Ruby solution for Hack.Genesis **«Умный роутинг выплат»** under the authoritative TZ and rubric.
 
-Current Version Goal: **v0.4.1 — Submission Policy Activation & Contract Closure — VERSION_COMPLETE**.
+Current Version Goal: **v0.4.2 — Submission Contract Fidelity & Scoring Semantics Closure — VERSION_COMPLETE**.
 
-Opening baseline: `0187bf2558d58a52dfdb27e76694d6323addbcd6` (v0.4.0 completed case engine).
+Opening baseline: `e9a24923aebfdb1b01223a360b3f3f2b4e84ee45` (completed v0.4.1 submission-policy baseline).
 
 ## Read before coding
 
 1. `README.md`
 2. `AGENTS.md`
 3. `docs/AUTHORITY.md`
-4. SPEC-017
-5. SPEC-016 baseline
+4. SPEC-018
+5. compatible SPEC-017/SPEC-016 baseline semantics
 6. `docs/TZ_REQUIREMENT_MATRIX.md`
-7. active v0.4.1 ExecPlan
+7. `docs/exec-plans/completed/submission-contract-fidelity-scoring-semantics.md` (closure plan)
 8. `docs/POST_TZ_BACKLOG.md`
-9. current architecture/decisions/completion/testing docs
-10. actual `data/`, `scripts/validate_10.rb`, case code/tests and exact-head CI.
+9. current architecture/decisions/completion/testing/workflow docs
+10. actual `data/`, organizer sample/reference/validator, case code/tests and exact-head CI.
 
-Documentation is intended authority. Code/output evidence proves reality.
+Documentation sets intended authority. Code and generated artifacts prove reality.
 
-## Why v0.4.1 remains active
+## Why v0.4.2 is VERSION_COMPLETE
 
-The opening audit on `0187bf2558d58a52dfdb27e76694d6323addbcd6` confirmed that
-finalization used empty targets, priority-only scoring and always-approved
-simulation, and that assignment, attempt and settlement meanings were mixed.
-Those findings are now closed on the current candidate HEAD: the supported
-finalizer and case CLI load `data/submission_profile.json`, run the canonical
-multi-factor path, preserve separate ledgers, project a minimal organizer DTO,
-and strictly revalidate serialized artifacts. The blind candidate audit and
-fresh exact-HEAD verification satisfied `docs/COMPLETION_POLICY.md` on the
-pushed completion HEAD.
+The v0.4.1 code is strong and its exact-head CI was green, but a fresh code-first audit found material competition-boundary defects:
+
+- submitted report shape drifts from the base structure shown by the TZ;
+- post-write report validation is correlated with the same report builder and cannot independently detect that drift;
+- fallback ranking can apply count/volume counterfactuals after the current operation is already recorded as a primary assignment;
+- Case `active?` accepts `enabled` while authoritative/public eligibility requires exact `active`;
+- selected reasons are generic;
+- release amount preferences are non-discriminating;
+- neutral factors claim full contribution;
+- recommendation/feasibility output needs stronger causal, quantitative evidence.
+
+The known P0/P1 scope is covered by fresh case/artifact evidence. An independent
+blind code/data/output pass found two material local issues—misleading workload
+granularity advice for hard-forced routing and permissive empty/out-of-range report
+projections—and both were fixed with deterministic regressions. Fresh exact-head
+verification and Actions are green; no material local P0/P1 remains.
 
 ## Mandatory order
 
-### P0/P1-A — canonical submission policy
+### P0 — authoritative report contract
 
-Use one typed, repository-controlled submission profile from both
-`bin/finalize_submission` and the supported case CLI. No second hidden chooser
-and no demo-only intelligence.
+Preserve the TZ base report fields/types instead of replacing them with the rich internal schema. Keep rich analytics as additive extensions.
 
-The profile must explicitly define/provenance:
+At minimum the organizer-facing report projection must expose:
 
-- count target source — official `traffic_percentage` for participating external providers unless stronger authority says otherwise;
-- volume target source — explicit configured/derived source with report provenance; never silently invented;
-- enabled factor weights;
-- independently configured amount-preference bands;
-- optional RPM/min-turnover values only when explicitly configured;
-- deterministic simulation mode/seed;
-- terminal provider identity.
+- scalar `period`;
+- `total_operations`;
+- `distribution.<provider>.count/share_pct/target_pct`;
+- `skip_reasons`;
+- `projected_daily_utilization.<provider>.used/limit/utilization_pct`;
+- judge-readable string `recommendations`.
 
-Do not overfit weights to the public 10-row queue. Use bounded explainable defaults and prove sensitivity with synthetic conflict campaigns.
+Create an independent contract validator whose required fields/types are encoded from the TZ, not reconstructed from `ReportBuilder`. Run it on the serialized file from finalization.
 
-### P1-B — separate accounting points
+Internal exact Rational arithmetic remains exact; percentage conversion occurs only at the compatibility boundary under an explicit rounding rule.
 
-Do not use one ledger for incompatible business meanings.
+### P1-A — exact Case status semantics
 
-At minimum distinguish:
+For the bounded competition domain, only literal `status == "active"` is eligible. Do not let a broader production status vocabulary leak into organizer semantics.
 
-1. **primary assignment** — provider initially selected for the new payout; this is the default authority for count/volume distribution objectives under the TZ wording unless stronger organizer evidence contradicts it;
-2. **attempts** — every actually invoked provider in fallback order;
-3. **final outcome / settlement provider** — approved final provider, if any.
+### P1-B — phase-correct fallback scoring
 
-Keep report metrics for assignment and settlement separately. A rejection must not erase the fact that traffic was assigned/attempted there.
+Primary count/volume objectives apply to the provider initially assigned the new payout. Once primary assignment is recorded, fallback must not counterfactually add the same operation again.
 
-### P1-C — output contract
+Keep one resolver and one policy authority. Pass explicit phase/context so fallback ranks remaining eligible providers with the applicable business factors without mutating or double-projecting primary distribution.
 
-Internal attempt states must distinguish:
+Write an independent regression where the old phantom count/volume term changes B-vs-C fallback order. A replay that copies Router logic is not an independent oracle.
 
-- hard excluded / never called;
-- selected and attempted → rejected;
-- selected and attempted → expired;
-- selected and attempted → approved;
-- terminal final non-approval.
+### P1-C — concrete selection reasons
 
-The organizer DTO is a projection, not the internal model. Preserve `selected`/`skipped` compatibility conservatively, document top-level `selected_provider` semantics, and keep rich score traces out of the external decisions file unless compatibility is proven. Prefer rich evidence in `routing_report*.json`.
+Do not emit `reason: selected` as the only explanation. Use stable minimal codes such as `only_eligible_provider`, `highest_composite_score`, `fallback_highest_composite_score`, and terminal reasons. Keep full factor traces in report/internal evidence.
 
-After serialization, reopen both generated JSON files and validate their actual JSON types/shape/content. In-memory validation alone is insufficient.
+### P1-D — amount strategy and factor honesty
 
-### P1-D — amount preference
+The canonical profile must use meaningful independent preferred amount bands that can actually distinguish hard-eligible providers. Do not overfit exact public rows.
 
-Hard min/max and soft preferred amount range are different concepts. Add typed preferred ranges/configuration; do not derive preference midpoint from the same hard limits and call the rubric complete.
+If a factor has equal raw value for every candidate, it is non-discriminating: it must not claim full causal contribution. Deterministic tie-break remains separate.
 
-### P1-E — analytics/recommendations
+### P1-E — analytics / recommendations / feasibility
 
-Report separately:
+Recommendations must name the evidence and the concrete rule/parameter/action. Add strong cases for near-limit daily utilization, structural under-target exclusions, hard-forced over-target traffic and bounded workload granularity.
 
-- assignment count/volume distribution;
-- attempts/outcomes;
-- final approved/settlement distribution;
-- target deviations and infeasibility causes;
-- hard-rule reasons;
-- utilization;
-- fallback metrics.
+Keep base `recommendations` judge-readable strings; put structured evidence in additive `recommendation_details`.
 
-Recommendations must recommend a change that would actually address the evidence. An over-target hard-forced provider should normally trigger target adjustment or improvement of alternatives, not expansion of that same provider's capacity by default.
+### P2 — evidence-gated semantics
 
-### P1-F — hidden-like robustness
+Only after P0/P1 closure:
 
-- index decisions/operations in strict validation instead of repeated linear `find` where material;
-- run larger synthetic queues/provider sets;
-- test non-public queue finalization with the canonical smart profile;
-- prove deterministic output after serialization;
-- prove no extra public-decision fields are required for internal explainability.
+- reconsider volume target provenance so count and volume goals are explicitly distinct;
+- audit candidate-relative normalization against domain-normalized counterexamples;
+- separate terminal identity from generic zero-participation semantics where useful.
 
-## Protected case architecture
+Do not destabilize the submission for theoretical purity without a failing or materially misleading example.
 
-Keep one competition routing path:
+## Protected architecture
 
-`Input → CaseConfiguration/SubmissionProfile → CaseState → HardConstraintEvaluator → TrafficLedger/accounting → Factors → ConflictResolver → Router/Simulator → projections → validators`.
+Keep one competition path:
 
-Hard constraints remain absolute and rerun on fallback. A score never revives an ineligible provider.
+`Input -> SubmissionProfile -> CaseState -> HardConstraintEvaluator -> Traffic/Attempt/Settlement ledgers -> Factors -> ConflictResolver -> Router/Simulator -> organizer projections -> independent validators`.
+
+Hard constraints stay absolute and rerun on fallback. A score never revives an ineligible provider.
 
 ## Protected production kernel
 
-Never weaken production UNKNOWN/economic ownership merely to satisfy synthetic judge expiry. Judge `expired → next provider` stays inside `RubyRouting::Case`.
+Never weaken production UNKNOWN/economic ownership to satisfy synthetic judge expiry. Judge `expired -> next provider` remains inside `RubyRouting::Case`.
 
 ## Evidence discipline
 
 For every material fix:
 
-`reproduce → smallest semantic change → focused tests → adjacent case tests → public queue/finalization → organizer validator → strict serialized-output validator → inherited relevant matrix → docs/traceability → commit/push`.
+`reproduce on exact HEAD -> state invariant -> smallest semantic change -> focused tests -> adjacent fallback/accounting/scoring tests -> fresh finalization -> public decisions validator -> independent TZ report validator -> strict serialized validator -> inherited relevant suites -> matrix/plan/docs -> coherent commit/push`.
 
-Do not use public-validator permissiveness as a design oracle.
+Do not use public-validator permissiveness or a self-generated validator as the only oracle.
 
 ## Candidate gate
 
-Before `VERSION_CANDIDATE`, prove all of the following:
+Before `VERSION_CANDIDATE`, prove:
 
-- exact finalization path loads the canonical smart profile;
-- finalization is not priority-only and not forced always-approved by accidental defaults;
-- count and volume can both affect finalization routing;
-- current conversion/load can affect a finalization-equivalent run;
-- assignment and settlement accounting are separately recomputable;
-- amount preference is independently configurable;
-- external decisions JSON is minimal/compatible and post-serialization validated;
-- fallback output is semantically consistent internally and conservatively projected;
-- public goldens and public validator remain green;
-- report/recommendations are recomputable and evidence-correct;
-- hidden-like scale/determinism campaigns are green.
+- serialized report preserves the TZ base contract and rich extensions;
+- independent report validator passes on fresh finalization;
+- public decisions validator remains green;
+- Case only routes literal active providers;
+- fallback no longer applies a phantom count/volume counterfactual;
+- accounting conservation remains exact;
+- selected reasons are concrete;
+- canonical amount strategy can affect a finalization-equivalent decision;
+- neutral factors are contribution-neutral;
+- recommendation and constrained-under-target evidence are causal and quantitative;
+- requirement matrix has no material P0/P1 `PARTIAL/MISSING/CONFLICT`.
 
-The known scope passed the candidate gate, and the blind code/data-first pass
-against all entrypoints and generated files is complete on the pushed HEAD.
-Any new material local P0/P1 returns ACTIVE.
+This produces candidate only. Completion additionally requires the independent blind
+code/data/artifact pass, fresh exact-head verification and exact pushed-head CI; those
+gates are satisfied for the current release.
 
 ## Non-goals
 
-No Rails/ORM, DB, Redis/Sidekiq, queues, microservices, real PSP integrations, ML/bandits/neural networks, generic DSL/plugins, broad Coordinator rewrite or new generic recovery machinery. Do not solve activation gaps by building infrastructure.
+No Rails/ORM, DB, Redis/Sidekiq, queues, microservices, real PSP integrations, ML/bandits/neural networks, generic DSL/plugins, broad Coordinator rewrite or generic recovery work without a direct SPEC-018 blocker.
 
 ## Goal Mode
 
-Work continuously while the next scoring/release step is derivable. Do not stop after one green fix or one public-validator run. Stop only at genuine v0.4.1 completion under `docs/COMPLETION_POLICY.md`, an external blocker with no independent work, or new organizer authority requiring reconciliation.
+Work continuously while the next release/scoring step is derivable. Do not stop after one green fix, one validator, or one checklist. Stop only after genuine v0.4.2 completion under `docs/COMPLETION_POLICY.md`, a non-resolvable external blocker, or new authoritative organizer clarification that changes the contract.

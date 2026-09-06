@@ -223,12 +223,13 @@ module RubyRouting
     end
 
     class Resolution
-      attr_reader :selected_provider, :scores, :traces
+      attr_reader :selected_provider, :scores, :traces, :phase
 
-      def initialize(selected_provider:, scores:, traces:)
+      def initialize(selected_provider:, scores:, traces:, phase: :primary)
         @selected_provider = Input.assert_id(selected_provider, "selected provider")
         @scores = scores.freeze
         @traces = traces.freeze
+        @phase = normalize_phase(phase)
         freeze
       end
 
@@ -236,16 +237,40 @@ module RubyRouting
         scores.fetch(Input.assert_id(provider_id, "score provider id"))
       end
 
+      def selection_reason(candidate_count:)
+        raise InputError, "candidate count must be a positive Integer" unless candidate_count.is_a?(Integer) && candidate_count.positive?
+        return "only_eligible_provider" if candidate_count == 1
+
+        maximum = scores.values.max
+        if scores.values.count { |score| score == maximum } > 1
+          return phase == :fallback ? "fallback_deterministic_tie_break" : "deterministic_tie_break"
+        end
+        phase == :fallback ? "fallback_highest_composite_score" : "highest_composite_score"
+      end
+
       def to_h
         {
           selected_provider: selected_provider,
+          phase: phase.to_s,
           scores: scores,
           factors: traces.transform_values { |values| values.map(&:to_h) }
         }.freeze
       end
+
+      private
+
+      def normalize_phase(value)
+        phase = value.to_sym if value.is_a?(String) || value.is_a?(Symbol)
+        raise InputError, "unsupported resolution phase #{value.inspect}" unless %i[primary fallback].include?(phase)
+
+        phase
+      end
     end
 
     class ConflictResolver
+      PHASES = %i[primary fallback].freeze
+      ALLOCATION_FACTORS = %i[count volume].freeze
+
       attr_reader :weights
 
       def initialize(weights: RoutingWeights.new, min_turnovers: {}, preferred_amount_ranges: {})
@@ -282,12 +307,14 @@ module RubyRouting
         freeze
       end
 
-      def resolve(candidates:, operation:, traffic:, as_of:)
+      def resolve(candidates:, operation:, traffic:, as_of:, phase: :primary)
         candidates = candidates.to_a
         raise InputError, "conflict resolver requires candidates" if candidates.empty?
-        raw_values = @weights.values.each_with_object({}) do |(factor_key, _weight), result|
+        phase = normalize_phase(phase)
+        active_weights = weights_for(phase)
+        raw_values = active_weights.each_with_object({}) do |(factor_key, _weight), result|
           factor = FactorRegistry.fetch(factor_key)
-            result[factor_key] = candidates.to_h do |state|
+          result[factor_key] = candidates.to_h do |state|
             [state.provider.payment_system, factor.raw(
               provider_state: state, operation: operation, traffic: traffic,
               as_of: as_of, min_turnover: @min_turnovers[state.provider.payment_system],
@@ -297,13 +324,17 @@ module RubyRouting
         end
         traces = candidates.each_with_object({}) do |state, result|
           provider_id = state.provider.payment_system
-          result[provider_id] = @weights.values.each_with_object([]) do |(factor_key, weight), evidence|
+          result[provider_id] = active_weights.each_with_object([]) do |(factor_key, weight), evidence|
             factor = FactorRegistry.fetch(factor_key)
             raw = raw_values.fetch(factor_key).fetch(provider_id)
-            normalized = normalize(raw, raw_values.fetch(factor_key).values)
+            factor_values = raw_values.fetch(factor_key).values
+            discriminating = factor_values.uniq.length > 1
+            normalized = discriminating ? normalize(raw, factor_values) : Rational(0, 1)
+            reason = factor.reason(raw)
+            reason = "#{reason}; non-discriminating; no causal contribution" unless discriminating
             evidence << FactorEvidence.new(
               factor: factor_key, raw: raw, normalized: normalized, weight: weight,
-              reason: factor.reason(raw)
+              reason: reason
             )
           end.freeze
         end.freeze
@@ -311,15 +342,27 @@ module RubyRouting
         selected = candidates.sort_by do |state|
           [-(scores.fetch(state.provider.payment_system)), state.provider.priority, state.provider.payment_system]
         end.first.provider.payment_system
-        Resolution.new(selected_provider: selected, scores: scores, traces: traces)
+        Resolution.new(selected_provider: selected, scores: scores, traces: traces, phase: phase)
       end
 
       private
 
+      def normalize_phase(value)
+        phase = value.to_sym if value.is_a?(String) || value.is_a?(Symbol)
+        raise InputError, "unsupported resolution phase #{value.inspect}" unless PHASES.include?(phase)
+
+        phase
+      end
+
+      def weights_for(phase)
+        return @weights.values unless phase == :fallback
+
+        @weights.values.reject { |factor_key, _weight| ALLOCATION_FACTORS.include?(factor_key) }
+      end
+
       def normalize(raw, values)
         min = values.min
         max = values.max
-        return Rational(1, 1) if min == max
 
         Rational(raw - min, max - min)
       end

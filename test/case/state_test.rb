@@ -138,6 +138,7 @@ class AuthoritativeCaseStateTest < Minitest::Test
     evaluator = RubyRouting::Case::HardConstraintEvaluator.new
     checks = {
       inactive_provider: [provider(status: "inactive"), :inactive_provider],
+      enabled_provider_is_not_active: [provider(status: "enabled"), :inactive_provider],
       zero_participation: [provider(traffic_percentage: 0), :zero_participation],
       amount_below_minimum: [provider(limit_amount_min: 20), :amount_below_minimum],
       amount_exceeds_limit: [provider(limit_amount_max: 5), :amount_exceeds_limit],

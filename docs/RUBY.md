@@ -1,6 +1,6 @@
 # Ruby Engineering Guide
 
-This document governs Ruby implementation technique below `docs/AUTHORITY.md`, authoritative TZ, SPEC-017 and compatible SPEC-016 baseline semantics.
+This document governs Ruby implementation technique below `docs/AUTHORITY.md`, authoritative TZ, SPEC-018 and compatible SPEC-017/SPEC-016 baseline semantics.
 
 Runtime baseline: **CRuby 4.0.6** unless organizer authority explicitly supersedes it.
 
@@ -17,20 +17,22 @@ Runtime baseline: **CRuby 4.0.6** unless organizer authority explicitly supersed
 
 Use typed immutable values for configuration, factors, decisions and report evidence. Keep mutable case state behind explicit owners.
 
-Financial/business integer amounts stay Integer. Exact shares/contributions use `Rational` internally where authority requires exactness. Float may be presentation-only and never feed routing authority.
+Financial/business amounts stay Integer. Exact shares/contributions use `Rational` internally. Float/decimal conversion is allowed only in organizer-facing percentage presentation and never feeds routing authority.
 
 Provider/operation IDs are validated strings; provider names are data, not source branches.
 
-## v0.4.1 release-path rules
+## v0.4.2 release-path rules
 
-- finalization uses an explicit typed `SubmissionProfile`, not library defaults as hidden policy;
-- assignment and settlement accounting remain separate;
+- finalization uses the typed canonical `SubmissionProfile`;
+- assignment, attempts and settlement remain separate;
 - hard exclusions and actual provider attempts remain separate internal states;
+- primary vs fallback scoring phase is explicit; do not counterfactually assign one operation twice;
 - hard min/max and soft preferred amount band remain separate concepts;
-- serializers are projections only and never choose providers;
-- write JSON, then reparse/validate the actual artifact;
-- keep decisions DTO conservative; place rich score evidence in report/internal structures;
-- use simple in-memory maps when hidden-like validation needs indexing; do not add persistence infrastructure.
+- serializers/projections never choose providers;
+- preserve the TZ base report schema and add rich fields rather than replacing it;
+- validate serialized decisions/report with both internal consistency and independently encoded organizer/TZ contract checks;
+- neutral factors must not claim causal contribution;
+- use simple in-memory maps/indexes for hidden-like validation; do not add persistence infrastructure.
 
 ## Determinism
 
@@ -42,8 +44,8 @@ Input/config/output failures fail closed with actionable errors. Do not convert 
 
 ## Testing
 
-Use Minitest and repository Rake tasks. Every scoring-critical capability must be tested through a finalization-equivalent configuration, not unit/demo only. Follow `docs/TESTING.md` and `docs/COMPLETION_POLICY.md`.
+Use Minitest and repository Rake tasks. Every scoring-critical capability must be tested through a finalization-equivalent configuration and, where possible, an independent oracle/contract validator. Follow `docs/TESTING.md` and `docs/COMPLETION_POLICY.md`.
 
 ## Authority
 
-Business behavior comes from TZ/organizer contract → SPEC-017 → compatible SPEC-016 → active plan/matrix. This file cannot redefine case semantics.
+Business behavior comes from TZ/organizer contract → SPEC-018 → compatible SPEC-017/SPEC-016 → active plan/matrix. This file cannot redefine case semantics.

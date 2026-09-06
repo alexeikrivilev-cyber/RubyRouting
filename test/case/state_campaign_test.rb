@@ -34,7 +34,12 @@ class AuthoritativeCaseStateCampaignTest < Minitest::Test
       ],
       history: [], operations: [operation("first", 10, 0), operation("second", 1, 1)]
     )
-    router = RubyRouting::Case::Router.new(dataset)
+    router = RubyRouting::Case::Router.new(
+      dataset,
+      configuration: RubyRouting::Case::CaseConfiguration.new(
+        provider_ids: %w[a b spacepayments], terminal_provider_id: "spacepayments"
+      )
+    )
     decisions = router.run
 
     assert_equal %w[a b], decisions.map(&:selected_provider)

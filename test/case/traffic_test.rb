@@ -49,7 +49,7 @@ class AuthoritativeCaseTrafficLedgerTest < Minitest::Test
     run = RubyRouting::Case::Runner.new.call
     report = run.report.to_h.fetch(:distribution)
     run.traffic.distribution.each do |provider_id, values|
-      assert_equal values, report.fetch(provider_id)
+      assert_equal values, report.fetch(provider_id).slice(*values.keys)
     end
     assert_equal run.traffic.total_count, run.decisions.length
     assert_equal 385_800, run.traffic.total_volume

@@ -1,12 +1,12 @@
 # Active ExecPlans
 
-No implementation plan is active: v0.4.1 / SPEC-017 is complete. Its closure
-plan is archived at `../completed/submission-policy-activation-contract-closure.md`.
+No implementation plan is active: v0.4.2 is complete.
 
-Opening baseline: `0187bf2558d58a52dfdb27e76694d6323addbcd6`.
+The completed closure plan is archived at
+`../completed/submission-contract-fidelity-scoring-semantics.md`.
 
-The v0.4.0 plan remains archived at `../completed/authoritative-tz-submission-engine.md` and is baseline evidence, not the current work queue.
+Opening baseline: `e9a24923aebfdb1b01223a360b3f3f2b4e84ee45`.
 
-Fresh agents follow `README.md` → `AGENTS.md` → `docs/AUTHORITY.md` → the
-authoritative current specification → the completed closure evidence. Do not
-create a second active plan for the completed version.
+v0.4.1 and v0.4.0 plans remain archived in `../completed/` as compatible baseline evidence. They are not the current work queue.
+
+Fresh agents follow `README.md` → `AGENTS.md` → `docs/AUTHORITY.md` → SPEC-018 → the completed closure plan → matrix/backlog → actual code/data/artifacts. Do not create a second active plan.

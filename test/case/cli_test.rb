@@ -32,7 +32,7 @@ class AuthoritativeCaseCliTest < Minitest::Test
     assert_equal 10, JSON.parse(File.read(decisions.path)).length
     report_value = JSON.parse(File.read(report.path))
     assert report_value.key?("distribution")
-    assert_equal "official-smart-v0.4.1", report_value.fetch("submission_profile").fetch("profile_id")
+    assert_equal "official-smart-v0.4.2", report_value.fetch("submission_profile").fetch("profile_id")
     assert_equal "conversion", report_value.fetch("submission_profile").fetch("configuration").fetch("simulation_mode")
   ensure
     decisions&.unlink

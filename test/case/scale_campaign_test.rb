@@ -69,4 +69,23 @@ class AuthoritativeCaseScaleCampaignTest < Minitest::Test
     )
     assert_equal first.report.to_h, second.report.to_h
   end
+
+  def test_scale_artifacts_pass_independent_and_strict_serialized_validation
+    run = build_run
+    Tempfile.create(["scale-decisions", ".json"]) do |decisions|
+      Tempfile.create(["scale-report", ".json"]) do |report|
+        RubyRouting::Case::Serializer.write_json(decisions.path, run.decisions.map(&:to_h))
+        RubyRouting::Case::Serializer.write_json(report.path, run.report.to_h)
+
+        artifact_result = RubyRouting::Case::SerializedArtifactValidator.new(
+          run, decisions_path: decisions.path, report_path: report.path
+        ).call
+        report_result = RubyRouting::Case::OrganizerReportContractValidator.new(report.path).call
+
+        assert artifact_result.valid?, artifact_result.errors.first(5).inspect
+        assert report_result.valid?, report_result.errors.first(5).inspect
+        assert_equal SCALE, JSON.parse(File.read(report.path)).fetch("total_operations")
+      end
+    end
+  end
 end

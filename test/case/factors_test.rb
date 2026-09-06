@@ -65,6 +65,50 @@ class AuthoritativeCaseFactorsTest < Minitest::Test
     assert_equal Rational(1, 1), resolution.traces.fetch("a").last.weight
   end
 
+  def test_fallback_phase_does_not_counterfactually_reassign_the_primary_operation
+    b = provider("b", priority: 9)
+    c = provider("c", priority: 1)
+    targets = RubyRouting::Case::TrafficTargets.new(
+      provider_ids: %w[a b c],
+      count_share: { a: 0, b: Rational(4, 5), c: Rational(1, 5) },
+      volume_share: { a: 0, b: Rational(4, 5), c: Rational(1, 5) }
+    )
+    ledger = RubyRouting::Case::TrafficLedger.new(%w[a b c], targets: targets)
+    ledger.record_assignment!(provider_id: "a", amount: operation.amount)
+    resolver = RubyRouting::Case::ConflictResolver.new(weights: { count: 1, volume: 1 })
+
+    resolution = resolver.resolve(
+      candidates: [
+        RubyRouting::Case::ProviderCaseState.new(b),
+        RubyRouting::Case::ProviderCaseState.new(c)
+      ],
+      operation: operation, traffic: ledger, as_of: operation.created_at, phase: :fallback
+    )
+
+    assert_equal :fallback, resolution.phase
+    assert_equal "c", resolution.selected_provider
+    assert_empty resolution.traces.fetch("b")
+    assert_empty resolution.traces.fetch("c")
+  end
+
+  def test_equal_raw_factor_is_non_discriminating_and_does_not_claim_contribution
+    resolution = RubyRouting::Case::ConflictResolver.new(weights: { priority: 1 }).resolve(
+      candidates: [
+        RubyRouting::Case::ProviderCaseState.new(provider("a", priority: 1)),
+        RubyRouting::Case::ProviderCaseState.new(provider("b", priority: 1))
+      ],
+      operation: operation, traffic: RubyRouting::Case::TrafficLedger.new(%w[a b]),
+      as_of: operation.created_at
+    )
+    evidence = resolution.traces.fetch("a").first
+
+    assert_equal Rational(1, 2), evidence.raw
+    assert_equal Rational(0, 1), evidence.normalized
+    assert_equal Rational(0, 1), evidence.contribution
+    assert_includes evidence.reason, "non-discriminating"
+    assert_equal "a", resolution.selected_provider
+  end
+
   def test_all_supported_factors_return_exact_evidence
     state = RubyRouting::Case::ProviderCaseState.new(provider("p", priority: 1, conversion: Rational(9, 10)), rpm_limit: 10)
     ledger = RubyRouting::Case::TrafficLedger.new(%w[p])
@@ -79,7 +123,8 @@ class AuthoritativeCaseFactorsTest < Minitest::Test
 
     assert_equal 8, resolution.traces.fetch("p").length
     assert resolution.traces.fetch("p").all? { |e| e.raw.is_a?(Integer) || e.raw.is_a?(Rational) }
-    assert_equal Rational(8, 1), resolution.score_for("p")
+    assert_equal Rational(0, 1), resolution.score_for("p")
+    assert resolution.traces.fetch("p").all? { |evidence| evidence.reason.include?("non-discriminating") }
   end
 
   def test_resolution_provider_identity_does_not_use_structured_to_s_coercion

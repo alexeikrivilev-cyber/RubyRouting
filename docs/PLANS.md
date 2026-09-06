@@ -1,24 +1,36 @@
 # Execution Plan Protocol
 
-Current active plan: none. `docs/exec-plans/completed/submission-policy-activation-contract-closure.md` is the **v0.4.1 / SPEC-017 — VERSION_COMPLETE** closure plan.
+Current active plan: none. The completed v0.4.2 closure plan is archived at
+`docs/exec-plans/completed/submission-contract-fidelity-scoring-semantics.md`.
 
-v0.4.0 / SPEC-016 is completed baseline evidence.
+v0.4.1 / SPEC-017 and v0.4.0 / SPEC-016 are completed baseline evidence.
 
 ## Planning rule
 
-Plan behavior/invariant before class shape. Reproduce current code/output first. Keep one routing authority and one active plan. Prefer end-to-end release-path slices over new abstractions.
+Plan behavior/invariant and external contract before class shape. Reproduce current code/output first. Keep one routing authority and one active plan. Prefer end-to-end submission slices over new abstractions.
 
-## v0.4.1 priority
+## v0.4.2 priority
 
-1. canonical finalization policy activation;
-2. assignment/attempt/settlement accounting;
-3. fallback/output projection contract;
-4. independent amount preference;
-5. serialized artifact validation/minimal DTO;
-6. analytics/recommendation correctness;
-7. hidden-like robustness;
-8. blind candidate closure.
+1. TZ report base contract fidelity;
+2. independent report contract validator;
+3. exact active-status semantics;
+4. primary-vs-fallback scoring phase;
+5. selection reason clarity;
+6. amount strategy activation and factor honesty;
+7. recommendation/feasibility quality;
+8. evidence-gated volume/normalization/terminal cleanup;
+9. hidden-like rubric campaign;
+10. candidate -> blind audit -> exact closure.
 
-Every slice states TZ/rubric relevance, current matrix status, exact entrypoint affected, focused reproducer, artifact effect, validator effect and adjacent case/production boundary risk.
+Every slice states:
 
-Known scope green → candidate only → blind audit → fresh exact verification → exact-head CI → completion. v0.4.1 has passed this sequence.
+- authoritative TZ/rubric relevance;
+- exact opening behavior/reproducer;
+- semantic authority/invariant;
+- entrypoint/artifact affected;
+- independent oracle/validator where possible;
+- focused and adjacent tests;
+- compatibility risk;
+- matrix/backlog update.
+
+Known scope green -> candidate -> blind audit -> fresh exact verification -> exact-head CI -> completion. v0.4.2 has completed this sequence.

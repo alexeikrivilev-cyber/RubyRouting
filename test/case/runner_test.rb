@@ -26,8 +26,12 @@ class AuthoritativeCaseRunnerTest < Minitest::Test
     assert_equal 385_800, run.report.to_h.fetch(:dataset).fetch(:queue_volume)
     assert_equal 10, run.report.to_h.fetch(:total_operations)
     assert_equal(
-      { from: "2026-07-30T06:05:00Z", to: "2026-07-30T06:09:30Z" },
+      "2026-07-30",
       run.report.to_h.fetch(:period)
+    )
+    assert_equal(
+      { from: "2026-07-30T06:05:00Z", to: "2026-07-30T06:09:30Z" },
+      run.report.to_h.fetch(:period_window)
     )
     assert_equal Rational(1, 1), run.report.to_h.fetch(:success_metrics).fetch(:rate)
     assert_equal 0, run.report.to_h.fetch(:fallbacks).fetch(:count)
@@ -46,7 +50,7 @@ class AuthoritativeCaseRunnerTest < Minitest::Test
     explanation = report.fetch(:explanations).fetch("op_101")
 
     assert_equal "payflow", explanation.fetch(:selected_provider)
-    assert_equal "selected", explanation.fetch(:selected_reason)
+    assert_equal "fallback_highest_composite_score", explanation.fetch(:selected_reason)
     assert_equal "vipay", explanation.fetch(:primary_assignment_provider)
     assert_equal "provider_rejected", explanation.fetch(:primary_assignment_reason)
     assert explanation.fetch(:fallback_continued)
@@ -56,7 +60,7 @@ class AuthoritativeCaseRunnerTest < Minitest::Test
     assert report.fetch(:attempt_distribution).fetch("vipay").fetch(:outcomes).key?(:rejected)
     assert report.fetch(:deviation_causes).fetch("vipay").key?(:hard_exclusions)
     refute JSON.generate(report).include?("7900")
-    payflow_gap = report.fetch(:recommendations).find do |recommendation|
+    payflow_gap = report.fetch(:recommendation_details).find do |recommendation|
       recommendation[:kind] == "count_target_unmet" && recommendation[:provider] == "payflow"
     end
     refute_nil payflow_gap
@@ -88,11 +92,11 @@ class AuthoritativeCaseRunnerTest < Minitest::Test
     refute_nil entry
     assert_operator entry.fetch(:hard_forced_assignments), :>, 0
     assert_includes entry.fetch(:reason), "hard eligibility"
-    recommendation_present = run.report.to_h.fetch(:recommendations).any? do |recommendation|
+    recommendation_present = run.report.to_h.fetch(:recommendation_details).any? do |recommendation|
       recommendation[:kind] == "target_infeasible_hard_forced" && recommendation[:provider] == "quickpay"
     end
     assert recommendation_present
-    recommendation = run.report.to_h.fetch(:recommendations).find do |item|
+    recommendation = run.report.to_h.fetch(:recommendation_details).find do |item|
       item[:kind] == "target_infeasible_hard_forced" && item[:provider] == "quickpay"
     end
     assert_includes recommendation.fetch(:action), "alternatives"
@@ -107,6 +111,25 @@ class AuthoritativeCaseRunnerTest < Minitest::Test
       JSON.generate(second.decisions.map(&:to_h))
     )
     assert_equal first.report.to_h, second.report.to_h
+  end
+
+  def test_equal_composite_scores_report_a_deterministic_tie_break
+    source = runner.call.dataset
+    providers = source.providers.map { |provider| RubyRouting::Case::Provider.new(**provider.to_h.merge(priority: 1)) }
+    dataset = RubyRouting::Case::Dataset.new(
+      snapshot_at: source.snapshot_at, gateway: source.gateway, merchant: source.merchant,
+      providers: providers, history: source.history, operations: [source.operations.first]
+    )
+    configuration = RubyRouting::Case::CaseConfiguration.new(
+      provider_ids: providers.map(&:payment_system), weights: { priority: 1 },
+      terminal_provider_id: "spacepayments"
+    )
+    router = RubyRouting::Case::Router.new(dataset, configuration: configuration)
+
+    decision = router.run.first
+
+    assert_equal "deterministic_tie_break", decision.attempts.last.reason
+    assert_equal Rational(0, 1), decision.attempts.last.selection.fetch(:scores).values.first
   end
 
   def test_simulator_rejects_malformed_seed_outcomes_and_structured_keys
@@ -258,7 +281,12 @@ class AuthoritativeCaseRunnerTest < Minitest::Test
     )
 
     error = assert_raises(RubyRouting::Case::OutputError) do
-      RubyRouting::Case::Router.new(dataset).run
+      RubyRouting::Case::Router.new(
+        dataset,
+        configuration: RubyRouting::Case::CaseConfiguration.new(
+          provider_ids: dataset.providers.map(&:payment_system), terminal_provider_id: "spacepayments"
+        )
+      ).run
     end
 
     assert_includes error.message, "terminal self-provider spacepayments is ineligible"

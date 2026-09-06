@@ -1,7 +1,7 @@
 {
-  "profile_id": "official-smart-v0.4.1",
+  "profile_id": "official-smart-v0.4.2",
   "source": "data/submission_profile.json",
-  "revision": 1,
+  "revision": 2,
   "count_target_source": "provider.traffic_percentage",
   "volume_target_source": "provider.traffic_percentage",
   "weights": {
@@ -13,11 +13,11 @@
     "load": 1
   },
   "preferred_amount_ranges": {
-    "vipay": { "min": 1, "max": 200000 },
-    "payflow": { "min": 1, "max": 200000 },
-    "quickpay": { "min": 1, "max": 200000 }
+    "vipay": { "min": 5000, "max": 50000 },
+    "payflow": { "min": 1000, "max": 20000 },
+    "quickpay": { "min": 20000, "max": 150000 }
   },
-  "simulation_seed": "ruby-routing-v0.4.1-2",
+  "simulation_seed": "ruby-routing-v0.4.2-1",
   "simulation_mode": "conversion",
   "terminal_provider_id": "spacepayments"
 }

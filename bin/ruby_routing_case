@@ -36,6 +36,7 @@ begin
   RubyRouting::Case::SerializedArtifactValidator.new(
     run, decisions_path: options[:decisions], report_path: options[:report]
   ).validate!
+  RubyRouting::Case::OrganizerReportContractValidator.new(options[:report]).validate!
   puts "generated #{options[:decisions]} and #{options[:report]} for #{run.decisions.length} operations"
 rescue RubyRouting::Case::InputError, RubyRouting::Case::OutputError, OptionParser::ParseError => error
   warn "case run failed: #{error.message}"

@@ -210,10 +210,10 @@ module RubyRouting
           weights: config.weights, min_turnovers: config.min_turnovers,
           preferred_amount_ranges: config.preferred_amount_ranges
         )
-        @terminal_provider_id = config.terminal_provider_id || dataset.providers.find(&:self_provider?)&.payment_system
-        unless @terminal_provider_id
-          raise InputError, "dataset has no configured terminal self-provider"
+        unless config.terminal_provider_id
+          raise InputError, "terminal provider must be explicitly configured"
         end
+        @terminal_provider_id = config.terminal_provider_id
         terminal = dataset.providers.find { |provider| provider.payment_system == @terminal_provider_id }
         unless terminal&.active? && terminal.self_provider?
           raise InputError, "terminal provider must be an active zero-participation provider"
@@ -250,8 +250,10 @@ module RubyRouting
           break if eligible_states.empty?
 
           resolution = @resolver.resolve(
-            candidates: eligible_states, operation: operation, traffic: traffic, as_of: as_of
+            candidates: eligible_states, operation: operation, traffic: traffic, as_of: as_of,
+            phase: assignment_recorded ? :fallback : :primary
           )
+          resolution_reason = resolution.selection_reason(candidate_count: eligible_states.length)
           provider = eligible_states.find { |item| item.provider.payment_system == resolution.selected_provider }.provider
           provider_state = state.fetch(provider.payment_system)
           unless assignment_recorded
@@ -268,7 +270,7 @@ module RubyRouting
             provider_state.record_route!(operation)
             settlement_ledger.record!(provider_id: provider.payment_system, amount: operation.amount)
             attempts << Attempt.new(
-              provider: provider.payment_system, decision: :selected, reason: "selected",
+              provider: provider.payment_system, decision: :selected, reason: resolution_reason,
               status: simulation.status, latency_sec: simulation.latency_sec,
               selection: resolution.to_h, classification: :attempted_approved
             )

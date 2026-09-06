@@ -1,6 +1,6 @@
-# Current Decisions — Post-TZ v0.4.1
+# Current Decisions — Post-TZ v0.4.2
 
-This file is the current decision overlay. SPEC-016/v0.4.0 decisions remain accepted where not superseded below.
+This file is the current decision overlay. SPEC-017/v0.4.1 and SPEC-016/v0.4.0 decisions remain accepted where not superseded below.
 
 ## Stable inherited decisions
 
@@ -11,139 +11,107 @@ This file is the current decision overlay. SPEC-016/v0.4.0 decisions remain acce
 - current `conversion_24h` leads historical calibration;
 - `spacepayments` is terminal self-provider, not an ordinary competitor;
 - deterministic simulation only;
-- one ConflictResolver is the competition soft-goal authority;
+- one `ConflictResolver` is the competition soft-goal authority;
+- assignment, attempt and settlement accounting stay separate;
 - public validator is a lower bound;
-- finalization is a product feature.
+- finalization is a product feature;
+- rich internal semantics may be projected conservatively to organizer DTOs.
 
-## TZD-031 — reopen release claim after submission-path audit
+## TZD-045 — reopen after artifact/scoring audit
 Status: accepted.
 
-Decision: v0.4.0 is a completed implementation baseline. The opening audit
-confirmed that exact finalization used default priority-only/always-approved
-configuration while richer policy capabilities were optional; the current
-candidate closes that release-path gap. Completion status follows exact release
-behavior, not library feature existence.
+Decision: v0.4.1 remains a completed baseline. The v0.4.2 audit found and closed
+the release-critical report-shape, fallback/scoring and explainability gaps; after
+blind closure and exact-head verification the current release is VERSION_COMPLETE
+under SPEC-018.
 
-## TZD-032 — one canonical SubmissionProfile
+## TZD-046 — TZ report base schema is mandatory compatibility surface
 Status: accepted.
 
-Decision: finalization and supported case CLI use one typed default policy profile. Demo/tests may override it, but no separate demo-only smart chooser exists. Profile source/revision, targets, weights, simulation mode/seed and terminal identity are reportable.
+Decision: the report structure shown by the TZ is treated as a required base projection even without a public organizer report validator. Rich fields are additive. Do not replace base `period`, provider `distribution.count/share_pct/target_pct`, `projected_daily_utilization`, `skip_reasons` or string recommendations with an internal-only schema.
 
-Count target default is derived from official participating-provider `traffic_percentage`. Volume target source must be explicit/provenanced. RPM/min-turnover absent from organizer input remain optional, not silently invented hard facts.
+An independent validator encodes these expectations from the TZ. Self-equality against `ReportBuilder` is not sufficient contract evidence. It also requires non-empty provider projections and bounds compatibility utilization percentages to 0..100.
 
-## TZD-033 — separate primary assignment and settlement accounting
-Status: accepted as bounded TZ interpretation pending stronger organizer clarification.
-
-Decision: distribution targets apply to primary routing assignment by default because the case asks to distribute new payout requests/volume between providers. Provider failure does not erase that assignment. Attempt outcomes and final approved settlement are separate ledgers/report projections.
-
-If organizer clarification explicitly defines target shares by successful payouts, reconcile this decision before changing code.
-
-## TZD-034 — organizer attempt enum is a projection
+## TZD-047 — exact arithmetic internally, percentage numbers at compatibility boundary
 Status: accepted.
 
-Decision: internal semantics distinguish hard-skipped provider from selected/attempted approved/rejected/expired provider. Organizer `decision: selected|skipped` is only a compatibility projection. Internal truth must not call an invoked provider a hard skip.
+Decision: routing/accounting remains exact Rational/Integer internally. TZ percentage fields are organizer-facing numeric percentages produced only at serialization/projection boundary, rounded deterministically to two decimal places. Rich exact ratios remain available separately; `OrganizerReportContractValidator` checks the resulting JSON shape independently.
 
-Top-level initial assignment provider and final provider remain separate internal concepts. External `selected_provider` uses one documented conservative assumption until organizer clarification.
+## TZD-048 — primary allocation objectives stop after primary assignment
+Status: accepted as current bounded TZ interpretation.
 
-## TZD-035 — minimal external decisions, rich report
+Decision: count/volume distribution objectives govern the primary provider assignment. Rejected/expired outcome does not erase or move that assignment. Therefore fallback ranking must not run another count/volume counterfactual for the same operation. Fallback uses the same resolver with explicit phase/context and applicable non-allocation business factors; no second chooser is introduced.
+
+If stronger organizer clarification defines allocation targets over final/settled provider instead, reconcile this decision explicitly before code changes.
+
+## TZD-049 — Case active status matches organizer literal semantics
 Status: accepted.
 
-Decision: default decisions JSON minimizes fields to organizer-required/strongly evidenced contract. Factor score matrices and detailed internal traces belong in report/internal evidence unless extra decision fields are proven safe. Generated JSON must be reparsed and validated after serialization.
+Decision: in the bounded competition model, only literal `status == "active"` is hard-eligible. Broader status aliases may exist elsewhere in production code but cannot change Case eligibility.
 
-## TZD-036 — preferred amount band is independent
+## TZD-050 — minimal selection reasons must be concrete
 Status: accepted.
 
-Decision: hard `limit_amount_min/max` controls eligibility. Soft amount preference uses separately configured preferred band/shape. Reusing hard range midpoint as the whole amount strategy is insufficient for the rubric.
+Decision: external attempts keep stable compatibility-minimal reasons, but generic successful `selected` is insufficient. Use explicit reason codes such as `only_eligible_provider`, `highest_composite_score`, fallback composite selection, and terminal fallback/exhaustion. Full factor evidence stays in rich report/internal traces.
 
-## TZD-037 — recommendation actions must be causal
+## TZD-051 — neutral factor is not causal evidence
 Status: accepted.
 
-Decision: recommendation engine must suggest a change that plausibly addresses the measured cause. For hard-forced over-target traffic, adjust target or improve alternative eligibility/capacity; do not blindly expand the already over-target provider.
+Decision: if every candidate has the same raw value for a factor, that factor is non-discriminating and contributes zero decision pressure. Deterministic tie-break is separate and must not masquerade as factor causality.
+
+Resolution reasons also distinguish equal composite scores
+(`deterministic_tie_break` / `fallback_deterministic_tie_break`) from a genuine
+highest-score selection.
+
+## TZD-052 — canonical amount preference must be meaningful
+Status: accepted.
+
+Decision: preferred amount ranges remain independent of hard min/max and the release profile must make them materially different enough to demonstrate the TZ amount strategy among hard-eligible providers. Configuration must be explainable and general, not fitted to exact public operation IDs.
+
+Evidence: v0.4.2 profile uses explicit broad low-ticket (`payflow` 1,000–20,000),
+mid-ticket (`vipay` 5,000–50,000) and higher-ticket (`quickpay` 20,000–150,000)
+bands. The canonical-profile regression uses a new 1,000-unit loaded-data
+operation and proves amount-only routing differs from priority-only routing while
+all three providers remain hard-eligible.
+
+## TZD-053 — recommendations have base strings plus structured details
+Status: accepted.
+
+Decision: `recommendations` in the organizer-facing base report is an array of judge-readable action strings. Structured provider/evidence/action objects remain as additive `recommendation_details`. Both projections must be consistent and causal.
+
+## TZD-054 — feasibility is two-sided and evidence-bounded
+Status: accepted.
+
+Decision: report both hard-forced over-target and structurally constrained under-target conditions when evidence supports them. Small queue/integer granularity is reported as workload granularity, not automatically called hard infeasibility.
+
+Evidence: `test/case/recommendation_test.rb` verifies observed hard-exclusion
+counts/reasons for constrained under-target and a one-operation fractional target
+that yields `workload_granularity` with no infeasibility claim.
+
+The same test suite also verifies that a fractional target with an observed hard
+exclusion or hard-forced assignment does not receive a misleading workload-size
+recommendation: neither a hard exclusion nor a sole eligible provider is repaired
+by changing workload size.
+
+## Evidence-gated decisions
+
+- volume target provenance is explicit: the canonical profile declares
+  `provider.traffic_percentage`, rejects an undeclared `volume_share` override in that
+  mode, and supports a tested `configured` override. No authoritative independent
+  volume target is present, so history is not promoted to current target truth;
+- candidate-relative min/max normalization remains unchanged after an evidence-first
+  monotonicity/weight audit: no material ranking inversion or misleading trace was
+  reproduced, and raw/normalized/contribution values stay visible in the trace;
+- terminal provider identity is explicit via configuration/profile only. `Router`,
+  `ReportBuilder` and strict replay no longer infer it from an arbitrary zero-
+  participation provider.
 
 ## Open authoritative assumptions
 
-- exact external top-level `selected_provider` semantics after fallback;
-- exact organizer interpretation of multiple actually attempted providers inside `attempts` enum;
+- exact organizer encoding of multiple actually attempted providers inside the `selected|skipped` enum beyond the supplied sample;
 - exact `expired` generation algorithm;
 - requisite lifecycle beyond availability;
-- official absent values for RPM/minimum turnover;
-- hidden validator tolerance for additional decision fields.
+- absent official RPM/minimum-turnover values;
+- hidden validator behavior beyond the documented/sample/public contracts.
 
-Use reversible conservative projections and tests. Do not present these as organizer facts.
-
-The current candidate keeps these assumptions explicit; they are not a reason
-to block the tested release projection unless organizer authority changes them.
-
-## TZD-039 — demo conversion uses submission authority
-
-Status: accepted.
-
-Decision: the runnable case demo uses the same typed `SubmissionProfile`,
-`Router` and report builder as finalization for its conversion scenario. Its
-bounded expiry mapping is an explicit deterministic outcome fixture used to
-show fallback, not a second policy or chooser.
-
-## TZD-040 — malformed serialized identity fails as validation
-
-Status: accepted.
-
-Decision: `SerializedArtifactValidator` validates operation-id types before
-coverage sorting. A malformed artifact is an invalid submission with explicit
-errors, never an uncaught comparison/type exception at the strict boundary.
-
-## TZD-041 — fallback explanations expose primary and final facts separately
-
-Status: accepted.
-
-Decision: report `selected_reason` belongs to the final invoked attempt, while
-`primary_assignment_provider` and `primary_assignment_reason` preserve the
-initial assignment. Terminal fallback is derived from the final selected
-attempt, so a fallback explanation cannot combine one provider with another's
-reason.
-
-## TZD-042 — serialized roots are mandatory
-
-Status: accepted.
-
-Decision: strict post-write validation always validates both artifact roots.
-JSON `null`/`false` or parse failures cannot be treated as an absent optional
-document; they produce an invalid artifact result.
-
-## TZD-043 — canonical case targets cannot be shadowed by share maps
-
-Status: accepted.
-
-`CaseConfiguration#targets` is the canonical target object. Supplying non-empty
-`count_share` or `volume_share` alongside it is rejected rather than silently
-discarded, preventing a caller from believing a different policy was applied.
-
-`SubmissionProfile` applies the same rule at profile ingress: a profile using
-the derived `provider.traffic_percentage` volume source cannot also provide a
-`volume_share` override. Explicit configured volume targets must name and
-provide that map.
-
-## TZD-044 — malformed case policy overrides fail closed
-
-Status: accepted.
-
-Profile-backed router construction rejects non-Hash policy overrides as typed
-boundary errors before a run is built; it must never fail through a raw method
-error while checking whether an alternate policy authority was supplied.
-
-Explicit `false` is not an absent authority. Runner, Router and
-CaseConfiguration use nil-presence and typed validation so malformed policy
-inputs cannot silently fall back to the default profile or empty targets.
-
-The same fail-closed rule applies to deterministic case simulation controls:
-seed must remain a String, outcomes must be a Hash keyed by exact
-operation/provider identities, and outcome values must be typed statuses
-rather than arbitrary values coerced through `to_s`.
-
-## TZD-038 — reject competing case policy authorities
-
-Status: accepted.
-
-`Runner` refuses a call that supplies both a `SubmissionProfile` and a direct
-`CaseConfiguration`; `ConflictResolver` refuses duplicate preferred-band keys
-after canonicalization. A case run must have one unambiguous policy source,
-and malformed configuration must fail closed rather than use last-write-wins.
+Keep projections reversible and do not present these as organizer facts.
