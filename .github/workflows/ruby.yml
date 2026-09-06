@@ -29,13 +29,38 @@ jobs:
           bundle exec rake fault
 
       - name: Verify authoritative case submission artifacts
+        shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           bundle exec rake case
-          bundle exec rake finalize_public_submission
-          git diff --exit-code -- routing_decisions_test.json routing_report_test.json
-          ruby scripts/validate_10.rb routing_decisions_test.json
-          bundle exec ruby -Ilib bin/ruby_routing_case_demo > case_demo.json
-          bundle exec ruby -Ilib bin/ruby_routing_case_evidence > case_evidence.json
+          if ($LASTEXITCODE -ne 0) { throw 'case suite failed' }
+          $smokeRoot = Join-Path $env:RUNNER_TEMP ("ruby-routing-public-smoke-" + $env:GITHUB_RUN_ID)
+          $worktreeAdded = $false
+          $locationPushed = $false
+          git worktree add --detach $smokeRoot HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'public smoke worktree creation failed' }
+          $worktreeAdded = $true
+          try {
+            Push-Location $smokeRoot
+            $locationPushed = $true
+            bundle exec ruby -Ilib bin/finalize_submission --queue data/operations_queue_10.json
+            if ($LASTEXITCODE -ne 0) { throw 'public smoke finalization failed' }
+            ruby scripts/validate_10.rb routing_decisions_test.json
+            if ($LASTEXITCODE -ne 0) { throw 'public organizer validator failed' }
+            bundle exec ruby -Ilib bin/ruby_routing_case_demo > case_demo.json
+            if ($LASTEXITCODE -ne 0) { throw 'case demo failed' }
+            bundle exec ruby -Ilib bin/ruby_routing_case_evidence > case_evidence.json
+            if ($LASTEXITCODE -ne 0) { throw 'case evidence failed' }
+          } finally {
+            if ($locationPushed) {
+              Pop-Location
+              $locationPushed = $false
+            }
+            if ($worktreeAdded) {
+              git worktree remove --force -- $smokeRoot
+              if ($LASTEXITCODE -ne 0) { throw 'public smoke worktree cleanup failed' }
+            }
+          }
 
   product_evidence:
     name: Bounded product evidence
